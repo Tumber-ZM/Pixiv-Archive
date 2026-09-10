@@ -6,6 +6,9 @@ import threading
 import time
 import traceback
 import uuid
+import logging
+
+log = logging.getLogger("pixiv_archive.jobs")
 
 _lock = threading.Lock()
 _jobs = {}
@@ -85,6 +88,7 @@ def start(kind, fn):
     with _lock:
         active = _active["thread"]
         if active is not None and active.is_alive():
+            log.info("job rejected because another job is running: requested=%s", kind)
             return None, "已有任务进行中，请等待或停止当前任务"
         job = Job(uuid.uuid4().hex[:12], kind)
         _jobs[job.job_id] = job
@@ -94,10 +98,12 @@ def start(kind, fn):
                 _jobs.pop(k, None)
 
         def run():
+            log.info("job started: id=%s kind=%s", job.job_id, kind)
             try:
                 fn(job)
                 if job.state["status"] == "running":
                     job.set_status("done")
+                log.info("job finished: id=%s kind=%s status=%s", job.job_id, kind, job.state["status"])
             except Exception as e:
                 job.set_status("error")
                 job.set_error({
@@ -106,6 +112,7 @@ def start(kind, fn):
                     "detail": traceback.format_exc(),
                 })
                 job.update(message="任务执行出错")
+                log.exception("job failed: id=%s kind=%s", job.job_id, kind)
             finally:
                 with _lock:
                     if _active["thread"] is thread:

@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+import logging
 from datetime import datetime
 from dotenv import load_dotenv
 from app import paths
@@ -8,12 +9,15 @@ from app.database import get_db, init_db
 
 load_dotenv(paths.ENV_FILE)
 
+log = logging.getLogger("pixiv_archive.scanner")
+
 METADATA_DIR = os.getenv("METADATA_DIR", "metadata")
 THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "thumbnails")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-PIXIV_ID_MULTI_PATTERN = re.compile(r"(\d{7,10})_p(\d+)", re.IGNORECASE)
+PIXIV_ID_MULTI_PATTERN = re.compile(r"(\d{7,10})\s*[_\-\s]\s*p(\d+)", re.IGNORECASE)
 PIXIV_ID_MULTI_NO_UNDERSCORE_PATTERN = re.compile(r"(\d{7,10})p(\d+)", re.IGNORECASE)
+PAGE_SUFFIX_PATTERN = re.compile(r"(?:^|[_\-\s])p(\d+)$", re.IGNORECASE)
 PIXIV_ID_SEARCH_PATTERN = re.compile(r"\d{7,10}")
 
 
@@ -31,6 +35,15 @@ def extract_pixiv_info(filename):
     return None, None
 
 
+def extract_page_from_filename(filename, fallback=0):
+    name_no_ext = os.path.splitext(os.path.basename(filename))[0]
+    match = PAGE_SUFFIX_PATTERN.search(name_no_ext)
+    if match:
+        return int(match.group(1))
+    _pixiv_id, page = extract_pixiv_info(filename)
+    return page if page is not None else fallback
+
+
 def compute_sha256(filepath):
     h = hashlib.sha256()
     with open(filepath, "rb") as f:
@@ -43,6 +56,7 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
     init_db()
 
     if not os.path.isdir(source_dir):
+        log.warning("scan directory not found: %s", source_dir)
         return {"error": f"Directory not found: {source_dir}"}
 
     new_artworks = 0
@@ -51,6 +65,7 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
     duplicates = 0
 
     image_files = []
+    log.info("walking source directory: %s", source_dir)
     for root, dirs, files in os.walk(source_dir):
         if cancel_event and cancel_event.is_set():
             return {"cancelled": True, "new_artworks": new_artworks, "new_images": new_images}
@@ -65,6 +80,8 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
     if cancel_event and cancel_event.is_set():
         return {"cancelled": True, "new_artworks": new_artworks, "new_images": new_images}
 
+    log.info("source walk finished: %s; image_files=%d", source_dir, len(image_files))
+
     grouped = {}
     for filepath in image_files:
         filename = os.path.basename(filepath)
@@ -75,6 +92,8 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
             grouped[pixiv_id] = []
         grouped[pixiv_id].append((filepath, page))
 
+    log.info("pixiv grouping finished: %s; artworks=%d", source_dir, len(grouped))
+
     with get_db() as conn:
         total_works = len(grouped)
         for i, (pixiv_id, images) in enumerate(grouped.items()):
@@ -82,7 +101,7 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
                 return {"cancelled": True, "new_artworks": new_artworks, "new_images": new_images}
             if progress_callback:
                 progress_callback("import", i + 1, total_works, f"写入数据库…{i + 1}/{total_works}（PID {pixiv_id}）")
-            images.sort(key=lambda x: x[1])
+            images.sort(key=lambda x: (extract_page_from_filename(x[0], x[1]), x[0].lower()))
 
             existing = conn.execute(
                 "SELECT id FROM artworks WHERE pixiv_id = ?", (pixiv_id,)
@@ -132,6 +151,8 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
                     (artwork_id, page, filepath, sha),
                 )
                 new_images += 1
+
+            _normalize_image_pages(conn, artwork_id)
 
         pruned_duplicates = _prune_duplicates(conn)
         prune_result = _prune_missing(conn, source_dir, image_files)
@@ -211,6 +232,33 @@ def _prune_missing(conn, source_dir, found_paths):
         )
 
     return {"pruned_images": pruned_images, "pruned_artworks": pruned_artworks}
+
+
+def _normalize_image_pages(conn, artwork_id=None):
+    """把同一作品内的图片页码重排成 1..N，确保封面稳定指向第一页。"""
+    if artwork_id is None:
+        rows = conn.execute("SELECT id FROM artworks ORDER BY id").fetchall()
+        for row in rows:
+            _normalize_image_pages(conn, row["id"])
+        return
+
+    images = conn.execute(
+        "SELECT id, page, path FROM images WHERE artwork_id = ?",
+        (artwork_id,),
+    ).fetchall()
+    images = sorted(
+        images,
+        key=lambda img: (
+            extract_page_from_filename(img["path"], img["page"]),
+            os.path.basename(img["path"]).lower(),
+            img["id"],
+        ),
+    )
+    for idx, img in enumerate(images, start=1):
+        conn.execute(
+            "UPDATE images SET page = ? WHERE id = ?",
+            (idx, img["id"]),
+        )
 
 
 def _remove_side_files(pixiv_id):

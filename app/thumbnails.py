@@ -13,13 +13,13 @@ def get_thumbnail_dir():
     return os.path.join(paths.DATA_DIR, THUMBNAIL_DIR)
 
 
-def generate_thumbnail(source_path, pixiv_id):
+def generate_thumbnail(source_path, pixiv_id, force=False):
     thumb_dir = get_thumbnail_dir()
     os.makedirs(thumb_dir, exist_ok=True)
 
     thumb_path = os.path.join(thumb_dir, f"{pixiv_id}.jpg")
 
-    if os.path.exists(thumb_path):
+    if os.path.exists(thumb_path) and not force:
         return thumb_path
 
     try:
@@ -38,12 +38,24 @@ def generate_thumbnails_for_artwork(artwork_id, pixiv_id, image_paths):
     return generate_thumbnail(image_paths[0], pixiv_id)
 
 
-def generate_all_thumbnails(conn, progress_callback=None, cancel_event=None):
-    rows = conn.execute(
+def _select_cover_rows(conn):
+    return conn.execute(
         """SELECT a.id, a.pixiv_id, i.path
            FROM artworks a
-           JOIN images i ON i.artwork_id = a.id AND i.page = 0"""
+           JOIN images i ON i.id = (
+               SELECT i2.id
+               FROM images i2
+               WHERE i2.artwork_id = a.id
+               ORDER BY CASE WHEN i2.page = 1 THEN 0 ELSE 1 END,
+                        i2.page ASC,
+                        i2.id ASC
+               LIMIT 1
+           )"""
     ).fetchall()
+
+
+def generate_all_thumbnails(conn, progress_callback=None, cancel_event=None):
+    rows = _select_cover_rows(conn)
 
     results = {"generated": 0, "skipped": 0, "failed": 0, "cancelled": False}
     total = len(rows)
@@ -55,7 +67,7 @@ def generate_all_thumbnails(conn, progress_callback=None, cancel_event=None):
             progress_callback("thumb", i + 1, total, f"生成缩略图…{i + 1}/{total}")
         pixiv_id = row["pixiv_id"]
         source_path = row["path"]
-        thumb_path = generate_thumbnail(source_path, pixiv_id)
+        thumb_path = generate_thumbnail(source_path, pixiv_id, force=True)
         if thumb_path:
             if os.path.getsize(thumb_path) > 0:
                 results["generated"] += 1

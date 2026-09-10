@@ -19,9 +19,9 @@
             } catch (e) {}
         })();
     </script>
-    <script src="/static/js/pa_token.js"></script>
+    <script src="/static/js/pa_token.js?v=20260907-auth1"></script>
     <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260907-ui4">
 </head>
 <body>
 
@@ -86,6 +86,8 @@
         </div>
         <button class="top-btn" id="btnR18" onclick="cycleR18()" title="切换 R18 显示模式">R18：全部</button>
         <button class="top-btn" id="btnDeleted" onclick="toggleDeletedFilter()" title="只看已删除作品">已删除</button>
+        <div class="topbar-spacer"></div>
+        <button class="top-btn gallery-mode-btn is-expanded" id="btnExpandPages" onclick="toggleExpandPages()" title="展开多页作品的全部图片">展开页码</button>
     </header>
 
     <main>
@@ -162,7 +164,9 @@
 <div class="job-window hidden" id="jobWindow">
     <div class="job-head">
         <span class="job-title" id="jobTitle">任务</span>
-        <button class="job-close" id="jobClose" onclick="closeJobWindow()" title="停止并关闭">✕</button>
+        <button class="job-close" id="jobClose" onclick="closeJobWindow()" title="停止并关闭" aria-label="停止并关闭">
+            <svg class="icon"><use href="#i-x"/></svg>
+        </button>
     </div>
     <div class="job-body" id="jobBody">
         <div class="job-message" id="jobPhase">准备中…</div>
@@ -180,7 +184,7 @@
         <div id="cdMsg" class="settings-field" style="font-size:14px;line-height:1.7;"></div>
         <div class="settings-actions">
             <button id="cdOkBtn" onclick="doConfirmDialog()" class="btn-danger">确认</button>
-            <button onclick="closeConfirmDialog()">取消</button>
+            <button onclick="closeConfirmDialog()" class="btn-secondary">取消</button>
         </div>
     </div>
 </div>
@@ -197,7 +201,7 @@
         </div>
         <div class="settings-actions">
             <button onclick="confirmDelete()" class="btn-danger">删除</button>
-            <button onclick="closeDeleteConfirm()">取消</button>
+            <button onclick="closeDeleteConfirm()" class="btn-secondary">取消</button>
         </div>
         <div id="delMsgResult" class="settings-msg" style="display:none;"></div>
     </div>
@@ -274,7 +278,7 @@
         <div id="bmAddMsg" class="settings-msg" style="display:none;"></div>
         <div class="settings-actions">
             <button onclick="confirmBmAdd()" class="btn-primary">订阅</button>
-            <button onclick="closeBmAdd()">取消</button>
+            <button onclick="closeBmAdd()" class="btn-secondary">取消</button>
         </div>
     </div>
 </div>
@@ -290,7 +294,7 @@
         </div>
         <div class="settings-actions">
             <button onclick="confirmFavSelect()" class="btn-primary">确认收藏</button>
-            <button onclick="closeFavSelect()">取消</button>
+            <button onclick="closeFavSelect()" class="btn-secondary">取消</button>
         </div>
         <div id="favSelectMsg" class="settings-msg" style="display:none;"></div>
     </div>
@@ -308,7 +312,7 @@
         <div id="createFavMsg" class="settings-msg" style="display:none;"></div>
         <div class="settings-actions">
             <button onclick="confirmCreateFavorite()" class="btn-primary">创建</button>
-            <button onclick="closeCreateFavorite()">取消</button>
+            <button onclick="closeCreateFavorite()" class="btn-secondary">取消</button>
         </div>
     </div>
 </div>
@@ -333,8 +337,22 @@
             </div>
             <div class="settings-field">
                 <label for="settingDir">本地图片目录</label>
-                <input type="text" id="settingDir" placeholder="例如 D:\Pixiv">
+                <div class="source-dir-list" id="sourceDirList">
+                    <div class="source-dir-row">
+                        <input type="text" id="settingDir" placeholder="例如 D:\Pixiv">
+                        <button type="button" class="top-btn settings-icon-btn source-dir-action" onclick="addSourceDirInput()" title="新增图片目录" aria-label="新增图片目录">
+                            <svg class="icon"><use href="#i-plus"/></svg>
+                        </button>
+                    </div>
+                </div>
                 <span class="field-hint" id="dirHint"></span>
+            </div>
+            <div class="settings-field">
+                <label class="settings-check">
+                    <input type="checkbox" id="settingAutoWatch">
+                    <span>自动监看本地图片目录</span>
+                </label>
+                <span class="field-hint" id="autoWatchHint"></span>
             </div>
             <div class="settings-field">
                 <label for="settingPort">服务器端口</label>
@@ -347,9 +365,9 @@
                 <span class="field-hint" id="tokenHint2"></span>
             </div>
             <div class="settings-field">
-                <label class="fav-check">
+                <label class="settings-check">
                     <input type="checkbox" id="settingSafeMode" onchange="setSafeMode(this.checked)">
-                    安全模式（模糊所有图片）
+                    <span>安全模式（模糊所有图片）</span>
                 </label>
                 <span class="field-hint">开启后所有图片将模糊显示，适合演示 / 屏幕共享时保护内容。</span>
             </div>
@@ -401,14 +419,14 @@
         </div>
         <div class="settings-actions">
             <button onclick="saveSettings()" class="btn-primary">保存</button>
-            <button onclick="closeSettings()">取消</button>
+            <button onclick="closeSettings()" class="btn-secondary">取消</button>
         </div>
         <div id="settingsMsg" class="settings-msg" style="display:none;"></div>
     </div>
 </div>
 
 <!-- Toast -->
-<div class="toast" id="toast"></div>
+<div class="toast job-window" id="toast" role="status" aria-live="polite"></div>
 
 <!-- 自定义右键菜单 -->
 <div class="ctx-menu hidden" id="ctxMenu"></div>
@@ -428,6 +446,7 @@ let _sortKey = 'id';
 let _sortOrder = 'desc';
 let _viewer = { data: null, idx: 0 };
 let _navIds = [];
+let _navItems = [];
 let _navIndex = -1;
 let _navCtx = { type: 'all', q: '', tag: '', author: '', favoriteId: 0, sort: 'id', order: 'desc', page: 1 };
 let _authorWorksIds = {};
@@ -435,6 +454,10 @@ let _favSelectArtworkIds = [];
 let _favSelectCurrentIds = new Set();
 let _favCache = [];
 let _selectedIds = new Set();
+let expandPages = true;
+try {
+    expandPages = localStorage.getItem('pa-expand-pages') !== '0';
+} catch (e) {}
 
 // ===== Elements =====
 const $ = id => document.getElementById(id);
@@ -571,6 +594,23 @@ function clearFilter() {
     loadGallery(1);
 }
 
+function updateExpandPagesButton() {
+    const btn = $('btnExpandPages');
+    if (!btn) return;
+    btn.classList.toggle('is-expanded', expandPages);
+    btn.classList.toggle('is-merged', !expandPages);
+    btn.textContent = expandPages ? '展开页码' : '合并作品';
+    btn.title = expandPages ? '当前：多页作品全部图片一起展示' : '当前：一个作品只显示 p1 封面';
+}
+
+function toggleExpandPages() {
+    expandPages = !expandPages;
+    try { localStorage.setItem('pa-expand-pages', expandPages ? '1' : '0'); } catch (e) {}
+    updateExpandPagesButton();
+    clearSelection();
+    loadGallery(1);
+}
+
 async function loadGallery(page = 1) {
     if (currentView !== 'gallery') switchView('gallery');
     currentPage = page;
@@ -623,6 +663,7 @@ function buildGalleryUrl(page, ctx) {
     const r = r18Param();
     if (r) url += '&r18=' + r;
     if (deletedFilter) url += '&status=deleted';
+    if (expandPages) url += '&expand_pages=1';
     return url;
 }
 
@@ -630,7 +671,7 @@ function renderGallery(data) {
     $('loading').style.display = 'none';
     currentTotal = data.total;
     currentTotalPages = data.total_pages;
-    $('stats').textContent = `共 ${data.total} 件`;
+    $('stats').textContent = expandPages ? `共 ${data.total} 张` : `共 ${data.total} 件`;
 
     const wall = $('wall');
     wall.innerHTML = '';
@@ -644,6 +685,7 @@ function renderGallery(data) {
 
     const frag = document.createDocumentFragment();
     _navIds = data.artworks.map(a => a.id);
+    _navItems = data.artworks.map(a => ({ id: a.id, page: a.image_page || 1 }));
     data.artworks.forEach((a, idx) => {
         const tile = document.createElement('div');
         tile.className = 'tile';
@@ -652,12 +694,14 @@ function renderGallery(data) {
         tile.dataset.title = a.title || `Pixiv ID: ${a.pixiv_id}`;
         tile.dataset.author = a.author_name || '';
         tile.dataset.pages = a.page_count;
+        tile.dataset.page = a.image_page || 1;
         tile.dataset.status = a.pixiv_status || 'active';
         tile.dataset.pid = a.pixiv_id;
-        tile.onclick = () => { _navIndex = idx; showViewer(a.id); };
+        tile.onclick = () => { _navIndex = idx; showViewer(a.id, a.image_page || 1); };
 
         let badges = '';
-        if (a.page_count > 1) badges += `<span>${a.page_count}P</span>`;
+        if (expandPages && a.page_count > 1) badges += `<span>P${a.image_page || 1}</span>`;
+        else if (a.page_count > 1) badges += `<span>${a.page_count}P</span>`;
         if (a.is_r18) badges += `<span class="r18">R18</span>`;
         if (a.pixiv_status === 'deleted') badges += `<span class="deleted">已删除</span>`;
         if (a.sync_error) badges += `<span class="sync-err">同步失败</span>`;
@@ -667,7 +711,7 @@ function renderGallery(data) {
         const selected = _selectedIds.has(a.id);
 
         tile.innerHTML = `
-            ${a.thumb_path ? `<img src="/thumbnails/${a.pixiv_id}.jpg" alt="" loading="lazy">` : ''}
+            ${galleryImageSrc(a) ? `<img src="${galleryImageSrc(a)}" alt="" loading="lazy">` : ''}
             <span class="tile-check${selected ? ' checked' : ''}" onclick="event.stopPropagation();if(event.target.tagName!=='INPUT')toggleTileCheck(this, ${a.id})">
                 <input type="checkbox" class="tile-checkbox" ${selected ? 'checked' : ''} onchange="toggleSelect(${a.id}, this)">
             </span>
@@ -681,8 +725,12 @@ function renderGallery(data) {
         frag.appendChild(tile);
     });
     wall.appendChild(frag);
-
     renderPagination(data);
+}
+
+function galleryImageSrc(a) {
+    if (expandPages && a.image_path) return paImg('/image/' + encodeURI(a.image_path));
+    return a.thumb_path ? `/thumbnails/${a.pixiv_id}.jpg` : '';
 }
 
 function toggleTileCheck(span, artworkId) {
@@ -806,7 +854,7 @@ async function confirmDelete() {
         clearSelection();
         showToast(`已删除 ${data.deleted} 个作品${data.files_deleted ? '（含源文件）' : ''}`);
         if (!($('viewerOverlay').classList.contains('hidden'))) hideViewer();
-        loadGallery(currentPage);
+        loadGallery(1);
     } catch (e) {
         showToast('删除失败：' + e.message);
     }
@@ -833,9 +881,9 @@ function renderPagination(data) {
     if (data.total_pages <= 1) { pag.style.display = 'none'; return; }
     pag.style.display = 'flex';
     pag.innerHTML = `
-        <button ${data.page <= 1 ? 'disabled' : ''} onclick="goPage(${data.page - 1})">上一页</button>
+        <button class="page-btn" ${data.page <= 1 ? 'disabled' : ''} onclick="goPage(${data.page - 1})">上一页</button>
         <span class="page-info">第 ${data.page} / ${data.total_pages} 页</span>
-        <button ${data.page >= data.total_pages ? 'disabled' : ''} onclick="goPage(${data.page + 1})">下一页</button>`;
+        <button class="page-btn" ${data.page >= data.total_pages ? 'disabled' : ''} onclick="goPage(${data.page + 1})">下一页</button>`;
 }
 
 function goPage(page) {
@@ -962,7 +1010,7 @@ async function loadFavoritesView() {
                     <div class="folder-name"><svg class="icon"><use href="#i-folder"/></svg><span>${escapeHtml(f.name)}</span></div>
                     <div class="folder-meta">${f.artwork_count} 个作品</div>
                 </div>
-                <button class="folder-delete" onclick="deleteFavorite(${f.id}, '${escapeAttr(f.name)}')" title="删除收藏夹">×</button>`;
+            <button class="folder-delete" onclick="deleteFavorite(${f.id}, '${escapeAttr(f.name)}')" title="删除收藏夹" aria-label="删除收藏夹"><svg class="icon"><use href="#i-x"/></svg></button>`;
             frag.appendChild(card);
         });
         grid.appendChild(frag);
@@ -1272,7 +1320,7 @@ async function confirmFavSelect() {
 }
 
 // ===== Viewer (left info / right image) =====
-async function showViewer(artworkId) {
+async function showViewer(artworkId, initialPage) {
     const overlay = $('viewerOverlay');
     overlay.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
@@ -1285,7 +1333,10 @@ async function showViewer(artworkId) {
         const data = await resp.json();
         if (data.error) { hideViewer(); return; }
 
-        _viewer = { data, idx: 0 };
+        const initialIdx = initialPage
+            ? Math.max(0, (data.images || []).findIndex(img => img.page === initialPage))
+            : 0;
+        _viewer = { data, idx: initialIdx >= 0 ? initialIdx : 0 };
         $('vLoading').style.display = 'none';
 
         $('vTitle').textContent = data.title;
@@ -1395,6 +1446,7 @@ function openViewerFromAuthor(authorId, workIndex) {
     const ids = _authorWorksIds[authorId] || [];
     if (!ids.length) return;
     _navIds = ids;
+    _navItems = ids.map(id => ({ id, page: 1 }));
     _navIndex = workIndex;
     _navCtx = { type: 'author', q: '', tag: '', author: '', sort: 'id', order: 'desc', page: 1 };
     showViewer(ids[workIndex]);
@@ -1409,7 +1461,7 @@ function updateArtNav() {
 }
 
 async function viewerArtworkNav(delta) {
-    if (!_navIds.length) return;
+    if (!_navItems.length && !_navIds.length) return;
     let idx = _navIndex + delta;
 
     if (idx < 0) {
@@ -1424,7 +1476,8 @@ async function viewerArtworkNav(delta) {
 
     if (idx < 0 || idx >= _navIds.length) return;
     _navIndex = idx;
-    showViewer(_navIds[idx]);
+    const item = _navItems[idx] || { id: _navIds[idx], page: 1 };
+    showViewer(item.id, item.page);
 }
 
 async function loadAdjacentNavPage(direction) {
@@ -1435,11 +1488,14 @@ async function loadAdjacentNavPage(direction) {
         const resp = await fetch(url);
         const data = await resp.json();
         const ids = (data.artworks || []).map(a => a.id);
+        const items = (data.artworks || []).map(a => ({ id: a.id, page: a.image_page || 1 }));
         if (!ids.length) return false;
         if (direction > 0) {
             _navIds = _navIds.concat(ids);
+            _navItems = _navItems.concat(items);
         } else {
             _navIds = ids.concat(_navIds);
+            _navItems = items.concat(_navItems);
             _navIndex += ids.length;
         }
         _navCtx.page = nextPage;
@@ -1526,6 +1582,13 @@ document.addEventListener('keydown', function (e) {
 let _jobPollTimer = null;
 let _jobCloseTimer = null;
 let _currentJobId = null;
+let _watchPollTimer = null;
+let _lastSeenAutoJobId = '';
+let _eventsSource = null;
+let _eventsFallbackTimer = null;
+try {
+    _lastSeenAutoJobId = localStorage.getItem('pa-last-auto-job-id') || '';
+} catch (e) {}
 
 function setFabBusy(busy) {
     const scanBtn = $('btnScan');
@@ -1548,6 +1611,7 @@ function hideJobWindow() {
 
 function jobKindLabel(kind) {
     if (kind === 'scan') return '扫描图片';
+    if (kind === 'auto_scan') return '自动扫描';
     if (kind === 'bookmark_check') return '收藏订阅更新';
     return '同步元数据';
 }
@@ -1637,7 +1701,7 @@ function finishJob(d) {
         return;
     }
     renderJobResult(d);
-    if (d.kind === 'scan') {
+    if (d.kind === 'scan' || d.kind === 'auto_scan') {
         const r = d.result || {};
         if (r.new_artworks > 0 || r.pruned_artworks > 0) loadGallery(1);
     } else if (d.kind === 'sync') {
@@ -1652,10 +1716,96 @@ function finishJob(d) {
     _jobCloseTimer = setTimeout(hideJobWindow, 3500);
 }
 
+function startWatchEvents() {
+    if (!window.EventSource) {
+        startWatchStatusPolling();
+        return;
+    }
+    const url = window.paToken
+        ? '/api/events?token=' + encodeURIComponent(window.paToken)
+        : '/api/events';
+    _eventsSource = new EventSource(url);
+    _eventsSource.addEventListener('connected', function () {
+        clearTimeout(_eventsFallbackTimer);
+        clearTimeout(_watchPollTimer);
+    });
+    _eventsSource.addEventListener('watch_scan_queued', function () {
+        showToast('检测到新图片，稍后自动扫描');
+    });
+    _eventsSource.addEventListener('auto_scan_started', function () {
+        showToast('自动扫描已开始');
+    });
+    _eventsSource.addEventListener('auto_scan_done', function (e) {
+        try {
+            const data = JSON.parse(e.data || '{}');
+            const payload = data.payload || {};
+            handleAutoJobDone(payload.job_id || '', payload.result || {});
+        } catch (err) {
+            if (currentView === 'gallery') loadGallery(1);
+        }
+    });
+    _eventsSource.addEventListener('auto_scan_failed', function () {
+        showToast('自动扫描失败，请查看日志');
+    });
+    _eventsSource.onerror = function () {
+        clearTimeout(_eventsFallbackTimer);
+        _eventsFallbackTimer = setTimeout(startWatchStatusPolling, 5000);
+    };
+    startWatchStatusPolling();
+}
+
+function rememberAutoJob(jobId) {
+    if (!jobId) return false;
+    if (jobId === _lastSeenAutoJobId) return false;
+    _lastSeenAutoJobId = jobId;
+    try { localStorage.setItem('pa-last-auto-job-id', jobId); } catch (e) {}
+    return true;
+}
+
+function handleAutoJobDone(jobId, r) {
+    if (jobId && !rememberAutoJob(jobId)) return;
+    if ((r.new_artworks || 0) || (r.new_images || 0) || (r.pruned_artworks || 0) || (r.pruned_images || 0) || (r.synced || 0)) {
+        if (currentView === 'gallery') loadGallery(1);
+        clearTimeout(_jobCloseTimer);
+        $('jobBody').style.display = 'none';
+        $('jobError').style.display = 'none';
+        renderJobResult({ kind: 'auto_scan', result: r });
+        showJobWindow();
+        _jobCloseTimer = setTimeout(hideJobWindow, 5000);
+    }
+}
+
+function startWatchStatusPolling() {
+    clearTimeout(_watchPollTimer);
+    pollWatchStatus();
+}
+
+function pollWatchStatus() {
+    fetch('/api/watch/status')
+        .then(r => r.json())
+        .then(d => {
+            const job = d.last_auto_job;
+            if (job && job.job_id && job.job_id !== _lastSeenAutoJobId && job.status !== 'running') {
+                if (job.status === 'done') {
+                    handleAutoJobDone(job.job_id, job.result || {});
+                } else if (job.status === 'error') {
+                    rememberAutoJob(job.job_id);
+                    showToast('自动扫描失败，请查看日志');
+                }
+            }
+            const sseOpen = _eventsSource && _eventsSource.readyState === EventSource.OPEN;
+            const delay = d.enabled ? (sseOpen ? 10000 : 5000) : 15000;
+            _watchPollTimer = setTimeout(pollWatchStatus, delay);
+        })
+        .catch(() => {
+            _watchPollTimer = setTimeout(pollWatchStatus, 15000);
+        });
+}
+
 function renderJobResult(d) {
     const r = d.result || {};
     let html = '';
-    if (d.kind === 'scan') {
+    if (d.kind === 'scan' || d.kind === 'auto_scan') {
         html = `扫描完成<br>新作品 ${r.new_artworks || 0} · 新图片 ${r.new_images || 0} · 跳过 ${r.skipped || 0}`;
         if (r.duplicates || r.pruned_duplicates) {
             html += `<br>去重：本次跳过 ${r.duplicates || 0} · 清理存量重复 ${r.pruned_duplicates || 0}`;
@@ -1665,6 +1815,11 @@ function renderJobResult(d) {
         }
         if (r.thumbnails) {
             html += `<br>缩略图：生成 ${r.thumbnails.generated || 0} · 失败 ${r.thumbnails.failed || 0}`;
+        }
+        if (r.synced || r.sync_failed || r.sync_deleted) {
+            html += `<br>元数据：同步 ${r.synced || 0} · 已删除 ${r.sync_deleted || 0} · 失败 ${r.sync_failed || 0}`;
+        } else if (r.sync_skipped === 'NO_TOKEN') {
+            html += `<br>元数据：未设置 Pixiv Refresh Token，已跳过同步`;
         }
     } else if (d.kind === 'bookmark_check') {
         html = `收藏订阅更新完成<br>检查 ${r.checked || 0} 个订阅 · 新增收藏 ${r.new_found || 0} · 下载 ${r.downloaded || 0} · 失败 ${r.failed || 0}`;
@@ -1847,6 +2002,42 @@ function openExternalBrowser() {
 }
 
 // ===== Settings =====
+function renderSourceDirs(dirs) {
+    const list = $('sourceDirList');
+    const values = (dirs && dirs.length ? dirs : ['']).map(v => v || '');
+    list.innerHTML = '';
+    values.forEach((value, idx) => {
+        const row = document.createElement('div');
+        row.className = 'source-dir-row';
+        row.innerHTML = `
+            <input type="text" ${idx === 0 ? 'id="settingDir"' : ''} placeholder="例如 D:\\Pixiv" value="${escapeAttr(value)}">
+            ${idx === 0
+                ? '<button type="button" class="top-btn settings-icon-btn source-dir-action" onclick="addSourceDirInput()" title="新增图片目录" aria-label="新增图片目录"><svg class="icon"><use href="#i-plus"/></svg></button>'
+                : '<button type="button" class="top-btn settings-icon-btn source-dir-action danger" onclick="removeSourceDirInput(this)" title="移除此目录" aria-label="移除此目录"><svg class="icon"><use href="#i-x"/></svg></button>'}`;
+        list.appendChild(row);
+    });
+}
+
+function addSourceDirInput() {
+    const dirs = getSourceDirs();
+    dirs.push('');
+    renderSourceDirs(dirs);
+    const inputs = document.querySelectorAll('#sourceDirList input');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+}
+
+function removeSourceDirInput(btn) {
+    const row = btn.closest('.source-dir-row');
+    if (row) row.remove();
+    if (!document.querySelector('#sourceDirList input')) renderSourceDirs(['']);
+}
+
+function getSourceDirs() {
+    return Array.from(document.querySelectorAll('#sourceDirList input'))
+        .map(input => input.value.trim())
+        .filter(Boolean);
+}
+
 async function openSettings() {
     $('settingsOverlay').classList.remove('hidden');
     $('settingsMsg').style.display = 'none';
@@ -1855,7 +2046,16 @@ async function openSettings() {
         const resp = await fetch('/api/settings');
         const data = await resp.json();
         $('tokenHint').textContent = data.has_token ? `当前: ${data.token_preview}` : '未设置';
-        $('dirHint').textContent = data.image_source_dir ? `当前: ${data.image_source_dir}` : '未设置';
+        const sourceDirs = data.image_source_dirs && data.image_source_dirs.length
+            ? data.image_source_dirs : (data.image_source_dir ? [data.image_source_dir] : ['']);
+        renderSourceDirs(sourceDirs);
+        $('dirHint').textContent = sourceDirs.filter(Boolean).length
+            ? `当前: ${sourceDirs.filter(Boolean).length} 个目录`
+            : '未设置';
+        $('settingAutoWatch').checked = !!data.auto_watch_enabled;
+        $('autoWatchHint').textContent = !data.auto_watch_available
+            ? 'watchdog 未安装，安装依赖后才可启用'
+            : (data.auto_watch_running ? '运行中：文件变化后会低频防抖自动扫描' : '关闭时需手动点击扫描图片');
         $('proxyHint').textContent = data.proxy ? `当前: ${data.proxy}` : '未设置';
         $('modeHint').textContent = data.connection_mode === 'direct' ? '直连模式：无需代理' : (data.connection_mode === 'proxy' ? '代理模式：使用下方代理地址' : '自动模式：直连失败自动回退代理');
         $('portHint').textContent = data.server_port ? `当前端口: ${data.server_port}（修改后需重启服务生效，默认 6814）` : '当前端口: 6814（修改后需重启服务生效）';
@@ -1869,7 +2069,6 @@ async function openSettings() {
             : '关闭时使用 Pixiv 官方 i.pximg.net。部分镜像不支持无 Referer 图片或头像，会失败或自动回退';
         onMirrorToggleChange();
         $('settingToken').value = '';
-        $('settingDir').value = data.image_source_dir || '';
         $('settingProxy').value = data.proxy || '';
         $('settingSyncDelay').value = data.sync_delay_ms != null ? data.sync_delay_ms : '';
         $('settingMode').value = data.connection_mode || 'auto';
@@ -1909,32 +2108,28 @@ async function refreshDirectIps() {
 
 async function saveSettings() {
     const token = $('settingToken').value.trim();
-    const dir = $('settingDir').value.trim();
+    const dirs = getSourceDirs();
     const proxy = $('settingProxy').value.trim();
     const mode = $('settingMode').value;
     const port = $('settingPort').value.trim();
     const accessToken = $('settingAccessToken').value.trim();
     const syncDelay = $('settingSyncDelay').value.trim();
     const imageMirror = $('settingMirrorToggle').checked ? $('settingImageMirror').value.trim() : '';
+    const autoWatch = $('settingAutoWatch').checked;
     const msg = $('settingsMsg');
 
     const payload = {
         refresh_token: token,
-        image_source_dir: dir,
+        image_source_dirs: dirs,
         proxy: proxy,
         connection_mode: mode,
         sync_delay_ms: syncDelay,
-        image_mirror: imageMirror
+        image_mirror: imageMirror,
+        auto_watch_enabled: autoWatch
     };
     if (port) payload.server_port = port;
     payload.access_token = accessToken;
 
-    if (!token && !dir && !proxy && !port && !accessToken && !syncDelay && !imageMirror) {
-        msg.style.display = 'block';
-        msg.textContent = '请至少填写一项';
-        msg.style.color = '#e94560';
-        return;
-    }
     try {
         const resp = await fetch('/api/settings', {
             method: 'POST',
@@ -2043,8 +2238,9 @@ document.addEventListener('contextmenu', function (e) {
         const id = parseInt(tile.dataset.id, 10);
         const pid = tile.dataset.pid || '';
         const title = tile.dataset.title || ('Pixiv ID: ' + pid);
+        const page = parseInt(tile.dataset.page || '1', 10) || 1;
         showCtxMenu(e.clientX, e.clientY, [
-            { label: '查看', action: function () { showViewer(id); } },
+            { label: '查看', action: function () { showViewer(id, page); } },
             { label: '收藏', action: function () { openFavSelect(id); } },
             { label: '删除', danger: true, action: function () { deleteArtworkFromTile(id, title); } },
             { label: '复制 Pixiv ID', action: function () {
@@ -2165,11 +2361,13 @@ updateSidebarToggle();
 updateSafeBadge();
 initR18();
 updateSortBtn();
+updateExpandPagesButton();
 if (window.pywebview && window.pywebview.api) {
     const f = $('openExternalField');
     if (f) f.style.display = 'block';
 }
 loadGallery(1);
+startWatchEvents();
 </script>
 </body>
 </html>

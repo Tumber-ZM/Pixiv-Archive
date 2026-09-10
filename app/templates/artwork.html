@@ -19,9 +19,9 @@
             } catch (e) {}
         })();
     </script>
-    <script src="/static/js/pa_token.js"></script>
+    <script src="/static/js/pa_token.js?v=20260907-auth1"></script>
     <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260907-ui4">
 </head>
 <body>
 {% include 'icons.html' %}
@@ -72,7 +72,7 @@ updateSidebarToggle();
         <div id="cdMsg" class="settings-field" style="font-size:14px;line-height:1.7;"></div>
         <div class="settings-actions">
             <button id="cdOkBtn" onclick="doConfirmDialog()" class="btn-danger">确认</button>
-            <button onclick="closeConfirmDialog()">取消</button>
+            <button onclick="closeConfirmDialog()" class="btn-secondary">取消</button>
         </div>
     </div>
 </div>
@@ -142,9 +142,9 @@ async function loadDetail() {
         if (data.images.length > 1) {
             imagesHtml += `
             <div class="image-nav">
-                <button onclick="prevImage()">上一页</button>
+                <button class="page-btn" onclick="prevImage()">上一页</button>
                 <span class="page-indicator" id="pageIndicator">1 / ${data.images.length}</span>
-                <button onclick="nextImage()">下一页</button>
+                <button class="page-btn" onclick="nextImage()">下一页</button>
             </div>`;
         }
     }

@@ -195,8 +195,15 @@ html.sb-collapsed .brand-row {
     padding-right: 0;
 }
 
-html.sb-collapsed .sb-toggle {
+html.sb-collapsed .brand {
     display: none;
+}
+
+html.sb-collapsed .sb-toggle {
+    display: flex;
+    width: 100%;
+    height: 36px;
+    border-radius: 10px;
 }
 
 /* 收起态：仅图标徽章，居中成紧凑圆角块 */
@@ -246,6 +253,10 @@ html.sb-collapsed .safe-badge {
         padding-right: 2px;
     }
 
+    html.sb-collapsed .sidebar:hover .brand {
+        display: block;
+    }
+
     html.sb-collapsed .sidebar:not(:hover) {
         width: 60px;
         box-shadow: none;
@@ -262,18 +273,15 @@ html.sb-collapsed .safe-badge {
         justify-content: center;
     }
 
-    html.sb-collapsed .sidebar:not(:hover) .brand-text {
-        font-size: 0;
-    }
-
-    html.sb-collapsed .sidebar:not(:hover) .brand-text::before {
-        content: "PA";
-        font-size: 15px;
-        -webkit-text-fill-color: var(--accent);
+    html.sb-collapsed .sidebar:not(:hover) .brand {
+        display: none;
     }
 
     html.sb-collapsed .sidebar:hover .sb-toggle {
         display: flex;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
     }
 }
 
@@ -519,6 +527,25 @@ html.sb-collapsed .safe-badge {
 .top-btn.active {
     background: var(--accent-soft);
     color: var(--accent);
+}
+
+.gallery-mode-btn {
+    width: 86px;
+    height: 34px;
+    justify-content: center;
+    font-weight: 600;
+}
+
+.gallery-mode-btn.is-expanded {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.gallery-mode-btn.is-merged {
+    color: var(--text);
+    background: var(--surface-3);
+    border-color: var(--border);
 }
 
 .topbar-spacer {
@@ -1406,6 +1433,8 @@ html.sb-collapsed .safe-badge {
 
 .settings-field input,
 .settings-field select {
+    width: 100%;
+    height: 38px;
     padding: 9px 12px;
     font-size: 13.5px;
     font-family: inherit;
@@ -1414,6 +1443,83 @@ html.sb-collapsed .safe-badge {
     border: 1px solid var(--border);
     border-radius: 10px;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.source-dir-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.source-dir-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+}
+
+.settings-field .source-dir-row > input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    height: 38px;
+}
+
+.settings-icon-btn {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    padding: 0;
+    flex: 0 0 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.settings-icon-btn .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.settings-icon-btn:hover {
+    background: var(--surface-3);
+}
+
+.settings-icon-btn.danger {
+    color: var(--danger);
+}
+
+.settings-check {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: 8px;
+    min-height: 24px;
+    padding: 0;
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+}
+
+.settings-check input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.settings-check span {
+    white-space: normal;
 }
 
 .field-hint {
@@ -1454,6 +1560,16 @@ html.sb-collapsed .safe-badge {
 
 .btn-primary:hover {
     background: var(--accent-hover) !important;
+}
+
+.btn-secondary {
+    color: var(--text) !important;
+    background: var(--surface-2) !important;
+    border-color: var(--border) !important;
+}
+
+.btn-secondary:hover {
+    background: var(--surface-3) !important;
 }
 
 .btn-danger {
@@ -1830,12 +1946,14 @@ html.sb-collapsed .safe-badge {
 /* ===== Toast ===== */
 .toast {
     position: fixed;
-    left: 50%;
-    bottom: 30px;
-    transform: translate(-50%, 12px);
+    right: 22px;
+    bottom: 22px;
+    transform: translateY(12px);
     z-index: 400;
-    max-width: calc(100vw - 48px);
-    padding: 10px 18px;
+    width: 340px;
+    max-width: calc(100vw - 32px);
+    min-height: 48px;
+    padding: 14px 16px;
     font-size: 13.5px;
     color: var(--text);
     background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -1851,7 +1969,7 @@ html.sb-collapsed .safe-badge {
 
 .toast.visible {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
 }
 
 /* ===== 右键菜单 ===== */
@@ -1942,6 +2060,13 @@ html.sb-collapsed .safe-badge {
     border-radius: 10px;
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
+}
+
+.search-submit-btn {
+    height: 38px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-color: var(--border);
 }
 
 .search-bar button:hover {
@@ -2289,6 +2414,10 @@ html.safe-mode img {
         padding-right: 0;
     }
 
+    .brand {
+        display: none;
+    }
+
     .sb-toggle {
         display: none;
     }
@@ -2299,7 +2428,7 @@ html.safe-mode img {
     }
 
     .brand-text::before {
-        content: "PA";
+        content: "";
         font-size: 15px;
         -webkit-text-fill-color: var(--accent);
     }

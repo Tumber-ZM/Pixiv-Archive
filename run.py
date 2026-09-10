@@ -77,7 +77,7 @@ class ASGIHTTPServer:
 
             scope = {
                 "type": "http",
-                "asgi": {"version": "3.0", "spec_version": "2.1"},
+                "asgi": {"version": "3.0", "spec_version": "2.4"},
                 "http_version": "1.1",
                 "method": method,
                 "scheme": "http",
@@ -90,8 +90,7 @@ class ASGIHTTPServer:
             }
 
             response_status = 500
-            response_headers = []
-            response_body = bytearray()
+            response_started = False
 
             async def receive():
                 nonlocal body
@@ -102,26 +101,31 @@ class ASGIHTTPServer:
                 return {"type": "http.request", "body": b"", "more_body": False}
 
             async def send(event):
-                nonlocal response_status, response_headers, response_body
+                nonlocal response_status, response_started
                 if event["type"] == "http.response.start":
                     response_status = event["status"]
-                    response_headers = event.get("headers", [])
+                    status_text = {200: "OK", 401: "Unauthorized", 404: "Not Found", 500: "Internal Server Error"}.get(
+                        response_status, "Unknown"
+                    )
+                    writer.write(f"HTTP/1.1 {response_status} {status_text}\r\n".encode())
+                    for key, value in event.get("headers", []):
+                        writer.write(key + b": " + value + b"\r\n")
+                    writer.write(b"\r\n")
+                    await writer.drain()
+                    response_started = True
                 elif event["type"] == "http.response.body":
-                    response_body.extend(event.get("body", b""))
+                    chunk = event.get("body", b"")
+                    if isinstance(chunk, str):
+                        chunk = chunk.encode("utf-8")
+                    if chunk:
+                        writer.write(chunk)
+                        await writer.drain()
 
             await self.asgi_app(scope, receive, send)
 
-            status_text = {200: "OK", 404: "Not Found", 500: "Internal Server Error"}.get(
-                response_status, "Unknown"
-            )
-            resp_line = f"HTTP/1.1 {response_status} {status_text}\r\n"
-            writer.write(resp_line.encode())
-
-            for key, value in response_headers:
-                writer.write(key + b": " + value + b"\r\n")
-            writer.write(b"\r\n")
-            writer.write(bytes(response_body))
-            await writer.drain()
+            if not response_started:
+                writer.write(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n")
+                await writer.drain()
         except Exception:
             traceback.print_exc()
         finally:

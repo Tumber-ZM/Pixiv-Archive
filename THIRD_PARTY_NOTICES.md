@@ -22,6 +22,7 @@
 | aiofiles | Apache-2.0 |
 | pywebview | BSD-3-Clause |
 | pystray | LGPL-3.0（仅作未修改依赖使用） |
+| watchdog | Apache-2.0 |
 
 (上述包各自的传递依赖如 starlette、pydantic、requests、urllib3、pystray 等亦为 MIT / BSD / Apache / PSF / MPL 等宽松许可以及 LGPL-3.0，详见各包随附的许可证文本。)
 

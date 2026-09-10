@@ -5,7 +5,18 @@
 
 ---
 
-## 版本 1.2.1 更新说明
+## 版本更新说明
+
+**最新改动**
+- 多页作品支持两种画廊模式：默认「展开页码」，会把 `p1 / p2 / p3` 等每张图片作为独立卡片展示；切换到「合并作品」时，一个作品只显示一张 `p1` 封面。
+- 多页文件名识别增强：兼容 `145672895 p1.png`、`145672895_p1.png`、`145672895-p1.png`、`145672895p1.png` 等命名，并按文件名页码重排数据库页码。
+- 缩略图封面固定优先使用 `p1`；旧缩略图会在扫描时刷新。
+- 新增多图片目录配置：设置页「本地图片目录」右侧 `+` 可添加多个目录。
+- 新增自动监看：使用 `watchdog` 文件事件监听图片目录，默认 30 秒防抖后自动扫描、生成缩略图、同步元数据。
+- 新增前端实时刷新：后端通过 SSE 推送自动扫描完成事件，前端收到后刷新画廊；SSE 不可用时回退到轻量状态检查。
+- 新增运行日志和 `/api/watch/status` 状态接口，便于 Docker/NAS 环境排查自动监看链路。
+
+**1.2.1**
 
 **1. 新功能：收藏订阅**
 - 订阅任意 Pixiv 用户的**收藏列表**：输入用户 ID（用户主页 URL 中的数字），首次订阅会自动下载该用户公开收藏的全部作品；之后每次点「订阅更新」只**增量检查**并下载上次检查后新收藏的作品，无需重新扫描整个列表。
@@ -28,8 +39,10 @@
 ## 功能特性
 
 - **本地扫描入库**：递归扫描本地 Pixiv 下载目录，从文件名解析作品中对应的 Pixiv ID（兼容 `12345678_p0` 等多页命名），自动去重（按 SHA-256）、识别缺失文件，并写入 SQLite 索引（`archive.db`）。
-- **缩略图生成**：为库内作品自动生成统一尺寸的缩略图（JPG），供网格浏览快速加载。
-- **网页浏览界面**：网格/排序浏览、多图页查看原图、作品详情页（标题、描述、标签、作者）。
+- **多页作品显示**：画廊默认展开显示每一页；也可在右上角切换为合并作品模式，仅显示 `p1` 封面。
+- **缩略图生成**：为库内作品自动生成统一尺寸的缩略图（JPG），封面优先使用 `p1`。
+- **自动监看**：可在设置页开启本地图片目录监看；发现新图片后自动扫描入库、刷新缩略图并同步元数据。
+- **网页浏览界面**：网格/排序浏览、多图页查看原图、作品详情页（标题、描述、标签、作者），支持自动扫描完成后刷新画廊。
 - **多种检索方式**：关键词搜索（标题 / 描述 / 作者 / 标签 / Pixiv ID），按作者、标签、收藏夹筛选。
 - **作者 / 标签体系**：自动聚合作者列表与标签列表，查看某作者或某标签下的全部作品。
 - **收藏夹管理**：创建/删除收藏夹，将作品批量加入收藏夹。
@@ -50,6 +63,8 @@ app/                 应用代码
   main.py             FastAPI 路由、页面与 API
   database.py         SQLite 连接与建表/迁移
   scanner.py          本地图片扫描与入库
+  watcher.py          本地图片目录自动监看
+  events.py           SSE 事件推送
   sync.py             Pixiv 元数据同步
   pixiv.py            Pixiv API 客户端（直连/代理）
   jobs.py             后台任务（扫描/同步）管理与进度
@@ -72,6 +87,10 @@ PixivArchive.spec    PyInstaller 打包配置（onefile / 无控制台 / 自动�
 requirements.txt     运行时依赖清单
 requirements-build.txt  打包（PyInstaller）所需依赖
 .env.template        环境变量模板（复制为 .env 后填写）
+Dockerfile           Docker 镜像构建文件
+docker-compose.yml   Docker Compose 启动示例
+.dockerignore        Docker 构建忽略规则
+.gitignore           Git 提交忽略规则
 ```
 
 ---
@@ -82,7 +101,7 @@ requirements-build.txt  打包（PyInstaller）所需依赖
 - **Python**：3.10+（开发与验证环境为 3.11）
 - **网络**：同步元数据 / 刷新直连 IP 需要能访问 pixiv（必要时搭配代理）
 
-运行时依赖（`requirements.txt`）：`fastapi`、`hypercorn`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`、`aiofiles`、`pywebview`、`pystray`。
+运行时依赖（`requirements.txt`）：`fastapi`、`hypercorn`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`、`aiofiles`、`pywebview`、`pystray`、`watchdog`。
 构建依赖（`requirements-build.txt`）：`pyinstaller`。
 
 ### venv 里装的是什么？
@@ -132,6 +151,22 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 
 在 **设置** 填入 `PIXIV_REFRESH_TOKEN` 后点击 **同步**，为库内作品联网拉取标题、标签、作者等信息。
 
+**第 6 步：自动监看（可选）**
+
+在 **设置** 打开「自动监看本地图片目录」并保存。程序会使用文件系统事件监听图片目录，检测到新图片后等待防抖时间再自动执行：
+
+```text
+扫描入库 → 生成缩略图 → 同步元数据 → 通知前端刷新画廊
+```
+
+默认防抖时间为 30 秒，可通过 `.env` 调整：
+
+```ini
+AUTO_WATCH_DEBOUNCE_SECONDS=30
+```
+
+默认事件监听模式不会定时扫盘；仅在 Docker/NAS 挂载不传递文件事件时，才考虑开启 `AUTO_WATCH_POLLING=1` 轮询备用模式。
+
 ### 方式二：直接使用 exe
 
 直接分发/使用 `Release\PixivArchive.exe`（或自己按"[构建方式](#构建方式)"一节编译）：
@@ -145,6 +180,7 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 ### 界面与常用操作
 
 - **扫描**：把本地图片目录中识别出的作品加入库并生成缩略图（可设置取消/重置）。
+- **画廊显示模式**：右上角「展开页码 / 合并作品」切换多页作品显示方式；首次打开默认展开页码。
 - **同步**：联网为库内作品补充元数据；缺失/失效 token 会在界面给出明确提示。
 - **搜索**：顶部搜索框按 标题/描述/作者/标签/Pixiv ID 全文检索；可按作者、标签、收藏夹组合筛选，支持多种排序。
 - **收藏夹**：在作品详情或列表页批量加入/移除收藏夹。
@@ -159,6 +195,12 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 |------|------|
 | `PIXIV_REFRESH_TOKEN` | Pixiv refresh token（同步元数据必需） |
 | `IMAGE_SOURCE_DIR` | 本地 Pixiv 图片目录（扫描必需） |
+| `IMAGE_SOURCE_DIRS` | 多个本地图片目录，使用 `|` 分隔；设置页会自动维护 |
+| `AUTO_WATCH_ENABLED` | 是否自动监看图片目录，`1` 开启 / `0` 关闭 |
+| `AUTO_WATCH_DEBOUNCE_SECONDS` | 自动监看触发扫描前的防抖等待秒数，默认 `30` |
+| `AUTO_WATCH_POLLING` | 自动监看的轮询备用模式，`1` 开启；仅在 Docker/挂载盘不传递文件事件时使用 |
+| `PA_LOG_LEVEL` | 运行日志级别，默认 `INFO` |
+| `PA_DATA_DIR` | 数据目录覆盖；Docker 默认使用 `/app/data`，普通源码运行通常留空 |
 | `PIXIV_MODE` | `direct` 直连 / `proxy` 代理 / `auto` 自动（默认 auto） |
 | `PIXIV_PROXY` | 代理地址，如 `http://127.0.0.1:7890` |
 | `THUMBNAIL_SIZE` | 缩略图边长，默认 400 |
@@ -166,6 +208,95 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 | `PA_PORT` / `PA_HOST` | 服务端口 / 绑定地址，默认 6814 / 127.0.0.1 |
 | `PA_ACCESS_TOKEN` | 局域网访问令牌（可自定义固定值；留空则自动生成） |
 | `PIXIV_IP_*` | 直连模式下的 pixiv 域名 → IP 覆盖（网页设置中可刷新） |
+
+---
+
+## Docker 运行
+
+在 Docker 版本中，建议把数据目录和图片目录分开挂载。包含特殊字符、中文或括号的路径请加引号：
+
+### Docker Compose
+
+编辑 `docker-compose.yml`，把图片目录挂载路径改成你的真实路径，然后启动：
+
+```bash
+docker compose up -d --build
+```
+
+默认会把数据库、`.env`、缩略图、metadata 和日志持久化到当前目录的 `./data`。
+
+### docker run
+
+```bash
+docker run -d \
+  --name pixiv-archive \
+  -p 6814:6814 \
+  -v "/vol2/1000/Docker/Hermes/Pixiv-Archive/data:/app/data" \
+  -v "/vol6/1000/下载/Aria2下载/Shaft/R18/AI/(114706119):/app/data/images" \
+  -e PA_DATA_DIR="/app/data" \
+  -e IMAGE_SOURCE_DIR="/app/data/images" \
+  -e AUTO_WATCH_ENABLED=1 \
+  -e AUTO_WATCH_DEBOUNCE_SECONDS=30 \
+  -e PIXIV_REFRESH_TOKEN="你的_refresh_token" \
+  -e PA_ACCESS_TOKEN="你的访问令牌" \
+  -e PA_LOG_LEVEL=INFO \
+  --restart unless-stopped \
+  pixiv-archive:local
+```
+
+多目录可使用 `IMAGE_SOURCE_DIRS`：
+
+```bash
+-e IMAGE_SOURCE_DIRS="/app/data/images|/app/data/images2"
+```
+
+查看自动监看状态：
+
+```bash
+curl http://127.0.0.1:6814/api/watch/status
+```
+
+查看运行日志：
+
+```bash
+docker logs -f pixiv-archive
+```
+
+关键日志包括：
+
+```text
+auto watch event queued
+auto watch debounce elapsed; requesting scan
+auto scan job started
+scan directory finished
+thumbnail refresh finished
+metadata sync after scan started
+metadata sync after scan finished
+```
+
+### GitHub Release 自动发布
+
+仓库包含 `.github/workflows/release-on-tag.yml`。该 workflow 只在推送版本 tag 时触发，例如：
+
+```bash
+git tag v1.2.2
+git push origin v1.2.2
+```
+
+触发后会构建并推送 Docker 镜像：
+
+```text
+docker.io/<DOCKERHUB_USERNAME>/pixiv-archive:v1.2.2
+```
+
+同时创建 GitHub Release，并上传当前源码包 `pixiv-archive-docker-v1.2.2.tar.gz`。该流程不会构建或更新 `latest` 标签。
+
+需要在仓库 Secrets 中配置：
+
+```text
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+```
 
 ---
 
@@ -237,10 +368,20 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
 **启动时报 `ModuleNotFoundError`？**
 说明当前 Python 缺少依赖。运行 `install.bat` 创建 venv 后，用 `Start.bat` 重新启动；或改用 `Release\PixivArchive.exe`。
 
-**服务启动但浏览器打不开 / 页面 404？**\n确认访问地址端口与启动日志一致（默认 6814）。`launcher.bat` / exe 在端口被占用时会自动避让到 +1 端口（最多 20 次）；而 `Start.bat`（`run.py`）会直接绑定设定端口，被占用则启动失败——此时请关闭占用端口的程序或在 `.env` 设置 `PA_PORT`。
+**服务启动但浏览器打不开 / 页面 404？**
+确认访问地址端口与启动日志一致（默认 6814）。`launcher.bat` / exe 在端口被占用时会自动避让到 +1 端口（最多 20 次）；而 `Start.bat`（`run.py`）会直接绑定设定端口，被占用则启动失败——此时请关闭占用端口的程序或在 `.env` 设置 `PA_PORT`。
 
 **扫描后没有缩略图？**
 确认 `IMAGE_SOURCE_DIR` 目录存在且可读、文件名确实包含 Pixiv ID（7–10 位数字）、图片格式属于 jpg/jpeg/png/webp/gif/bmp。
+
+**多页作品缩略图不是 p1？**
+扫描器会从文件名末尾识别页码，支持 `145672895 p1.png`、`145672895_p1.png`、`145672895-p1.png`、`145672895p1.png`。修改命名或更新程序后，请重新扫描一次以重排页码并刷新缩略图。
+
+**自动监看看到新文件但画廊没刷新？**
+先查看 `/api/watch/status` 和 `docker logs -f pixiv-archive`。正常日志应包含 `auto scan job started`、`thumbnail refresh finished`、`metadata sync after scan finished`。如果没有元数据同步日志，通常是 `PIXIV_REFRESH_TOKEN` 未设置或无效。
+
+**自动监看会影响硬盘休眠吗？**
+默认事件监听模式不会定时扫盘，只有收到文件变化事件后才触发扫描。`AUTO_WATCH_POLLING=1` 是轮询备用模式，可能影响硬盘休眠，仅在 Docker/NAS 挂载不传递文件事件时使用。
 
 **同步失败 / 认证失败？**
 确认 `.env` 中 `PIXIV_REFRESH_TOKEN` 有效未过期，且网络可访问 pixiv；可在设置中切换直连 / 代理模式（`PIXIV_MODE` / `PIXIV_PROXY`）。

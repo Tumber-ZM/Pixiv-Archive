@@ -1,0 +1,27 @@
+name: 'Upstream Sync'
+
+on:
+  # 定时触发：每天北京时间早上7点运行
+  schedule:
+    - cron: '0 23 * * *'
+  # 手动触发：允许你随时在GitHub网页上点击运行
+  workflow_dispatch:
+
+jobs:
+  sync_latest_from_upstream:
+    runs-on: ubuntu-latest
+    name: Sync latest commits from upstream repo
+
+    steps:
+      # 步骤1：检出你的目标仓库
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+
+      # 步骤2：运行同步Action
+      - name: Sync upstream changes
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          target_sync_branch: main             # 你要更新的分支
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # GitHub自动提供的令牌
+          upstream_sync_repo: Tumber-ZM/Pixiv-Archive   # 上游仓库地址
+          upstream_sync_branch: main           # 上游要同步的分支

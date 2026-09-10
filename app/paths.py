@@ -19,6 +19,9 @@ def _project_root():
 
 
 def get_data_dir():
+    env_data_dir = (os.getenv("PA_DATA_DIR", "") or "").strip()
+    if env_data_dir:
+        return os.path.abspath(env_data_dir)
     if _is_frozen():
         return os.path.dirname(os.path.abspath(sys.executable))
     return _project_root()

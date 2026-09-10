@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import secrets
@@ -7,7 +8,7 @@ import subprocess
 import sys
 from urllib.parse import unquote, parse_qs
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
@@ -17,12 +18,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import paths
 from app import jobs
 from app.database import get_db, init_db
-from app.scanner import scan_directory
+from app.scanner import scan_directory, _normalize_image_pages
+from app.thumbnails import generate_all_thumbnails
 from app.sync import sync_metadata
 from app.download import check_bookmark_subscription
 from app.pixiv import reset_pixiv_client, fetch_profile_image, get_pixiv_client
+from app.watcher import FolderWatcher
+from app.events import publish, stream as event_stream
 
 load_dotenv(paths.ENV_FILE)
+
+logging.basicConfig(
+    level=getattr(logging, (os.getenv("PA_LOG_LEVEL", "INFO") or "INFO").upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("pixiv_archive")
 
 # ---- 局域网访问控制 ----
 # PA_HOST 由 run.py / launcher.py 在导入本模块前写入环境。
@@ -47,6 +57,18 @@ if LAN_MODE and not ACCESS_TOKEN:
 
 _PUBLIC_PREFIXES = ("/static/", "/thumbnails/")
 _LOCAL_CLIENTS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+_SETTING_ENV_KEYS = (
+    "PIXIV_REFRESH_TOKEN",
+    "IMAGE_SOURCE_DIR",
+    "IMAGE_SOURCE_DIRS",
+    "PIXIV_PROXY",
+    "PIXIV_MODE",
+    "PIXIV_IMAGE_MIRROR",
+    "PA_PORT",
+    "PA_ACCESS_TOKEN",
+    "SYNC_DELAY_MS",
+    "AUTO_WATCH_ENABLED",
+)
 
 
 def is_local_client(host):
@@ -76,7 +98,7 @@ def lan_access_url():
 class LANGuardMiddleware:
     """LAN 模式下，非本机请求必须携带访问令牌（?token= 或 X-Access-Token）。
 
-    静态资源与缩略图放行（避免 img 标签无法带 header），
+    静态资源与缩略图放行（避免静态资源请求无法带 header），
     页面 / API / 原图接口一律校验。
     """
 
@@ -108,18 +130,6 @@ class LANGuardMiddleware:
             for k, v in scope.get("headers", []):
                 if k.lower() == b"x-access-token" and v.decode("utf-8", "ignore") == ACCESS_TOKEN:
                     ok = True
-                    break
-        if not ok:
-            # 允许页面导航时经 Cookie 携带令牌（前端 pa_token.js 写入）
-            for k, v in scope.get("headers", []):
-                if k.lower() != b"cookie":
-                    continue
-                for part in v.decode("utf-8", "ignore").split(";"):
-                    kv = part.strip().split("=", 1)
-                    if len(kv) == 2 and kv[0] == "pa_lan_token" and unquote(kv[1]) == ACCESS_TOKEN:
-                        ok = True
-                        break
-                if ok:
                     break
 
         if ok:
@@ -164,6 +174,7 @@ app.add_middleware(LANGuardMiddleware)
 
 THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "thumbnails")
 THUMBNAIL_PATH = os.path.join(paths.DATA_DIR, THUMBNAIL_DIR)
+SOURCE_DIR_SEPARATOR = "|"
 
 # 自定义 ASGI 服务器不会触发 FastAPI 的 lifespan/startup 事件，
 # 这里在模块加载时显式建库建表，确保全新环境可直接使用。
@@ -179,9 +190,166 @@ templates_dir = os.path.join(paths.APP_DIR, "templates")
 templates = Jinja2Templates(directory=templates_dir)
 
 
+def _split_source_dirs(raw):
+    return [(p or "").strip() for p in (raw or "").split(SOURCE_DIR_SEPARATOR) if (p or "").strip()]
+
+
+def _get_source_dirs():
+    dirs = _split_source_dirs(os.getenv("IMAGE_SOURCE_DIRS", ""))
+    legacy = (os.getenv("IMAGE_SOURCE_DIR", "") or "").strip()
+    if legacy:
+        dirs.insert(0, legacy)
+    seen = set()
+    result = []
+    for directory in dirs:
+        key = os.path.normcase(os.path.abspath(directory))
+        if key not in seen:
+            seen.add(key)
+            result.append(directory)
+    return result
+
+
+def _primary_source_dir():
+    dirs = _get_source_dirs()
+    return dirs[0] if dirs else ""
+
+
+def _auto_watch_enabled():
+    return (os.getenv("AUTO_WATCH_ENABLED", "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _scan_source_dirs(source_dirs, progress_callback=None, cancel_event=None):
+    log.info("scan started for %d source director%s: %s",
+             len(source_dirs), "y" if len(source_dirs) == 1 else "ies", source_dirs)
+    combined = {
+        "total_files_scanned": 0,
+        "pixiv_artworks_found": 0,
+        "new_artworks": 0,
+        "new_images": 0,
+        "skipped": 0,
+        "duplicates": 0,
+        "pruned_duplicates": 0,
+        "pruned_images": 0,
+        "pruned_artworks": 0,
+        "source_dirs": source_dirs,
+    }
+    for idx, source_dir in enumerate(source_dirs):
+        if cancel_event and cancel_event.is_set():
+            combined["cancelled"] = True
+            break
+        if progress_callback:
+            progress_callback("scan", idx + 1, len(source_dirs), f"扫描图片目录 {idx + 1}/{len(source_dirs)}")
+        result = scan_directory(source_dir, progress_callback, cancel_event)
+        log.info(
+            "scan directory finished: %s; files=%s artworks=%s new_artworks=%s new_images=%s skipped=%s duplicates=%s",
+            source_dir,
+            result.get("total_files_scanned", 0),
+            result.get("pixiv_artworks_found", 0),
+            result.get("new_artworks", 0),
+            result.get("new_images", 0),
+            result.get("skipped", 0),
+            result.get("duplicates", 0),
+        )
+        if result.get("error"):
+            raise RuntimeError(result["error"])
+        if result.get("cancelled"):
+            combined["cancelled"] = True
+        for key in (
+            "total_files_scanned", "pixiv_artworks_found", "new_artworks", "new_images",
+            "skipped", "duplicates", "pruned_duplicates", "pruned_images", "pruned_artworks",
+        ):
+            combined[key] += result.get(key, 0) or 0
+    log.info("scan finished: %s", combined)
+    return combined
+
+
+def _run_scan_for_sources(job, source_dirs):
+    job.update(phase="scan", message="开始扫描…")
+    result = _scan_source_dirs(source_dirs, job.update, job.cancel_event)
+    if not result.get("cancelled"):
+        job.update(phase="thumb", message="扫描完成，正在生成缩略图…")
+        log.info("thumbnail refresh started")
+        with get_db() as conn:
+            thumb = generate_all_thumbnails(conn, job.update, job.cancel_event)
+            result["thumbnails"] = thumb
+        log.info("thumbnail refresh finished: %s", thumb)
+        _sync_after_scan_if_needed(job, result)
+    job.state["result"] = result
+
+
+def _start_auto_scan():
+    global _last_auto_job_id
+    source_dirs = [d for d in _get_source_dirs() if os.path.isdir(d)]
+    if not source_dirs:
+        log.warning("auto scan skipped: no accessible source directories from configured paths %s", _get_source_dirs())
+        return
+
+    def run_scan(job):
+        publish("auto_scan_started", {"job_id": job.job_id, "source_dirs": source_dirs})
+        try:
+            _run_scan_for_sources(job, source_dirs)
+            publish("auto_scan_done", {"job_id": job.job_id, "result": job.state.get("result") or {}})
+        except Exception as e:
+            publish("auto_scan_failed", {"job_id": job.job_id, "error": str(e)})
+            raise
+
+    job_id, error = jobs.start("auto_scan", run_scan)
+    if error:
+        log.info("auto scan delayed because another job is running: %s", error)
+        _folder_watcher.schedule_scan()
+    else:
+        _last_auto_job_id = job_id
+        log.info("auto scan job started: id=%s", job_id)
+        publish("auto_scan_job_created", {"job_id": job_id})
+
+
+_folder_watcher = FolderWatcher(_start_auto_scan)
+_last_auto_job_id = None
+
+
+def _restart_folder_watcher():
+    if _auto_watch_enabled():
+        result = _folder_watcher.restart(_get_source_dirs())
+        log.info("auto watch enabled; restart result: %s", result)
+        return result
+    _folder_watcher.stop()
+    log.info("auto watch disabled")
+    return {"ok": True, "paths": []}
+
+
+def _normalize_existing_pages():
+    log.info("normalizing existing image pages")
+    with get_db() as conn:
+        _normalize_image_pages(conn)
+    log.info("existing image pages normalized")
+
+
+def _sync_after_scan_if_needed(job, result):
+    changed = (result.get("new_artworks", 0) or 0) > 0 or (result.get("new_images", 0) or 0) > 0
+    if not changed or job.cancel_event.is_set():
+        return
+    if not os.getenv("PIXIV_REFRESH_TOKEN", ""):
+        log.warning("metadata sync skipped after scan: PIXIV_REFRESH_TOKEN is not set")
+        result["sync_skipped"] = "NO_TOKEN"
+        return
+    job.update(phase="sync", current=0, total=None, message="扫描完成，正在同步新作品元数据…")
+    log.info("metadata sync after scan started")
+    sync_result = sync_metadata(progress_callback=job.update, cancel_event=job.cancel_event)
+    result["synced"] = sync_result.get("synced", 0)
+    result["sync_failed"] = sync_result.get("failed", 0)
+    result["sync_deleted"] = sync_result.get("deleted", 0)
+    log.info("metadata sync after scan finished: %s", sync_result)
+
+
 @app.on_event("startup")
 def startup():
     init_db()
+    _normalize_existing_pages()
+    _restart_folder_watcher()
+
+
+_normalize_existing_pages()
+_restart_folder_watcher()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -212,6 +380,39 @@ def _r18_where(alias, value):
     return None
 
 
+def _cover_image_join(alias="a"):
+    return (
+        f"LEFT JOIN images i ON i.id = ("
+        f"SELECT i2.id FROM images i2 "
+        f"WHERE i2.artwork_id = {alias}.id "
+        f"ORDER BY CASE WHEN i2.page = 1 THEN 0 ELSE 1 END, "
+        f"i2.page ASC, i2.id ASC LIMIT 1)"
+    )
+
+
+def _gallery_row_payload(row, expand_pages=False):
+    item = {
+        "id": row["id"],
+        "pixiv_id": row["pixiv_id"],
+        "title": row["title"] or f"Pixiv ID: {row['pixiv_id']}",
+        "author_name": row["author_name"] or "",
+        "page_count": row["page_count"],
+        "create_date": row["create_date"] or "",
+        "pixiv_status": row["pixiv_status"],
+        "thumb_path": row["thumb_path"] or "",
+        "is_favorited": bool(row["is_favorited"]),
+        "is_r18": bool(row["is_r18"]),
+        "sync_error": row["sync_error"] or "",
+    }
+    if expand_pages:
+        item.update({
+            "image_id": row["image_id"],
+            "image_page": row["image_page"],
+            "image_path": row["image_path"] or "",
+        })
+    return item
+
+
 @app.get("/api/artworks")
 def api_artworks(
     page: int = Query(1, ge=1),
@@ -223,6 +424,7 @@ def api_artworks(
     favorite_id: int = Query(0, ge=0),
     r18: str = Query(""),
     status: str = Query(""),
+    expand_pages: bool = Query(False),
 ):
     with get_db() as conn:
         where_clauses = []
@@ -252,9 +454,11 @@ def api_artworks(
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
-        count_row = conn.execute(
-            f"SELECT COUNT(*) FROM artworks a {where_sql}", params
-        ).fetchone()
+        if expand_pages:
+            count_sql = f"SELECT COUNT(*) FROM artworks a JOIN images i ON i.artwork_id = a.id {where_sql}"
+        else:
+            count_sql = f"SELECT COUNT(*) FROM artworks a {where_sql}"
+        count_row = conn.execute(count_sql, params).fetchone()
         total = count_row[0]
 
         offset = (page - 1) * per_page
@@ -269,33 +473,35 @@ def api_artworks(
             order_direction = "DESC" if order == "desc" else "ASC"
             order_sql = f"ORDER BY {sort_column} {order_direction}"
 
-        rows = conn.execute(
-            f"""SELECT a.*, i.path AS thumb_path,
-                a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
-                {_r18_exists()} AS is_r18
-                FROM artworks a
-                LEFT JOIN images i ON a.id = i.artwork_id AND i.page = 0
-                {where_sql}
-                {order_sql}
-                LIMIT ? OFFSET ?""",
-            params + [per_page, offset],
-        ).fetchall()
+        if expand_pages:
+            if sort != "random":
+                order_sql += ", i.page ASC, i.id ASC"
+            rows = conn.execute(
+                f"""SELECT a.*, i.id AS image_id, i.page AS image_page,
+                    i.path AS image_path, i.path AS thumb_path,
+                    a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
+                    {_r18_exists()} AS is_r18
+                    FROM artworks a
+                    JOIN images i ON i.artwork_id = a.id
+                    {where_sql}
+                    {order_sql}
+                    LIMIT ? OFFSET ?""",
+                params + [per_page, offset],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""SELECT a.*, i.path AS thumb_path,
+                    a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
+                    {_r18_exists()} AS is_r18
+                    FROM artworks a
+                    {_cover_image_join()}
+                    {where_sql}
+                    {order_sql}
+                    LIMIT ? OFFSET ?""",
+                params + [per_page, offset],
+            ).fetchall()
 
-        artworks = []
-        for row in rows:
-            artworks.append({
-                "id": row["id"],
-                "pixiv_id": row["pixiv_id"],
-                "title": row["title"] or f"Pixiv ID: {row['pixiv_id']}",
-                "author_name": row["author_name"] or "",
-                "page_count": row["page_count"],
-                "create_date": row["create_date"] or "",
-                "pixiv_status": row["pixiv_status"],
-                "thumb_path": row["thumb_path"] or "",
-                "is_favorited": bool(row["is_favorited"]),
-                "is_r18": bool(row["is_r18"]),
-                "sync_error": row["sync_error"] or "",
-            })
+        artworks = [_gallery_row_payload(row, expand_pages) for row in rows]
 
         return {
             "artworks": artworks,
@@ -459,12 +665,13 @@ def api_search(
     favorite_id: int = Query(0, ge=0),
     r18: str = Query(""),
     status: str = Query(""),
+    expand_pages: bool = Query(False),
 ):
     query = q.strip()
     if not query:
         return api_artworks(page=page, per_page=per_page, sort=sort, order=order,
                             author=author, tag=tag, favorite_id=favorite_id,
-                            r18=r18, status=status)
+                            r18=r18, status=status, expand_pages=expand_pages)
 
     tokens = [t for t in query.split() if t]
 
@@ -507,9 +714,11 @@ def api_search(
 
         where_sql = " WHERE " + " AND ".join(token_conditions)
 
-        count_row = conn.execute(
-            f"SELECT COUNT(*) FROM artworks a{where_sql}", params
-        ).fetchone()
+        if expand_pages:
+            count_sql = f"SELECT COUNT(*) FROM artworks a JOIN images i ON i.artwork_id = a.id{where_sql}"
+        else:
+            count_sql = f"SELECT COUNT(*) FROM artworks a{where_sql}"
+        count_row = conn.execute(count_sql, params).fetchone()
         total = count_row[0]
 
         offset = (page - 1) * per_page
@@ -524,33 +733,35 @@ def api_search(
             order_direction = "DESC" if order == "desc" else "ASC"
             order_sql = f"ORDER BY {sort_column} {order_direction}"
 
-        rows = conn.execute(
-            f"""SELECT a.*, i.path AS thumb_path,
-                a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
-                {_r18_exists()} AS is_r18
-                FROM artworks a
-                LEFT JOIN images i ON a.id = i.artwork_id AND i.page = 0
-                {where_sql}
-                {order_sql}
-                LIMIT ? OFFSET ?""",
-            params + [per_page, offset],
-        ).fetchall()
+        if expand_pages:
+            if sort != "random":
+                order_sql += ", i.page ASC, i.id ASC"
+            rows = conn.execute(
+                f"""SELECT a.*, i.id AS image_id, i.page AS image_page,
+                    i.path AS image_path, i.path AS thumb_path,
+                    a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
+                    {_r18_exists()} AS is_r18
+                    FROM artworks a
+                    JOIN images i ON i.artwork_id = a.id
+                    {where_sql}
+                    {order_sql}
+                    LIMIT ? OFFSET ?""",
+                params + [per_page, offset],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""SELECT a.*, i.path AS thumb_path,
+                    a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
+                    {_r18_exists()} AS is_r18
+                    FROM artworks a
+                    {_cover_image_join()}
+                    {where_sql}
+                    {order_sql}
+                    LIMIT ? OFFSET ?""",
+                params + [per_page, offset],
+            ).fetchall()
 
-        artworks = []
-        for row in rows:
-            artworks.append({
-                "id": row["id"],
-                "pixiv_id": row["pixiv_id"],
-                "title": row["title"] or f"Pixiv ID: {row['pixiv_id']}",
-                "author_name": row["author_name"] or "",
-                "page_count": row["page_count"],
-                "create_date": row["create_date"] or "",
-                "pixiv_status": row["pixiv_status"],
-                "thumb_path": row["thumb_path"] or "",
-                "is_favorited": bool(row["is_favorited"]),
-                "is_r18": bool(row["is_r18"]),
-                "sync_error": row["sync_error"] or "",
-            })
+        artworks = [_gallery_row_payload(row, expand_pages) for row in rows]
 
         return {
             "artworks": artworks,
@@ -603,7 +814,7 @@ def api_favorites(r18: str = Query("")):
             works = conn.execute(
                 f"""SELECT a.id, a.pixiv_id, a.title, a.page_count, i.path AS thumb_path
                     FROM artworks a
-                    LEFT JOIN images i ON a.id = i.artwork_id AND i.page = 0
+                    {_cover_image_join()}
                     JOIN favorite_artworks fa ON fa.artwork_id = a.id
                     WHERE {" AND ".join(works_clauses)}
                     ORDER BY fa.added_date DESC
@@ -752,7 +963,7 @@ def api_authors_works(
             works = conn.execute(
                 f"""SELECT a.id, a.pixiv_id, a.title, a.page_count, i.path AS thumb_path
                    FROM artworks a
-                   LEFT JOIN images i ON a.id = i.artwork_id AND i.page = 0
+                   {_cover_image_join()}
                    WHERE {works_where}
                    ORDER BY a.create_date DESC, a.id DESC
                    LIMIT ?""",
@@ -837,27 +1048,17 @@ def api_scan():
     if jobs.is_busy():
         return _busy_error()
 
-    source_dir = os.getenv("IMAGE_SOURCE_DIR", "")
-    if not source_dir:
+    source_dirs = _get_source_dirs()
+    if not source_dirs:
         return _error_response("NO_SOURCE_DIR", "未设置本地图片目录",
                                "请到 设置 → 本地图片目录 填写后重试")
-    if not os.path.isdir(source_dir):
-        return _error_response("SOURCE_DIR_NOT_FOUND", f"图片目录不存在：{source_dir}",
+    missing = [d for d in source_dirs if not os.path.isdir(d)]
+    if missing:
+        return _error_response("SOURCE_DIR_NOT_FOUND", f"图片目录不存在：{missing[0]}",
                                "请检查设置中的目录路径是否正确")
 
     def run_scan(job):
-        from app.thumbnails import generate_all_thumbnails
-
-        job.update(phase="scan", message="开始扫描…")
-        result = scan_directory(source_dir, job.update, job.cancel_event)
-        if result.get("error"):
-            raise RuntimeError(result["error"])
-        if not result.get("cancelled") and result.get("new_artworks", 0) > 0:
-            job.update(phase="thumb", message="扫描完成，正在生成缩略图…")
-            with get_db() as conn:
-                thumb = generate_all_thumbnails(conn, job.update, job.cancel_event)
-                result["thumbnails"] = thumb
-        job.state["result"] = result
+        _run_scan_for_sources(job, source_dirs)
 
     job_id, error = jobs.start("scan", run_scan)
     if error:
@@ -871,7 +1072,7 @@ def _bookmark_source_dir_check():
     """收藏订阅任务共用前置校验，返回 (source_dir, error_response)。"""
     if jobs.is_busy():
         return None, _busy_error()
-    source_dir = os.getenv("IMAGE_SOURCE_DIR", "")
+    source_dir = _primary_source_dir()
     if not source_dir:
         return None, _error_response("NO_SOURCE_DIR", "未设置本地图片目录",
                                      "请到 设置 → 本地图片目录 填写后重试")
@@ -891,7 +1092,6 @@ def _run_bookmark_check(job, subs, source_dir):
     由 jobs 置为 error。落盘目录按每条收藏自身画师分组（download_single_illust 处理）。
     """
     from datetime import datetime
-    from app.thumbnails import generate_all_thumbnails
     from app.pixiv import _build_session_with_referer
 
     delay = _parse_sync_delay(os.getenv("SYNC_DELAY_MS", ""))
@@ -943,7 +1143,7 @@ def _run_bookmark_check(job, subs, source_dir):
         scan_result = scan_directory(source_dir, job.update, job.cancel_event)
         result["scan"] = {k: scan_result.get(k) for k in
                           ("new_artworks", "new_images") if k in scan_result}
-        if not job.cancel_event.is_set() and scan_result.get("new_artworks", 0) > 0:
+        if not job.cancel_event.is_set():
             job.update("thumb", 0, None, "正在生成缩略图…")
             with get_db() as conn:
                 thumb = generate_all_thumbnails(conn, job.update, job.cancel_event)
@@ -1122,17 +1322,44 @@ def api_job_cancel(job_id: str):
     return snap
 
 
+@app.get("/api/watch/status")
+def api_watch_status():
+    return {
+        "enabled": _auto_watch_enabled(),
+        "configured_dirs": _get_source_dirs(),
+        "watcher": _folder_watcher.status(),
+        "busy": jobs.is_busy(),
+        "last_auto_job_id": _last_auto_job_id,
+        "last_auto_job": jobs.get(_last_auto_job_id) if _last_auto_job_id else None,
+    }
+
+
+@app.get("/api/events")
+def api_events():
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _read_env_file():
     env_path = paths.ENV_FILE
-    if not os.path.exists(env_path):
-        return {}
     result = {}
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                result[key.strip()] = value.strip()
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    result[key.strip()] = value.strip()
+    for key in _SETTING_ENV_KEYS:
+        if key not in result and key in os.environ:
+            result[key] = os.environ.get(key, "")
     return result
 
 
@@ -1151,10 +1378,15 @@ def api_get_settings():
     token = settings.get("PIXIV_REFRESH_TOKEN", "")
     port_str = (settings.get("PA_PORT", "") or "").strip()
     access_token_auto = LAN_MODE and not (settings.get("PA_ACCESS_TOKEN", "") or "").strip()
+    source_dirs = _split_source_dirs(settings.get("IMAGE_SOURCE_DIRS", ""))
+    if not source_dirs and settings.get("IMAGE_SOURCE_DIR", ""):
+        source_dirs = [settings.get("IMAGE_SOURCE_DIR", "")]
+    watcher_status = _folder_watcher.status()
     return {
         "has_token": bool(token),
         "token_preview": token[:8] + "..." if len(token) > 8 else token,
-        "image_source_dir": settings.get("IMAGE_SOURCE_DIR", ""),
+        "image_source_dir": source_dirs[0] if source_dirs else "",
+        "image_source_dirs": source_dirs,
         "proxy": settings.get("PIXIV_PROXY", ""),
         "connection_mode": settings.get("PIXIV_MODE", "auto"),
         "image_mirror": settings.get("PIXIV_IMAGE_MIRROR", ""),
@@ -1162,6 +1394,9 @@ def api_get_settings():
         "access_token": ACCESS_TOKEN,
         "access_token_auto": access_token_auto,
         "sync_delay_ms": _parse_sync_delay(settings.get("SYNC_DELAY_MS", "")),
+        "auto_watch_enabled": (settings.get("AUTO_WATCH_ENABLED", "") or "").strip() == "1",
+        "auto_watch_running": watcher_status["running"],
+        "auto_watch_available": watcher_status["available"],
     }
 
 
@@ -1172,12 +1407,14 @@ async def api_update_settings(request: Request):
     class SettingsUpdate(BaseModel):
         refresh_token: str = ""
         image_source_dir: str = ""
+        image_source_dirs: list[str] = []
         proxy: str = ""
         connection_mode: str = ""
         server_port: str = ""
         access_token: str = ""
         sync_delay_ms: str = ""
         image_mirror: str = ""
+        auto_watch_enabled: bool = False
 
     body = await request.json()
     data = SettingsUpdate(**body)
@@ -1185,9 +1422,15 @@ async def api_update_settings(request: Request):
     if data.refresh_token:
         updates["PIXIV_REFRESH_TOKEN"] = data.refresh_token
         os.environ["PIXIV_REFRESH_TOKEN"] = data.refresh_token
-    if data.image_source_dir:
-        updates["IMAGE_SOURCE_DIR"] = data.image_source_dir
-        os.environ["IMAGE_SOURCE_DIR"] = data.image_source_dir
+    if "image_source_dirs" in body or "image_source_dir" in body:
+        source_dirs = data.image_source_dirs if "image_source_dirs" in body else [data.image_source_dir]
+        source_dirs = [d.strip() for d in source_dirs if (d or "").strip()]
+        joined_dirs = SOURCE_DIR_SEPARATOR.join(source_dirs)
+        primary_dir = source_dirs[0] if source_dirs else ""
+        updates["IMAGE_SOURCE_DIR"] = primary_dir
+        updates["IMAGE_SOURCE_DIRS"] = joined_dirs
+        os.environ["IMAGE_SOURCE_DIR"] = primary_dir
+        os.environ["IMAGE_SOURCE_DIRS"] = joined_dirs
     if "proxy" in body:
         updates["PIXIV_PROXY"] = data.proxy
         os.environ["PIXIV_PROXY"] = data.proxy
@@ -1234,8 +1477,13 @@ async def api_update_settings(request: Request):
                                        "请填写形如 i.pixiv.re 的域名（可带路径前缀），不要包含空格")
         updates["PIXIV_IMAGE_MIRROR"] = mirror
         os.environ["PIXIV_IMAGE_MIRROR"] = mirror
+    if "auto_watch_enabled" in body:
+        auto_watch = "1" if data.auto_watch_enabled else "0"
+        updates["AUTO_WATCH_ENABLED"] = auto_watch
+        os.environ["AUTO_WATCH_ENABLED"] = auto_watch
     _write_env_file(updates)
-    return {"status": "ok"}
+    watcher_result = _restart_folder_watcher()
+    return {"status": "ok", "watcher": watcher_result}
 
 
 @app.post("/api/settings/refresh-ips")

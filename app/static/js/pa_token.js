@@ -1,36 +1,20 @@
 /* 局域网访问令牌助手
- * - 从 URL ?token=、Cookie、localStorage 依次读取令牌
- * - 写入 Cookie，使页面导航（点 logo 返回首页等）自动携带令牌
+ * - 仅从当前 URL ?token= 读取令牌
  * - 全局 fetch 自动附加 X-Access-Token 请求头
  * - paImg(url) 为原图/需鉴权的 img 标签地址附加 ?token=
  */
 (function () {
-    function getCookie(name) {
-        var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-        return m ? decodeURIComponent(m[1]) : '';
-    }
-
     var urlToken = '';
     try {
         urlToken = new URLSearchParams(window.location.search).get('token') || '';
     } catch (e) {
         urlToken = '';
     }
-    if (urlToken) {
-        try {
-            localStorage.setItem('pa-lan-token', urlToken);
-            document.cookie = 'pa_lan_token=' + encodeURIComponent(urlToken) +
-                '; path=/; max-age=31536000; SameSite=Lax';
-        } catch (e) {}
-    }
-    var t = urlToken || getCookie('pa_lan_token');
-    if (!t) {
-        try {
-            t = localStorage.getItem('pa-lan-token') || '';
-        } catch (e) {
-            t = '';
-        }
-    }
+    var t = urlToken;
+    try {
+        localStorage.removeItem('pa-lan-token');
+        document.cookie = 'pa_lan_token=; path=/; max-age=0; SameSite=Lax';
+    } catch (e) {}
     window.paToken = t;
 
     var orig = window.fetch ? window.fetch.bind(window) : null;

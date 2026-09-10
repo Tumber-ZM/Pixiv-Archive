@@ -19,9 +19,9 @@
             } catch (e) {}
         })();
     </script>
-    <script src="/static/js/pa_token.js"></script>
+    <script src="/static/js/pa_token.js?v=20260907-auth1"></script>
     <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260907-ui4">
 </head>
 <body>
 {% include 'icons.html' %}
@@ -62,7 +62,7 @@ updateSidebarToggle();
         <div class="search-bar">
             <input type="text" id="searchInput" placeholder="搜索标题 / 作者 / 标签 / Pixiv ID..."
                    onkeydown="if(event.key==='Enter'){window.location.href='/?q='+encodeURIComponent(this.value)}">
-            <button onclick="window.location.href='/?q='+encodeURIComponent(document.getElementById('searchInput').value)">搜索</button>
+            <button class="top-btn search-submit-btn" onclick="window.location.href='/?q='+encodeURIComponent(document.getElementById('searchInput').value)">搜索</button>
         </div>
     </header>
 
@@ -136,9 +136,9 @@ async function loadTagArtworks(page = 1) {
     const pagDiv = document.getElementById('pagination');
     pagDiv.style.display = 'flex';
     pagDiv.innerHTML = `
-        <button ${data.page <= 1 ? 'disabled' : ''} onclick="loadTagArtworks(${data.page - 1})">上一页</button>
+        <button class="page-btn" ${data.page <= 1 ? 'disabled' : ''} onclick="loadTagArtworks(${data.page - 1})">上一页</button>
         <span class="page-info">第 ${data.page} / ${data.total_pages} 页</span>
-        <button ${data.page >= data.total_pages ? 'disabled' : ''} onclick="loadTagArtworks(${data.page + 1})">下一页</button>`;
+        <button class="page-btn" ${data.page >= data.total_pages ? 'disabled' : ''} onclick="loadTagArtworks(${data.page + 1})">下一页</button>`;
 }
 
 function escapeHtml(text) {

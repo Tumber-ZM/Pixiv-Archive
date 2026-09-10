@@ -1,0 +1,34 @@
+services:
+  pixiv-archive:
+    image: pixiv-archive:local
+    build:
+      context: .
+      args:
+        PIP_INDEX_URL: https://pypi.org/simple
+    container_name: pixiv-archive
+    restart: unless-stopped
+    ports:
+      - "6814:6814"
+    volumes:
+      - ./data:/app/data
+      - "/vol6/1000/下载/Aria2下载/Shaft/R18/AI/(114706119):/app/data/images:ro"
+    environment:
+      TZ: Asia/Shanghai
+      PA_HOST: 0.0.0.0
+      PA_PORT: "6814"
+      PA_DATA_DIR: /app/data
+      PA_ACCESS_TOKEN: ""
+      PA_LOG_LEVEL: INFO
+      IMAGE_SOURCE_DIR: /app/data/images
+      IMAGE_SOURCE_DIRS: /app/data/images
+      AUTO_WATCH_ENABLED: "1"
+      AUTO_WATCH_DEBOUNCE_SECONDS: "30"
+      AUTO_WATCH_POLLING: "0"
+      PIXIV_REFRESH_TOKEN: ""
+      PIXIV_MODE: auto
+      PIXIV_PROXY: ""
+      PIXIV_IMAGE_MIRROR: ""
+      SYNC_DELAY_MS: "800"
+      THUMBNAIL_SIZE: "400"
+      THUMBNAIL_DIR: thumbnails
+      METADATA_DIR: metadata

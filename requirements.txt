@@ -7,3 +7,4 @@ python-dotenv>=1.0.0
 aiofiles>=24.0.0
 pywebview>=5.0
 pystray>=0.19.4
+watchdog>=4.0.0
