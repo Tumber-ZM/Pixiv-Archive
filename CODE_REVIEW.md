@@ -794,7 +794,7 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 - 端口被占用时打印 `启动失败：无法监听 127.0.0.1:<port> —— …` 并返回 1（不再抛 traceback）。
 - `Config` 关掉 access log（保持原先安静的日志）、`graceful_timeout = 5s`。
 - [requirements.txt](requirements.txt) 加回 `hypercorn>=0.17.0`；0.18 的运行时依赖只有 `h11` / `h2` / `priority` / `wsproto`，**不需要 `aiofiles`**。
-- 顺带修一处一致性问题：[Start.bat](Start.bat) 探测 PATH 回退解释器时只 import 了 `fastapi/pixivpy3/dotenv/PIL`，现补上 `hypercorn`，否则可能选中一个缺 hypercorn 的解释器而启动失败。
+- 曾在 [Start.bat](Start.bat) 的回退探测里补上过 `hypercorn`（原为 `fastapi/pixivpy3/dotenv/PIL`，见 15.7），**随后已改回原样**：收益不抵成本——回退分支选错解释器时 `run.py` 本来就会抛 ImportError，`Start.bat` 也会打印「dependencies missing → run install.bat」，而改动脚本会在本机触发安全软件的「无法验证开发者」提示。
 
 验证：套件全绿，其中在线用例是**真实起停 hypercorn 服务**（第二实例持锁被拒、坏请求后服务存活、10 个端点冒烟、页面渲染）。
 
@@ -828,7 +828,7 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 - [README.md](README.md)：删掉「方式二：直接使用 exe」「构建方式」（一键脚本 / PowerShell 脚本 / 手动步骤 / spec 说明）两节、目录结构里的打包条目、`requirements-build.txt` 依赖说明、杀毒软件报毒 FAQ、命令行参数表里的 exe 列；依赖清单补上此前漏写的 `hypercorn`；新增「回归测试」一节。
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：删掉 Build time（PyInstaller）一节。
 - [.gitignore](.gitignore)：删掉 `Release/` / `dist/` / `build/` 三条构建产物忽略规则。
-- [tests/test_static_assets.py](tests/test_static_assets.py)：原 L10 断言（校验 `build.ps1` / spec）改为**反向断言**——打包文件必须不存在、文档（去掉「本次变更」小节后）不得再出现 `PyInstaller` / `Release\PixivArchive.exe` / 已删文件名，并检查 `Start.bat` 的依赖探测含 `hypercorn`。
+- [tests/test_static_assets.py](tests/test_static_assets.py)：原 L10 断言（校验 `build.ps1` / spec）改为**反向断言**——打包文件必须不存在、文档（去掉「本次变更」小节后）不得再出现 `PyInstaller` / `Release\PixivArchive.exe` / 已删文件名；并断言 [Start.bat](Start.bat) 只调用 `run.py`、保持未被改动（原因见 15.7）。
 
 保留未动的一处：`app/paths.py` 里 `getattr(sys, "frozen", False)` 的「冻结时用 exe 同级目录」分支。它是几行运行时路径决策，源码运行走的是同一个 `else` 分支——删掉对现状零影响、留着对将来零成本，所以按「运行时代码」而非「打包工具」处理。（若希望连它一起删，说一声即可。）
 
@@ -838,3 +838,27 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 
 - `2135323` 新增常驻回归测试套件（235 项）＋ `run.py` 换 hypercorn ＋ `build.ps1` 产物路径修正。
 - 本节改动（L8 ＋ 前端单测 ＋ 移除打包链路 ＋ 文档同步）见随后提交。
+
+### 15.7 启动器 `Start.bat` 还原：本机安全软件的「无法验证开发者」只冲着被改动的脚本
+
+用户反馈：双击 [Start.bat](Start.bat) 会弹「无法验证开发者」的风险提示，而本次会话前留存的副本（`Start1.bat`，内容就是改动前的 `Start.bat`）可以正常运行、没有提示。
+
+事实对照（都实测过）：
+
+| 项 | `Start.bat`（改动后） | `Start1.bat`（会话前留存） |
+|----|----------------------|---------------------------|
+| git blob | `0ba3c1c4…` | `8fffe404…` = `2ad47e5:Start.bat`，**与会话前完全一致** |
+| 行尾 / BOM / 非 ASCII | LF / 无 / 0 | LF / 无 / 0 |
+| `Zone.Identifier`（来自网络的标记） | 无 | 无 |
+| 属性 / 创建时间 | Archive / 相同 | Archive / 相同 |
+| 与另一份的内容差异 | — | **只差 15.2 里加的 11 字节（`hypercorn, `）与随之变化的修改时间** |
+
+系统侧没有任何记录可查：`Microsoft-Windows-SmartScreen/Debug`、`Microsoft-Windows-SmartAppControl/Operational`、`Microsoft-Windows-AppLocker/EXE and DLL`、`Microsoft-Windows-AppLocker/MSI and Script` 都没有匹配事件，Defender 日志也是空的。也就是说这不是 Windows 的 SmartScreen / 智能应用控制拦截，而是本机第三方安全软件对「被改动过的脚本」的判定——同一内容、未改动的副本放行，改过的就提示。
+
+处理方式（按「最小惊讶」）：
+
+- `Start.bat` **还原为会话前字节**（blob 回到 `8fffe404…`），`fc /b` 与 `Start1.bat` 完全一致，长度 1013 字节，修改时间也改回 `2026-09-02 22:02:19`；
+- [tests/test_static_assets.py](tests/test_static_assets.py) 的 L10 断言相应改为「`Start.bat` 只调用 `run.py`、不含额外探测」，防止以后又把它改回去；
+- 代价是 `hypercorn` 探测被去掉。这个探测只影响「venv 不存在、PATH 解释器缺 hypercorn」这一种情况：真选错了，`run.py` 同样会抛 ImportError，`Start.bat` 也会打印「dependencies missing → run install.bat」。**若仍想要更清楚的提示，正确位置是 `run.py` 顶部对 hypercorn 的 import 做 try/except 给出可读信息，而不是改启动器**——启动器以后不再由我改动，确需改动会先征询。
+
+用户留存的 `Start1.bat` 在版本库里是未跟踪文件（`git status` 为 `?? Start1.bat`），保留还是删除由用户决定，本轮没有动它。

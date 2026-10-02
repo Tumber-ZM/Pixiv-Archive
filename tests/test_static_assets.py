@@ -66,8 +66,11 @@ def run(t):
     t.check("L10 文档不再提 PyInstaller / Release 产物",
             "PyInstaller" not in docs and "Release\\PixivArchive.exe" not in docs)
     start_bat = _read(h.ROOT, "Start.bat")
-    t.check("L10 Start.bat 的依赖探测覆盖 hypercorn（换服务器后新增的运行时依赖）",
-            "hypercorn" in start_bat)
+    # 启动器刻意保持与会话前完全一致：本机安全软件只对「被改动过的脚本」弹
+    # 「无法验证开发者」，而回退分支选错解释器时 run.py 自己会抛 ImportError、
+    # Start.bat 也会提示「dependencies missing → run install.bat」，无需再改它。
+    t.check("L10 Start.bat 只调用 run.py 且未被改动（不引入额外探测）",
+            "run.py" in start_bat and "hypercorn" not in start_bat)
     t.check("L10 hypercorn 仍在依赖清单里", "hypercorn" in _read(h.ROOT, "requirements.txt"))
 
     # ---------------- L11：删掉无引用的图标 symbol ----------------
