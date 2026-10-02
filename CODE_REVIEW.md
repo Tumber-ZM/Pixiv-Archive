@@ -510,7 +510,7 @@ WHERE title IS NULL OR last_synced IS NULL
 
 ### 已知未处理项
 
-- L1–L11 维持报告中的原状。
+- L1–L11 已在**第十四节**逐条处理完毕（9 条修复、L3 证伪、L8 的虚拟滚动明确列为后续优化）。
 - M3 的残留风险与 M8 的 `Allow` 表头瑕疵已在**第十三节**收尾修复。
 
 ---
@@ -651,3 +651,108 @@ return handle                        # ← 创建失败时 handle 是 NULL，却
 | 正常退出路径（桩服务器）`main()` 返回 0 且锁文件被清理 | 通过 |
 
 两点测试环境说明：本环境里 `Start-Process -PassThru` 与 `subprocess.Popen` 返回的 PID **并非子进程真实 PID**（存在进程包装层），因此测试校验的是「锁文件里的 PID 真实存活 / 未被改写」这类不变量，而不是与返回的 PID 做相等比较；另外沙箱禁止发送 Ctrl+Break，正常退出改用桩服务器直接验证 `main()` 的 `finally` 路径。
+
+---
+
+## 十四、轻微问题（L1–L11）清理
+
+第一节「轻微」表里的 11 条，本轮逐条给结论：**9 条确认为真问题并已修，1 条（L3）实测为误报，1 条（L8）只完成可控部分**。
+
+### 逐条结论
+
+| ID | 结论 | 落地位置 |
+|----|------|----------|
+| L1 | 真问题 → **已修** | 新增 [app/envfile.py](app/envfile.py)：`read_env()` [:17](app/envfile.py#L17)、`update_env()` [:56](app/envfile.py#L56) |
+| L2 | 真问题 → **已修** | [app/main.py:287](app/main.py#L287) `_remove_files()`；响应字段 [:322-334](app/main.py#L322-L334)、[:349-374](app/main.py#L349-L374)；前端 [index.html:795](app/templates/index.html#L795) |
+| L3 | **误报** → 未改代码 | 见下 |
+| L4 | 真问题 → **已修** | 标签筛选 [app/main.py:158-166](app/main.py#L158-L166)、标签搜索 [:523](app/main.py#L523) |
+| L5 | 真问题 → **已修** | 三个模板 + [partials/common_js.html:9](app/templates/partials/common_js.html#L9) `escapeAttr()` |
+| L6 | 真问题 → **已修** | [app/templates/base.html](app/templates/base.html) + [app/templates/partials/](app/templates/partials/)（4 个片段） |
+| L7 | 真问题 → **已修** | [partials/common_js.html:23](app/templates/partials/common_js.html#L23) `showLoadError()`、[:36](app/templates/partials/common_js.html#L36) `fetchJson()` |
+| L8 | **部分修** | [index.html:465](app/templates/index.html#L465) `PAGE_SIZE`；虚拟滚动**未做** |
+| L9 | 真问题 → **已修** | 新增 [app/config.py:7](app/config.py#L7) `DEFAULT_PORT`；[run.py:22](run.py#L22)、[app/main.py:20](app/main.py#L20) 改为导入 |
+| L10 | 真问题 → **已修** | [build.ps1](build.ps1) |
+| L11 | 真问题 → **已修** | [app/templates/icons.html](app/templates/icons.html) |
+
+### L3：缩略图 `.jpg` 是误报，没有代码要改
+
+第一节写的是「源图为 png/webp 时缓存与删除路径不匹配」。实际读 [app/thumbnails.py:20-29](app/thumbnails.py#L20-L29)：缩略图是**无条件重编码**成 JPEG 的——`Image.open(src)` 之后 `img.convert("RGB").save(dest, "JPEG", ...)`。不管源图是 png、webp 还是别的格式，落盘的一定是 JPEG，所以 `{pixiv_id}.jpg` 与 `paths.thumbnail_path()`、模板里的 `/thumbnails/{id}.jpg` 三者本就一致。
+
+真实库实测：`thumbnails/` 下 1310 个文件，扩展名分布 `{'.jpg': 1310}`，**没有一个其它扩展名**。因此这条判定为误报，未改任何代码。
+
+### L1：`.env` 为什么不能只加把锁
+
+原实现是把整个 `.env` 解析成 dict、再全量覆盖写回，丢注释、丢空行、重排顺序，也没有并发保护。修复没有停在「加锁」上，而是把写入改成**按键就地更新**（[app/envfile.py](app/envfile.py)）：
+
+- `update_env()` 逐行扫描，命中目标键就替换该行（保留原有位置），未命中的行原样写回；新键追加到末尾；
+- **换行风格跟随文件**：文件里出现过 CRLF 就继续用 CRLF（`readlines` 必须带 `newline=""`，否则通用换行模式会把 CRLF 归一成 LF，写回时把用户的换行风格悄悄改掉——这个坑是本轮验证脚本抓出来的，见下）；
+- 写入走「同目录临时文件 + `os.replace()`」原子替换，失败时清理临时文件；`tempfile.mkstemp(dir=同目录)` 保证替换不跨卷；
+- 模块级 `threading.Lock` 把同进程内的并发写串行化；`read_env()` / `update_env()` 是纯函数式的键值操作，不做任何静默的格式转换。
+
+[app/main.py](app/main.py) 的 `_read_env_file` / `_write_env_file` 与 [app/direct_connect.py](app/direct_connect.py) 的 `_read_env` / `_write_env` 全部改走这一套，设置接口与直连 IP 覆盖不再有第二份写入实现。
+
+### L2：删除失败不再被吞
+
+两个删除接口原来各自维护一段 `try: os.remove(...) except Exception: pass`。现在收敛为一个 `_remove_files()`（[app/main.py:287](app/main.py#L287)），只捕 `OSError` 并返回 `(removed, failed)`，失败项带 `path` 与 `error` 文案；单条删除与批量删除都回报 `files_removed` / `files_failed`（单条另外保留原有的 `files_deleted` 字段），前端 toast 会把失败数量显示出来（[index.html:795](app/templates/index.html#L795)）。原先「文件没删掉却提示删除成功」的情况不再发生。
+
+### L4：标签筛选与关键词搜索同口径
+
+关键词搜索一直同时匹配 `tags.name` 与 `tags.translated_name`，而按标签筛选只匹配 `name`——用中文译名点进去会一个作品都筛不到。现在筛选改为 `t.name LIKE ? OR t.translated_name LIKE ?`（[app/main.py:158-166](app/main.py#L158-L166)），标签搜索接口 `/api/tags?q=` 同步改口径（[:523](app/main.py#L523)）。
+
+需要如实说明一点：**本库当前带译名的标签数为 0**（`translated_name` 全空），所以这条修复在真实数据上观察不到差异。正确性由隔离临时库的用例保证（见验证一节），而不是靠真实库的观测。
+
+### L5 / L7：前端转义与失败提示
+
+- L5：作者名、标签名、作品标题拼进 `innerHTML` 时补上 `escapeHtml()`；`alt="..."` 这类属性值改用新增的 `escapeAttr()`（先 HTML 转义再处理 `"` / `'`），避免属性上下文被闭合。
+- L7：三个页面原来请求失败会永久停在「加载中」并留下未处理的 promise rejection。现在统一走 `fetchJson()`：失败时收起「加载中」、把原因写进页面（`showLoadError()`），返回 `null` 让调用方直接 `return`。作者页里那次「结果从未被使用」的 `/api/artworks?author=` 并发请求也一并删掉了。
+
+### L6：模板结构
+
+原来是「4 个模板各写一遍」：主题初始化 IIFE、侧栏折叠脚本、`escapeHtml`、`r18Param`。现在：
+
+| 文件 | 内容 |
+|------|------|
+| [app/templates/base.html](app/templates/base.html) | 页面骨架，提供 `title` / `sidebar` / `sidebar_js` / `content` 四个 block |
+| [partials/head_boot.html](app/templates/partials/head_boot.html) | 首屏主题 / 安全模式 / 侧栏折叠状态 IIFE（4 个页面共用） |
+| [partials/sidebar_simple.html](app/templates/partials/sidebar_simple.html) | 精简侧栏（`nav_active` 变量决定是否标「当前项」） |
+| [partials/sidebar_js.html](app/templates/partials/sidebar_js.html) | `updateSidebarToggle` / `toggleSidebar` |
+| [partials/common_js.html](app/templates/partials/common_js.html) | `escapeHtml` / `escapeAttr` / `r18Param` / `showLoadError` / `fetchJson` |
+
+`author.html` / `tag.html` / `artwork.html` 改为 `{% extends 'base.html' %}`；`index.html` 布局特殊（自带一套侧栏与 helpers），只接入 `head_boot` 片段，不做强拆。
+
+这次重构**只做去重、不改渲染结果**：重构前后的 `/`、`/author/1`、`/tag/R-18`、`/artwork/148494017` 四个页面做了逐行对照，侧栏、head 引导脚本、图标区完全一致，差异只有本节列出的那些有意改动（见验证一节）。
+
+### L8：常量收敛了，虚拟滚动没做
+
+`per_page=100` 在 `buildGalleryUrl()` 里出现两次，现在收敛为一个带说明的 `PAGE_SIZE` 常量（[index.html:465](app/templates/index.html#L465)）。**虚拟滚动没有实现**：它是独立的功能改造（需要重写网格渲染与滚动监听），本轮不夹带；当前状态是「每页 100 个瓦片 + 缩略图 `loading="lazy"`」，图库上万后翻页仍有压力。这一条按「部分完成」记录。
+
+### L9 / L10 / L11
+
+- L9：默认端口原本在 `run.py` 与 `app/main.py` 各写一遍，现在只有一个来源 [app/config.py:7](app/config.py#L7) `DEFAULT_PORT = 6814`，两处改为导入。
+- L10：[build.ps1](build.ps1) 补上「缺 venv 就创建」（依次尝试 `python` / `py`，与 `install.bat` 同策略）、生成后校验 `assets/icon.ico` 存在、打包后校验产物存在，并按 `onefile` 的真实产物打印 `dist\PixivArchive.exe`（原脚本打印的是不存在的 `dist\PixivArchive\PixivArchive.exe`）。任一环节失败即以非零码退出。
+- L11：删除已无任何引用的 `#i-external` symbol（全项目 0 引用）。
+
+### 本轮验证
+
+全部断言都在临时文件 / 临时库上执行，真实库前后清点一致。
+
+| 验证 | 覆盖 | 结果 |
+|------|------|------|
+| 综合验证脚本 `_verify_L.py`（离线单元 + 真实服务） | L1 14 项、L2 5 项、L9 2 项、L10 5 项、L11 2 项、L4 4 项、L5/L6/L7/L8 与页面渲染 24 项、单实例锁 6 项、接口形状与冒烟 13 项、H1 4 项、M4 3 项、M8 2 项 | **93/93 通过** |
+| 模板渲染前后对照（`_snap_before` vs `_snap_after`） | 4 个页面 | 侧栏 / head 引导 / 图标区逐字节一致，其余差异全部对应本节改动 |
+| 单实例锁端到端（PowerShell 起第二个实例） | 锁检测与退出 | 打印「已在运行中」，未占用端口 |
+
+真实库清点（本轮结束时）：1310 作品 / 1890 图片 / 555 作者 / 2812 标签 / 10695 作品-标签关系 / 0 收藏夹订阅 / 1 已删除；metadata JSON 1310 个与作品 **1:1**（孤儿 0、缺失 0），缩略图 1310 个且扩展名全部为 `.jpg`。
+
+### 本轮自查发现并修掉的两个自身缺陷
+
+如实记录，因为它们都属于「差一点就发布出去」的类型：
+
+1. **`.env` 换行风格被破坏**：`update_env()` 最初用普通文本模式读文件，Python 的通用换行模式把 CRLF 归一成 LF，于是「保留原样」的行也被改成 LF 写回——用户 .env 的换行风格会被静默改掉，diff 里一片红。验证脚本里的 CRLF 断言当场把它抓出来，改为 `newline=""` 读写。
+2. **L4 的修复没有落到 tag 筛选上**：第一轮改动加在了 `api_search` 的既有代码上（那里本来就已经匹配译名），而真正需要改的 `api_artworks` 标签筛选仍是 `t.name LIKE ?`。隔离库用例（用译名筛选返回 0 条）把它暴露出来，才补上正确的两处。
+
+### 测试环境说明（如实记录）
+
+- 页面里的 JavaScript **没有在浏览器里真正执行过**：L6 的重构、L7 的 `fetchJson`、L5 的转义，验证手段是「服务端渲染结果逐行对照 + 静态断言」，不是运行时行为测试。要覆盖运行时行为需要引入 headless 浏览器，本轮没有做。
+- 本机环境下从 Python 再启动子进程会被明显拖慢（空闲子进程实测 40–53 秒），一度表现为「第二个实例迟迟不退出」。改用 PowerShell 端到端 + 函数级断言（`acquire_single_instance()` 在真实实例持锁时返回 `None`）来验证，结论是锁本身工作正常。
+- 验证脚本均为一次性脚本，未纳入版本库；如需要可以整理成常驻回归测试。

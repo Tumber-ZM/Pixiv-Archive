@@ -1,0 +1,15 @@
+<script>
+        (function () {
+            try {
+                if (localStorage.getItem('pa-theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+                if (localStorage.getItem('pa-safe') === '1') {
+                    document.documentElement.classList.add('safe-mode');
+                }
+                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
+                    document.documentElement.classList.add('sb-collapsed');
+                }
+            } catch (e) {}
+        })();
+    </script>

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Pixiv Archive{% endblock %}</title>
+    {% include 'partials/head_boot.html' %}
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+{% include 'icons.html' %}
+
+{% block sidebar %}{% include 'partials/sidebar_simple.html' %}{% endblock %}
+
+{% block sidebar_js %}{% include 'partials/sidebar_js.html' %}{% endblock %}
+{% include 'partials/common_js.html' %}
+{% block content %}{% endblock %}
+</body>
+</html>

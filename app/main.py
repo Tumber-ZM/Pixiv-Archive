@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import paths
 from app import jobs
+from app import envfile
+from app.config import DEFAULT_PORT
 from app.database import get_db, init_db
 from app.scanner import scan_directory
 from app.sync import sync_metadata
@@ -24,7 +26,6 @@ from app.pixiv import reset_pixiv_client, fetch_profile_image, get_pixiv_client
 
 load_dotenv(paths.ENV_FILE)
 
-DEFAULT_PORT = 6814
 _SYNC_DELAY_DEFAULT = 800
 _SYNC_DELAY_MAX = 10000
 
@@ -155,10 +156,14 @@ def api_artworks(
             where_clauses.append("a.author_name LIKE ?")
             params.append(f"%{author}%")
         if tag:
+            # 与 /api/search 的关键词口径保持一致：原名与中文译名都算命中，
+            # 否则用译名点进来的标签会一个作品都筛不到
             where_clauses.append(
                 "a.id IN (SELECT artwork_id FROM artwork_tags at2 "
-                "JOIN tags t ON at2.tag_id = t.id WHERE t.name LIKE ?)"
+                "JOIN tags t ON at2.tag_id = t.id "
+                "WHERE t.name LIKE ? OR t.translated_name LIKE ?)"
             )
+            params.append(f"%{tag}%")
             params.append(f"%{tag}%")
         if favorite_id:
             where_clauses.append(
@@ -279,6 +284,23 @@ def api_artwork_detail(artwork_id: int):
         }
 
 
+def _remove_files(file_paths):
+    """删除本地源文件，返回 (成功路径列表, 失败列表)。
+
+    失败必须上报：这里原来是 `except Exception: pass`，接口照样回报「已删除」，
+    用户会以为本地文件也清掉了，实际磁盘上还留着。失败项以 {path, error} 返回，
+    由前端提示。
+    """
+    removed, failed = [], []
+    for path in file_paths:
+        try:
+            os.remove(path)
+            removed.append(path)
+        except OSError as exc:
+            failed.append({"path": path, "error": str(exc)})
+    return removed, failed
+
+
 @app.delete("/api/artworks/{artwork_id}")
 def api_delete_artwork(artwork_id: int, delete_files: bool = Query(False)):
     with get_db() as conn:
@@ -297,17 +319,20 @@ def api_delete_artwork(artwork_id: int, delete_files: bool = Query(False)):
         conn.execute("DELETE FROM images WHERE artwork_id = ?", (artwork_id,))
         conn.execute("DELETE FROM artworks WHERE id = ?", (artwork_id,))
 
+        files_removed, files_failed = [], []
         if delete_files:
-            for img in images:
-                try:
-                    os.remove(img["path"])
-                except Exception:
-                    pass
+            files_removed, files_failed = _remove_files([img["path"] for img in images])
         # 缩略图与元数据 JSON 是库内作品的派生物。作品记录删除后它们即失去引用，
         # 与扫描时的缺失清理保持一致一并删除，避免残留孤儿文件。
         paths.remove_side_files(pixiv_id["pixiv_id"])
 
-        return {"status": "deleted", "artwork_id": artwork_id, "files_deleted": delete_files}
+        return {
+            "status": "deleted",
+            "artwork_id": artwork_id,
+            "files_deleted": delete_files,
+            "files_removed": files_removed,
+            "files_failed": files_failed,
+        }
 
 
 @app.post("/api/artworks/batch-delete")
@@ -321,6 +346,7 @@ async def api_batch_delete_artworks(request: Request):
     body = await _json_body(request)
     data = BatchDelete(**body)
     deleted = 0
+    files_removed, files_failed = [], []
     with get_db() as conn:
         for artwork_id in data.artwork_ids:
             images = conn.execute(
@@ -335,14 +361,18 @@ async def api_batch_delete_artworks(request: Request):
             conn.execute("DELETE FROM images WHERE artwork_id = ?", (artwork_id,))
             conn.execute("DELETE FROM artworks WHERE id = ?", (artwork_id,))
             if data.delete_files:
-                for img in images:
-                    try:
-                        os.remove(img["path"])
-                    except Exception:
-                        pass
+                removed, failed = _remove_files([img["path"] for img in images])
+                files_removed.extend(removed)
+                files_failed.extend(failed)
             paths.remove_side_files(pixiv_id["pixiv_id"])
             deleted += 1
-    return {"status": "ok", "deleted": deleted, "files_deleted": data.delete_files}
+    return {
+        "status": "ok",
+        "deleted": deleted,
+        "files_deleted": data.delete_files,
+        "files_removed": files_removed,
+        "files_failed": files_failed,
+    }
 
 
 @app.post("/api/artworks/batch-favorites-clear")
@@ -406,10 +436,14 @@ def api_search(
             token_conditions.append("a.author_name LIKE ?")
             params.append(f"%{author}%")
         if tag:
+            # 与关键词搜索保持一致：标签名与译名都参与匹配。原先只匹配 name，
+            # 用中文译名（translated_name）点进来会一个作品都搜不到。
             token_conditions.append(
                 "a.id IN (SELECT artwork_id FROM artwork_tags at2 "
-                "JOIN tags t ON at2.tag_id = t.id WHERE t.name LIKE ?)"
+                "JOIN tags t ON at2.tag_id = t.id "
+                "WHERE t.name LIKE ? OR t.translated_name LIKE ?)"
             )
+            params.append(f"%{tag}%")
             params.append(f"%{tag}%")
         if favorite_id:
             token_conditions.append(
@@ -486,7 +520,8 @@ def api_tags(q: str = Query("")):
         where = ""
         params = []
         if q:
-            where = " WHERE t.name LIKE ?"
+            where = " WHERE t.name LIKE ? OR t.translated_name LIKE ?"
+            params.append(f"%{q}%")
             params.append(f"%{q}%")
         rows = conn.execute(
             f"""SELECT t.*, COUNT(at2.artwork_id) AS artwork_count
@@ -1047,26 +1082,12 @@ def api_job_cancel(job_id: str):
 
 
 def _read_env_file():
-    env_path = paths.ENV_FILE
-    if not os.path.exists(env_path):
-        return {}
-    result = {}
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                result[key.strip()] = value.strip()
-    return result
+    return envfile.read_env(paths.ENV_FILE)
 
 
 def _write_env_file(settings):
-    env_path = paths.ENV_FILE
-    existing = _read_env_file()
-    existing.update(settings)
-    with open(env_path, "w", encoding="utf-8") as f:
-        for key, value in existing.items():
-            f.write(f"{key}={value}\n")
+    """只更新给定的键；注释、空行与原有顺序全部保留（见 app/envfile.py）。"""
+    envfile.update_env(paths.ENV_FILE, settings)
 
 
 @app.get("/api/settings")

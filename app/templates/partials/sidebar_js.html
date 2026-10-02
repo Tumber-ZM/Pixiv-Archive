@@ -1,0 +1,16 @@
+<script>
+function updateSidebarToggle() {
+    const collapsed = document.documentElement.classList.contains('sb-collapsed');
+    const btn = document.getElementById('btnSidebar');
+    if (btn) {
+        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
+        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
+    }
+}
+function toggleSidebar() {
+    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
+    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+    updateSidebarToggle();
+}
+updateSidebarToggle();
+</script>

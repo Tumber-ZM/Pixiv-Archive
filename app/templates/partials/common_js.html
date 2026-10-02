@@ -1,0 +1,45 @@
+<script>
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function r18Param() {
+    try {
+        const v = localStorage.getItem('pa-r18');
+        return (v === 'hide' || v === 'only') ? v : '';
+    } catch (e) { return ''; }
+}
+
+// 统一的加载失败提示：收起仍在转的「加载中」，把原因显示出来（默认写进 #detail，
+// 没有就退回 #empty）。原先这些页面请求失败时会永久停在「加载中」并留下未处理的
+// rejection。
+function showLoadError(e, target) {
+    const msg = '加载失败：' + (e && e.message ? e.message : e);
+    const loading = document.getElementById('loading');
+    if (loading) loading.style.display = 'none';
+    const box = document.getElementById(target || 'detail') || document.getElementById('empty');
+    if (box) {
+        box.style.display = 'block';
+        box.textContent = msg;
+    }
+}
+
+// 统一的取数：失败时提示并返回 null，调用方只需判断 null。这样无论是首次加载还是
+// 分页按钮触发的加载，都不会因为一次失败而卡在「加载中」。
+async function fetchJson(url, opts) {
+    try {
+        const resp = await fetch(url, opts);
+        return await resp.json();
+    } catch (e) {
+        showLoadError(e);
+        return null;
+    }
+}
+</script>

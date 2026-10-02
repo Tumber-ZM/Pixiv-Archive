@@ -19,12 +19,12 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import paths  # noqa: E402
+from app.config import DEFAULT_PORT  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # 先加载 .env，使设置里保存的 PA_PORT 生效
 load_dotenv(paths.ENV_FILE)
 
-DEFAULT_PORT = 6814
 HOST = "127.0.0.1"
 LOCK_FILE_NAME = ".instance.lock"
 # 创建锁文件与写入 PID 之间被强杀时可能留下空文件，超过这个秒数即视为陈旧

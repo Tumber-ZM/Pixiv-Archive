@@ -1,60 +1,8 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>作品详情 - Pixiv Archive</title>
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem('pa-theme') === 'light') {
-                    document.documentElement.setAttribute('data-theme', 'light');
-                }
-                if (localStorage.getItem('pa-safe') === '1') {
-                    document.documentElement.classList.add('safe-mode');
-                }
-                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
-                    document.documentElement.classList.add('sb-collapsed');
-                }
-            } catch (e) {}
-        })();
-    </script>
-    <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/css/style.css">
-</head>
-<body>
-{% include 'icons.html' %}
+{% extends 'base.html' %}
+{% block title %}作品详情 - Pixiv Archive{% endblock %}
+{% block sidebar %}{% set nav_active = true %}{% include 'partials/sidebar_simple.html' %}{% endblock %}
 
-<aside class="sidebar">
-    <div class="brand-row">
-        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
-        <button class="sb-toggle" id="btnSidebar" title="收起侧栏" onclick="toggleSidebar()"></button>
-    </div>
-    <div class="sidebar-body">
-        <nav>
-            <a class="side-nav-item active" href="/" title="画廊">
-                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
-            </a>
-        </nav>
-    </div>
-</aside>
-
-<script>
-function updateSidebarToggle() {
-    const collapsed = document.documentElement.classList.contains('sb-collapsed');
-    const btn = document.getElementById('btnSidebar');
-    if (btn) {
-        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
-        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
-    }
-}
-function toggleSidebar() {
-    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
-    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
-    updateSidebarToggle();
-}
-updateSidebarToggle();
-</script>
+{% block content %}
 
 <div class="content">
     <main>
@@ -119,8 +67,8 @@ document.addEventListener('keydown', function (e) {
 });
 
 async function loadDetail() {
-    const resp = await fetch(`/api/artworks/${artworkId}`);
-    const data = await resp.json();
+    const data = await fetchJson(`/api/artworks/${artworkId}`);
+    if (!data) return;
 
     if (data.error) {
         document.getElementById('detail').innerHTML = '<div class="empty-state">作品未找到</div>';
@@ -129,14 +77,14 @@ async function loadDetail() {
 
     let tagsHtml = '';
     data.tags.forEach(t => {
-        tagsHtml += `<a href="/tag/${encodeURIComponent(t.name)}">#${t.name}</a>`;
+        tagsHtml += `<a href="/tag/${encodeURIComponent(t.name)}">#${escapeHtml(t.name)}</a>`;
     });
 
     let imagesHtml = '';
     if (data.images.length > 0) {
         imagesHtml = `
         <div class="image-viewer">
-            <img id="mainImage" src="/image/${encodeURI(data.images[0].path)}" alt="${data.title}">
+            <img id="mainImage" src="/image/${encodeURI(data.images[0].path)}" alt="${escapeAttr(data.title)}">
         </div>`;
         if (data.images.length > 1) {
             imagesHtml += `
@@ -196,13 +144,6 @@ function updateImage() {
     const img = window._imageList[window._currentIdx];
     document.getElementById('mainImage').src = '/image/' + encodeURI(img.path);
     document.getElementById('pageIndicator').textContent = `${window._currentIdx + 1} / ${window._imageList.length}`;
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 async function openInFolder() {
@@ -361,5 +302,4 @@ document.addEventListener('dblclick', function (e) {
 
 loadDetail();
 </script>
-</body>
-</html>
+{% endblock %}

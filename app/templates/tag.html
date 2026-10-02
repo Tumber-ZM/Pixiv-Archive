@@ -1,60 +1,7 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>标签 - Pixiv Archive</title>
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem('pa-theme') === 'light') {
-                    document.documentElement.setAttribute('data-theme', 'light');
-                }
-                if (localStorage.getItem('pa-safe') === '1') {
-                    document.documentElement.classList.add('safe-mode');
-                }
-                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
-                    document.documentElement.classList.add('sb-collapsed');
-                }
-            } catch (e) {}
-        })();
-    </script>
-    <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/css/style.css">
-</head>
-<body>
-{% include 'icons.html' %}
+{% extends 'base.html' %}
+{% block title %}标签 - Pixiv Archive{% endblock %}
 
-<aside class="sidebar">
-    <div class="brand-row">
-        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
-        <button class="sb-toggle" id="btnSidebar" title="收起侧栏" onclick="toggleSidebar()"></button>
-    </div>
-    <div class="sidebar-body">
-        <nav>
-            <a class="side-nav-item" href="/" title="画廊">
-                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
-            </a>
-        </nav>
-    </div>
-</aside>
-
-<script>
-function updateSidebarToggle() {
-    const collapsed = document.documentElement.classList.contains('sb-collapsed');
-    const btn = document.getElementById('btnSidebar');
-    if (btn) {
-        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
-        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
-    }
-}
-function toggleSidebar() {
-    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
-    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
-    updateSidebarToggle();
-}
-updateSidebarToggle();
-</script>
+{% block content %}
 
 <div class="content">
     <header class="content-topbar">
@@ -80,16 +27,9 @@ updateSidebarToggle();
 const tagName = decodeURIComponent("{{ tag_name }}");
 let currentPage = 1;
 
-function r18Param() {
-    try {
-        const v = localStorage.getItem('pa-r18');
-        return (v === 'hide' || v === 'only') ? v : '';
-    } catch (e) { return ''; }
-}
-
 async function load() {
     document.getElementById('tagInfo').style.display = 'block';
-    document.getElementById('tagInfo').innerHTML = `<h2>#${tagName}</h2>`;
+    document.getElementById('tagInfo').innerHTML = `<h2>#${escapeHtml(tagName)}</h2>`;
     await loadTagArtworks();
 }
 
@@ -98,8 +38,8 @@ async function loadTagArtworks(page = 1) {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('gallery').innerHTML = '';
 
-    const resp = await fetch(`/api/artworks?page=${page}&tag=${encodeURIComponent(tagName)}&r18=${r18Param()}`);
-    const data = await resp.json();
+    const data = await fetchJson(`/api/artworks?page=${page}&tag=${encodeURIComponent(tagName)}&r18=${r18Param()}`);
+    if (!data) return;
     document.getElementById('loading').style.display = 'none';
 
     if (data.artworks.length === 0) {
@@ -140,14 +80,6 @@ async function loadTagArtworks(page = 1) {
         <button ${data.page >= data.total_pages ? 'disabled' : ''} onclick="loadTagArtworks(${data.page + 1})">下一页</button>`;
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 load();
 </script>
-</body>
-</html>
+{% endblock %}

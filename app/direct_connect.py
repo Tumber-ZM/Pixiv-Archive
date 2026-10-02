@@ -6,6 +6,7 @@ import threading
 import urllib3
 from requests.adapters import HTTPAdapter
 from app import paths
+from app import envfile
 
 # 注意：不在 import 时全局抑制 TLS 告警。免 SNI 直连必须关闭证书校验，
 # 但 urllib3.disable_warnings() 是进程级全局副作用，import 本模块就静音会
@@ -42,26 +43,12 @@ def _env_path():
 
 
 def _read_env():
-    result = {}
-    path = _env_path()
-    if not os.path.exists(path):
-        return result
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, value = line.partition("=")
-                result[key.strip()] = value.strip()
-    return result
+    return envfile.read_env(_env_path())
 
 
 def _write_env(updates):
-    path = _env_path()
-    existing = _read_env()
-    existing.update(updates)
-    with open(path, "w", encoding="utf-8") as f:
-        for key, value in existing.items():
-            f.write(f"{key}={value}\n")
+    """只更新给定的键；注释、空行与原有顺序全部保留（见 app/envfile.py）。"""
+    envfile.update_env(_env_path(), updates)
 
 
 def get_ip_map():

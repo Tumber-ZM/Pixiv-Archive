@@ -1,0 +1,13 @@
+<aside class="sidebar">{# nav_active：引用方设为 true 时把「画廊」标为当前项 #}
+    <div class="brand-row">
+        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
+        <button class="sb-toggle" id="btnSidebar" title="收起侧栏" onclick="toggleSidebar()"></button>
+    </div>
+    <div class="sidebar-body">
+        <nav>
+            <a class="side-nav-item{{ ' active' if nav_active else '' }}" href="/" title="画廊">
+                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
+            </a>
+        </nav>
+    </div>
+</aside>

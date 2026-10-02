@@ -4,21 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixiv Archive</title>
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem('pa-theme') === 'light') {
-                    document.documentElement.setAttribute('data-theme', 'light');
-                }
-                if (localStorage.getItem('pa-safe') === '1') {
-                    document.documentElement.classList.add('safe-mode');
-                }
-                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
-                    document.documentElement.classList.add('sb-collapsed');
-                }
-            } catch (e) {}
-        })();
-    </script>
+    {% include 'partials/head_boot.html' %}
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -474,6 +460,9 @@ function switchView(view) {
 }
 
 // ===== Gallery =====
+// 单页拉取数量。图库上万件时首屏也只渲染这么多瓦片（缩略图本身是 loading="lazy"），
+// 所以收敛成一个常量，不再散落在 URL 拼接里硬编码；真正的虚拟滚动属于后续优化。
+const PAGE_SIZE = 100;
 const SORT_LABELS = {
     'id': '添加时间',
     'pixiv_id': 'Pixiv ID',
@@ -607,12 +596,12 @@ async function loadGallery(page = 1) {
 function buildGalleryUrl(page, ctx) {
     let url;
     if (ctx.type === 'search') {
-        url = `/api/search?q=${encodeURIComponent(ctx.q)}&page=${page}&per_page=100&sort=${ctx.sort}&order=${ctx.order}`;
+        url = `/api/search?q=${encodeURIComponent(ctx.q)}&page=${page}&per_page=${PAGE_SIZE}&sort=${ctx.sort}&order=${ctx.order}`;
         if (ctx.tag) url += `&tag=${encodeURIComponent(ctx.tag)}`;
         if (ctx.author) url += `&author=${encodeURIComponent(ctx.author)}`;
         if (ctx.favoriteId) url += `&favorite_id=${ctx.favoriteId}`;
     } else {
-        url = `/api/artworks?page=${page}&sort=${ctx.sort}&order=${ctx.order}&per_page=100`;
+        url = `/api/artworks?page=${page}&sort=${ctx.sort}&order=${ctx.order}&per_page=${PAGE_SIZE}`;
         if (ctx.type === 'tag') url += `&tag=${encodeURIComponent(ctx.tag)}`;
         else if (ctx.type === 'author') url += `&author=${encodeURIComponent(ctx.author)}`;
         else if (ctx.type === 'favorite') url += `&favorite_id=${ctx.favoriteId}`;
@@ -803,7 +792,9 @@ async function confirmDelete() {
         const data = await resp.json();
         closeDeleteConfirm();
         clearSelection();
-        showToast(`已删除 ${data.deleted} 个作品${data.files_deleted ? '（含源文件）' : ''}`);
+        const filesFailed = (data.files_failed || []).length;
+        showToast(`已删除 ${data.deleted} 个作品${data.files_deleted ? '（含源文件）' : ''}`
+            + (filesFailed ? `，${filesFailed} 个本地文件删除失败` : ''));
         if (!($('viewerOverlay').classList.contains('hidden'))) hideViewer();
         loadGallery(currentPage);
     } catch (e) {

@@ -1,60 +1,7 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>作者 - Pixiv Archive</title>
-    <script>
-        (function () {
-            try {
-                if (localStorage.getItem('pa-theme') === 'light') {
-                    document.documentElement.setAttribute('data-theme', 'light');
-                }
-                if (localStorage.getItem('pa-safe') === '1') {
-                    document.documentElement.classList.add('safe-mode');
-                }
-                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
-                    document.documentElement.classList.add('sb-collapsed');
-                }
-            } catch (e) {}
-        })();
-    </script>
-    <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/css/style.css">
-</head>
-<body>
-{% include 'icons.html' %}
+{% extends 'base.html' %}
+{% block title %}作者 - Pixiv Archive{% endblock %}
 
-<aside class="sidebar">
-    <div class="brand-row">
-        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
-        <button class="sb-toggle" id="btnSidebar" title="收起侧栏" onclick="toggleSidebar()"></button>
-    </div>
-    <div class="sidebar-body">
-        <nav>
-            <a class="side-nav-item" href="/" title="画廊">
-                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
-            </a>
-        </nav>
-    </div>
-</aside>
-
-<script>
-function updateSidebarToggle() {
-    const collapsed = document.documentElement.classList.contains('sb-collapsed');
-    const btn = document.getElementById('btnSidebar');
-    if (btn) {
-        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
-        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
-    }
-}
-function toggleSidebar() {
-    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
-    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
-    updateSidebarToggle();
-}
-updateSidebarToggle();
-</script>
+{% block content %}
 
 <div class="content">
     <header class="content-topbar">
@@ -80,27 +27,17 @@ updateSidebarToggle();
 const authorId = {{ author_id }};
 let currentPage = 1;
 
-function r18Param() {
-    try {
-        const v = localStorage.getItem('pa-r18');
-        return (v === 'hide' || v === 'only') ? v : '';
-    } catch (e) { return ''; }
-}
-
 async function load() {
     document.getElementById('loading').style.display = 'block';
 
-    const [authorResp, artworksResp] = await Promise.all([
-        fetch('/api/authors'),
-        fetch(`/api/artworks?author=${encodeURIComponent('')}&page=1`)
-    ]);
-
-    const authors = await authorResp.json();
+    // 原先这里还并发请求了一次 /api/artworks（结果从未使用），已去掉
+    const authors = await fetchJson('/api/authors');
+    if (!authors) return;
     const author = authors.find(a => a.id == authorId);
     if (author) {
         document.getElementById('authorInfo').style.display = 'block';
         document.getElementById('authorInfo').innerHTML = `
-            <h2>${author.name}</h2>
+            <h2>${escapeHtml(author.name)}</h2>
             <div class="author-meta">Pixiv ID：${author.pixiv_user_id} | 作品数：${author.artwork_count}</div>`;
         window._authorName = author.name;
         loadAuthorArtworks();
@@ -116,8 +53,8 @@ async function loadAuthorArtworks(page = 1) {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('gallery').innerHTML = '';
 
-    const resp = await fetch(`/api/artworks?page=${page}&author=${encodeURIComponent(window._authorName)}&r18=${r18Param()}`);
-    const data = await resp.json();
+    const data = await fetchJson(`/api/artworks?page=${page}&author=${encodeURIComponent(window._authorName)}&r18=${r18Param()}`);
+    if (!data) return;
     document.getElementById('loading').style.display = 'none';
 
     if (data.artworks.length === 0) {
@@ -154,14 +91,6 @@ async function loadAuthorArtworks(page = 1) {
         <button ${data.page >= data.total_pages ? 'disabled' : ''} onclick="loadAuthorArtworks(${data.page + 1})">下一页</button>`;
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 load();
 </script>
-</body>
-</html>
+{% endblock %}
