@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>标签 - Pixiv Archive</title>
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('pa-theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+                if (localStorage.getItem('pa-safe') === '1') {
+                    document.documentElement.classList.add('safe-mode');
+                }
+                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
+                    document.documentElement.classList.add('sb-collapsed');
+                }
+            } catch (e) {}
+        })();
+    </script>
+    <script src="/static/js/pa_token.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+{% include 'icons.html' %}
+
+<aside class="sidebar">
+    <div class="brand-row">
+        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
+        <button class="sb-toggle" id="btnSidebar" title="收起侧栏" onclick="toggleSidebar()"></button>
+    </div>
+    <div class="sidebar-body">
+        <nav>
+            <a class="side-nav-item" href="/" title="画廊">
+                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
+            </a>
+        </nav>
+    </div>
+</aside>
+
+<script>
+function updateSidebarToggle() {
+    const collapsed = document.documentElement.classList.contains('sb-collapsed');
+    const btn = document.getElementById('btnSidebar');
+    if (btn) {
+        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
+        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
+    }
+}
+function toggleSidebar() {
+    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
+    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+    updateSidebarToggle();
+}
+updateSidebarToggle();
+</script>
+
+<div class="content">
+    <header class="content-topbar">
+        <div class="search-bar">
+            <input type="text" id="searchInput" placeholder="搜索标题 / 作者 / 标签 / Pixiv ID..."
+                   onkeydown="if(event.key==='Enter'){window.location.href='/?q='+encodeURIComponent(this.value)}">
+            <button onclick="window.location.href='/?q='+encodeURIComponent(document.getElementById('searchInput').value)">搜索</button>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <div id="tagInfo" class="tag-header" style="display:none;"></div>
+            <div class="gallery" id="gallery"></div>
+            <div id="loading" class="loading" style="display:none;">加载中...</div>
+            <div id="empty" class="empty-state" style="display:none;">该标签下没有作品。</div>
+            <div class="pagination" id="pagination" style="display:none;"></div>
+        </div>
+    </main>
+</div>
+
+<script>
+const tagName = decodeURIComponent("{{ tag_name }}");
+let currentPage = 1;
+
+function r18Param() {
+    try {
+        const v = localStorage.getItem('pa-r18');
+        return (v === 'hide' || v === 'only') ? v : '';
+    } catch (e) { return ''; }
+}
+
+async function load() {
+    document.getElementById('tagInfo').style.display = 'block';
+    document.getElementById('tagInfo').innerHTML = `<h2>#${tagName}</h2>`;
+    await loadTagArtworks();
+}
+
+async function loadTagArtworks(page = 1) {
+    currentPage = page;
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('gallery').innerHTML = '';
+
+    const resp = await fetch(`/api/artworks?page=${page}&tag=${encodeURIComponent(tagName)}&r18=${r18Param()}`);
+    const data = await resp.json();
+    document.getElementById('loading').style.display = 'none';
+
+    if (data.artworks.length === 0) {
+        document.getElementById('empty').style.display = 'block';
+        document.getElementById('tagInfo').innerHTML += `<div class="tag-meta">作品：0</div>`;
+        return;
+    }
+
+    document.getElementById('tagInfo').innerHTML += `<div class="tag-meta">作品：${data.total}</div>`;
+
+    let html = '';
+    data.artworks.forEach(a => {
+        const title = a.title || `Pixiv ID: ${a.pixiv_id}`;
+        const thumb = a.thumb_path ? `/thumbnails/${a.pixiv_id}.jpg` : '';
+        html += `
+        <div class="card">
+            <a href="/artwork/${a.id}">
+                ${thumb ? `<img class="thumb" src="${thumb}" alt="${title}" loading="lazy">`
+                        : `<div class="thumb">无缩略图</div>`}
+                <div class="info">
+                    <div class="title">${escapeHtml(title)}</div>
+                    <div class="author">${escapeHtml(a.author_name)}</div>
+                    <div class="meta">
+                        <span>PID: ${a.pixiv_id}</span>
+                        ${a.page_count > 1 ? `<span class="badge multi">${a.page_count}P</span>` : ''}
+                    </div>
+                </div>
+            </a>
+        </div>`;
+    });
+    document.getElementById('gallery').innerHTML = html;
+
+    const pagDiv = document.getElementById('pagination');
+    pagDiv.style.display = 'flex';
+    pagDiv.innerHTML = `
+        <button ${data.page <= 1 ? 'disabled' : ''} onclick="loadTagArtworks(${data.page - 1})">上一页</button>
+        <span class="page-info">第 ${data.page} / ${data.total_pages} 页</span>
+        <button ${data.page >= data.total_pages ? 'disabled' : ''} onclick="loadTagArtworks(${data.page + 1})">下一页</button>`;
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+load();
+</script>
+</body>
+</html>

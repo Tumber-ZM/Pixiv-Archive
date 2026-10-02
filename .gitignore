@@ -1,0 +1,33 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- 虚拟环境（体积大，随仓库分发无意义；接收方跑 install.bat 自建）----
+venv/
+
+# ---- 本地运行数据（作品索引 / 缩略图 / 元数据 / 日志）----
+archive.db
+archive.db-wal
+archive.db-shm
+thumbnails/
+metadata/
+*.log
+pixiv_archive_check.txt
+
+# ---- 用户配置（含 refresh token 等机密，切勿提交）----
+.env
+
+# ---- 构建产物 ----
+Release/
+dist/
+build/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# ---- 本仓库自用：审查/临时产物 ----
+.removed-backup/

@@ -1,0 +1,2175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixiv Archive</title>
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('pa-theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+                if (localStorage.getItem('pa-safe') === '1') {
+                    document.documentElement.classList.add('safe-mode');
+                }
+                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
+                    document.documentElement.classList.add('sb-collapsed');
+                }
+            } catch (e) {}
+        })();
+    </script>
+    <script src="/static/js/pa_token.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+{% include 'icons.html' %}
+
+<aside class="sidebar">
+    <div class="brand-row">
+        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
+        <button class="sb-toggle" id="btnSidebar" onclick="toggleSidebar()" title="收起侧栏"></button>
+    </div>
+    <div class="sidebar-body">
+        <nav>
+            <button class="side-nav-item active" id="btnGallery" onclick="switchView('gallery')" title="画廊">
+                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
+            </button>
+            <button class="side-nav-item" id="btnAuthors" onclick="switchView('authors')" title="作者列表">
+                <svg class="icon"><use href="#i-users"/></svg><span class="nav-label">作者列表</span>
+            </button>
+            <button class="side-nav-item" id="btnTags" onclick="switchView('tags')" title="标签列表">
+                <svg class="icon"><use href="#i-tag"/></svg><span class="nav-label">标签列表</span>
+            </button>
+            <button class="side-nav-item" id="btnFavorites" onclick="switchView('favorites')" title="收藏夹">
+                <svg class="icon"><use href="#i-heart"/></svg><span class="nav-label">收藏夹</span>
+            </button>
+            <button class="side-nav-item" id="btnBookmarkSubs" onclick="switchView('bookmarkSubs')" title="收藏订阅">
+                <svg class="icon"><use href="#i-bookmark-sub"/></svg><span class="nav-label">收藏订阅</span>
+            </button>
+        </nav>
+        <div class="side-label">操作</div>
+        <button class="side-nav-item" id="btnSync" onclick="startJob('sync')" title="同步元数据">
+            <svg class="icon"><use href="#i-sync"/></svg><span class="nav-label">同步元数据</span>
+        </button>
+        <button class="side-nav-item" id="btnScan" onclick="startJob('scan')" title="扫描图片">
+            <svg class="icon"><use href="#i-scan"/></svg><span class="nav-label">扫描图片</span>
+        </button>
+        <button class="side-nav-item" id="btnBookmarkCheck" onclick="startJob('bookmark_check')" title="检查全部收藏订阅">
+            <svg class="icon"><use href="#i-bell"/></svg><span class="nav-label">订阅更新</span>
+        </button>
+        <div class="sidebar-footer">
+            <span class="safe-badge" id="safeBadge" style="display:none;">
+                <svg class="icon"><use href="#i-lock"/></svg><span class="sb-text">安全模式</span>
+            </span>
+            <button class="side-nav-item" id="btnTheme" onclick="toggleTheme()" title="切换主题"></button>
+            <button class="side-nav-item" onclick="openSettings()" title="设置">
+                <svg class="icon"><use href="#i-settings"/></svg><span class="nav-label">设置</span>
+            </button>
+            <div class="side-stats" id="stats"></div>
+        </div>
+    </div>
+</aside>
+
+<div class="content">
+    <header class="content-topbar">
+        <div class="search-box">
+            <svg class="icon"><use href="#i-search"/></svg>
+            <input type="text" id="searchInput" placeholder="搜索标题 / 作者 / 标签 / Pixiv ID..."
+                   autocomplete="off">
+        </div>
+        <div class="sort-widget">
+            <button class="top-btn" id="sortBtn" onclick="toggleSortMenu()" title="点击切换排序方式，再次点击当前项切换升/降序">添加时间 ▼</button>
+            <div class="sort-menu hidden" id="sortMenu"></div>
+        </div>
+        <button class="top-btn" id="btnR18" onclick="cycleR18()" title="切换 R18 显示模式">R18：全部</button>
+        <button class="top-btn" id="btnDeleted" onclick="toggleDeletedFilter()" title="只看已删除作品">已删除</button>
+    </header>
+
+    <main>
+    <!-- Gallery view -->
+    <div class="view active" id="viewGallery">
+        <div class="view-header" id="galleryHeader" style="display:none;">
+            <span id="galleryHeaderText"></span>
+            <a class="filter-clear" onclick="clearFilter()" style="display:none;" id="filterClear">✕ 清除筛选</a>
+        </div>
+        <div id="wall" class="wall"></div>
+        <div id="loading" class="loading" style="display:none;">加载中...</div>
+        <div id="empty" class="empty-state" style="display:none;">没有找到作品。<br>请先扫描图片目录，然后同步元数据。</div>
+        <div class="pagination" id="pagination" style="display:none;"></div>
+    </div>
+
+    <!-- Authors view -->
+    <div class="view" id="viewAuthors">
+        <div class="view-header">作者列表</div>
+        <div class="view-search">
+            <input type="text" id="authorSearchInput" placeholder="搜索作者..." oninput="loadAuthorsView()">
+        </div>
+        <div id="authorList" class="author-list"></div>
+    </div>
+
+    <!-- Tags view -->
+    <div class="view" id="viewTags">
+        <div class="view-header">标签列表</div>
+        <div class="view-search">
+            <input type="text" id="tagSearchInput" placeholder="搜索标签..." oninput="loadTagsView()">
+        </div>
+        <div id="tagCloud" class="tag-cloud"></div>
+    </div>
+
+    <!-- Favorites view -->
+    <div class="view" id="viewFavorites">
+        <div class="view-header">
+            <span>收藏夹</span>
+            <button class="top-btn" onclick="showCreateFavorite()">
+                <svg class="icon"><use href="#i-plus"/></svg>新建收藏夹
+            </button>
+        </div>
+        <div id="favoriteGrid" class="favorites-grid"></div>
+    </div>
+
+    <!-- Bookmarks-subscriptions view -->
+    <div class="view" id="viewBookmarkSubs">
+        <div class="view-header">
+            <span>收藏订阅</span>
+            <div class="sub-header-actions">
+                <button class="top-btn" onclick="openBmAdd()">
+                    <svg class="icon"><use href="#i-plus"/></svg>订阅收藏
+                </button>
+                <button class="top-btn" onclick="startJob('bookmark_check')">
+                    <svg class="icon"><use href="#i-bell"/></svg>全部检查
+                </button>
+            </div>
+        </div>
+        <div class="bm-hint">订阅某位 Pixiv 用户的<strong>公开收藏</strong>列表，每次检查自动下载其中新增的收藏作品（按收藏记录 ID 增量，只下新、不重复），并自动完成入库与缩略图。</div>
+        <div id="bookmarkSubGrid" class="favorites-grid subscriptions-grid"></div>
+    </div>
+    </main>
+</div>
+
+<!-- Batch action bar (appears when images are selected) -->
+<div class="batch-bar" id="batchBar" style="display:none;">
+    <span class="batch-count" id="batchCount">已选 0 件</span>
+    <button class="batch-btn" id="selectAllBtn" onclick="selectAll()">全选</button>
+    <button class="batch-btn" onclick="batchFav()">收藏</button>
+    <button class="batch-btn danger" onclick="batchDelete()">删除</button>
+    <button class="batch-btn" onclick="clearSelection()">取消选择</button>
+</div>
+
+<!-- Job progress window (bottom-right, close = stop) -->
+<div class="job-window hidden" id="jobWindow">
+    <div class="job-head">
+        <span class="job-title" id="jobTitle">任务</span>
+        <button class="job-close" id="jobClose" onclick="closeJobWindow()" title="停止并关闭">✕</button>
+    </div>
+    <div class="job-body" id="jobBody">
+        <div class="job-message" id="jobPhase">准备中…</div>
+        <div class="job-bar" id="jobBar"><div class="job-bar-fill" id="jobBarFill"></div></div>
+        <div class="job-meta" id="jobPct"></div>
+    </div>
+    <div class="job-result" id="jobResult" style="display:none;"></div>
+    <div class="job-error" id="jobError" style="display:none;"></div>
+</div>
+
+<!-- Generic confirm dialog (替代原生 confirm，风格与应用一致) -->
+<div id="confirmDialogOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeConfirmDialog()">
+    <div class="settings-panel" style="width:400px;">
+        <h3 id="cdTitle">确认操作</h3>
+        <div id="cdMsg" class="settings-field" style="font-size:14px;line-height:1.7;"></div>
+        <div class="settings-actions">
+            <button id="cdOkBtn" onclick="doConfirmDialog()" class="btn-danger">确认</button>
+            <button onclick="closeConfirmDialog()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirm overlay -->
+<div id="deleteConfirmOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeDeleteConfirm()">
+    <div class="settings-panel" style="width:400px;">
+        <h3 id="delTitle">删除作品</h3>
+        <div id="delMsg" class="settings-field" style="font-size:14px;line-height:1.7;"></div>
+        <div class="settings-field">
+            <label class="fav-check">
+                <input type="checkbox" id="delFilesCheck"> 同时删除本地源文件
+            </label>
+        </div>
+        <div class="settings-actions">
+            <button onclick="confirmDelete()" class="btn-danger">删除</button>
+            <button onclick="closeDeleteConfirm()">取消</button>
+        </div>
+        <div id="delMsgResult" class="settings-msg" style="display:none;"></div>
+    </div>
+</div>
+
+<!-- Viewer overlay (left info / right image) -->
+<div class="viewer-overlay hidden" id="viewerOverlay">
+    <div class="viewer-left">
+        <button class="viewer-close" onclick="hideViewer()">
+            <svg class="icon"><use href="#i-arrow-left"/></svg><span>返回</span>
+        </button>
+        <div class="v-title" id="vTitle"></div>
+        <div class="v-author" id="vAuthor"></div>
+        <div class="v-tags" id="vTags"></div>
+        <div class="v-fav" id="vFav">
+            <div class="v-fav-label">所在收藏夹：</div>
+            <div class="v-fav-tags" id="vFavTags"></div>
+        </div>
+        <div class="v-desc" id="vDesc" style="display:none;"></div>
+        <div class="v-meta" id="vMeta"></div>
+        <div class="v-actions">
+            <button class="v-fav-btn" id="vFavBtn" onclick="openFavSelect(window._viewerArtworkId)">
+                <svg class="icon"><use href="#i-star-o"/></svg><span>收藏</span>
+            </button>
+            <button class="v-folder-btn" onclick="openInFolder()" title="在文件夹中打开">
+                <svg class="icon"><use href="#i-folder"/></svg>
+            </button>
+            <button class="v-delete" onclick="deleteCurrent()">
+                <svg class="icon"><use href="#i-trash"/></svg><span>删除作品</span>
+            </button>
+        </div>
+    </div>
+    <div class="viewer-right">
+        <button class="v-art-btn v-art-prev" id="vPrevArt" onclick="viewerArtworkNav(-1)" title="上一个作品">
+            <svg class="icon"><use href="#i-chevron-left"/></svg>
+        </button>
+        <div class="v-loading" id="vLoading" style="display:none;">加载中...</div>
+        <img id="vMainImage" alt="" style="display:none;">
+        <button class="v-art-btn v-art-next" id="vNextArt" onclick="viewerArtworkNav(1)" title="下一个作品">
+            <svg class="icon"><use href="#i-chevron-right"/></svg>
+        </button>
+        <div class="v-nav" id="vNav" style="display:none;">
+            <button id="vPrev" class="v-page-btn" onclick="viewerNav(-1)" title="上一页">
+                <svg class="icon"><use href="#i-chevron-left"/></svg>
+            </button>
+            <span class="v-page" id="vPageIndicator"></span>
+            <button id="vNext" class="v-page-btn" onclick="viewerNav(1)" title="下一页">
+                <svg class="icon"><use href="#i-chevron-right"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Add bookmarks-subscription overlay -->
+<div id="bmAddOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeBmAdd()">
+    <div class="settings-panel" style="width:420px;">
+        <h3>订阅收藏列表</h3>
+        <div class="settings-field">
+            <label for="bmAddInput">用户 Pixiv ID（用户主页 URL 中的数字 ID）</label>
+            <div style="display:flex;gap:8px;">
+                <input type="text" id="bmAddInput" placeholder="例如 15278716" autocomplete="off"
+                       style="flex:1;" oninput="resetBmPreview()">
+                <button onclick="previewBmAdd()" class="btn-folder-ghost" style="flex:none;">查询</button>
+            </div>
+            <span class="field-hint" id="bmPreviewHint"></span>
+        </div>
+        <div class="settings-field">
+            <label class="fav-check">
+                <input type="checkbox" id="bmAddCheckNow" checked>
+                添加后立即检查并下载收藏作品
+            </label>
+            <span class="field-hint">首次订阅会下载该用户公开收藏的全部作品（文件已存在的自动跳过），之后每次检查只下载新增的收藏。私有收藏受 Pixiv 隐私限制无法获取。</span>
+        </div>
+        <div id="bmAddMsg" class="settings-msg" style="display:none;"></div>
+        <div class="settings-actions">
+            <button onclick="confirmBmAdd()" class="btn-primary">订阅</button>
+            <button onclick="closeBmAdd()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- Favorite selector overlay -->
+<div id="favSelectOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeFavSelect()">
+    <div class="settings-panel fav-select-panel">
+        <h3>选择收藏夹</h3>
+        <div id="favSelectList" class="fav-select-list"></div>
+        <div class="settings-field">
+            <label for="favNewName">新建收藏夹（可选）</label>
+            <input type="text" id="favNewName" placeholder="输入新收藏夹名称">
+        </div>
+        <div class="settings-actions">
+            <button onclick="confirmFavSelect()" class="btn-primary">确认收藏</button>
+            <button onclick="closeFavSelect()">取消</button>
+        </div>
+        <div id="favSelectMsg" class="settings-msg" style="display:none;"></div>
+    </div>
+</div>
+
+<!-- Create favorite overlay -->
+<div id="createFavOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeCreateFavorite()">
+    <div class="settings-panel" style="width:400px;">
+        <h3>新建收藏夹</h3>
+        <div class="settings-field">
+            <label for="createFavName">收藏夹名称</label>
+            <input type="text" id="createFavName" placeholder="输入收藏夹名称" autocomplete="off"
+                   onkeydown="if(event.key==='Enter')confirmCreateFavorite()">
+        </div>
+        <div id="createFavMsg" class="settings-msg" style="display:none;"></div>
+        <div class="settings-actions">
+            <button onclick="confirmCreateFavorite()" class="btn-primary">创建</button>
+            <button onclick="closeCreateFavorite()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- Settings overlay -->
+<div id="settingsOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeSettings()">
+    <div class="settings-panel">
+        <div class="settings-tabs">
+            <button type="button" class="settings-tab active" id="tabBasic" onclick="switchSettingsTab('basic')">基础设置</button>
+            <button type="button" class="settings-tab" id="tabNetwork" onclick="switchSettingsTab('network')">网络设置</button>
+            <a class="settings-github" href="https://github.com/Tumber-ZM/Pixiv-Archive" target="_blank" rel="noopener noreferrer" title="GitHub 仓库">
+                <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+                    <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z" />
+                </svg>
+            </a>
+        </div>
+        <div class="settings-section" id="secBasic">
+            <div class="settings-field">
+                <label for="settingToken">Pixiv Refresh Token</label>
+                <input type="password" id="settingToken" placeholder="输入 refresh token">
+                <span class="field-hint" id="tokenHint"></span>
+            </div>
+            <div class="settings-field">
+                <label for="settingDir">本地图片目录</label>
+                <input type="text" id="settingDir" placeholder="例如 D:\Pixiv">
+                <span class="field-hint" id="dirHint"></span>
+            </div>
+            <div class="settings-field">
+                <label for="settingPort">服务器端口</label>
+                <input type="text" id="settingPort" placeholder="6814">
+                <span class="field-hint" id="portHint"></span>
+            </div>
+            <div class="settings-field">
+                <label for="settingAccessToken">访问令牌（局域网）</label>
+                <input type="text" id="settingAccessToken" placeholder="留空则自动生成">
+                <span class="field-hint" id="tokenHint2"></span>
+            </div>
+            <div class="settings-field">
+                <label class="fav-check">
+                    <input type="checkbox" id="settingSafeMode" onchange="setSafeMode(this.checked)">
+                    安全模式（模糊所有图片）
+                </label>
+                <span class="field-hint">开启后所有图片将模糊显示，适合演示 / 屏幕共享时保护内容。</span>
+            </div>
+            <div class="settings-field" id="openExternalField" style="display:none;">
+                <button class="btn-folder-ghost" onclick="openExternalBrowser()">
+                    <svg class="icon"><use href="#i-external"/></svg>在外部浏览器中打开
+                </button>
+                <span class="field-hint">在系统浏览器中打开当前应用（桌面窗口模式下可用）。</span>
+            </div>
+        </div>
+        <div class="settings-section" id="secNetwork" style="display:none;">
+            <div class="settings-field">
+                <label for="settingMode">连接方式</label>
+                <select id="settingMode">
+                    <option value="auto">自动（直连优先，失败回退代理）</option>
+                    <option value="direct">直连（内置绕过 DNS/SNI）</option>
+                    <option value="proxy">Clash 代理</option>
+                </select>
+                <span class="field-hint" id="modeHint"></span>
+            </div>
+            <div class="settings-field">
+                <label for="settingProxy">代理地址（代理模式使用）</label>
+                <input type="text" id="settingProxy" placeholder="http://127.0.0.1:7890">
+                <span class="field-hint" id="proxyHint"></span>
+            </div>
+            <div class="settings-field">
+                <label for="settingSyncDelay">同步间隔（毫秒，防风控；0=不限速）</label>
+                <input type="number" id="settingSyncDelay" min="0" max="10000" step="100" placeholder="800">
+                <span class="field-hint" id="syncDelayHint"></span>
+            </div>
+            <div class="settings-field">
+                <label class="fav-check">
+                    <input type="checkbox" id="settingMirrorToggle" onchange="onMirrorToggleChange()">
+                    用第三方图站接管图片下载
+                </label>
+                <div id="mirrorDomainField" style="display:none;">
+                    <label for="settingImageMirror" style="display:block;margin:6px 0 4px;">镜像域名</label>
+                    <input type="text" id="settingImageMirror" placeholder="例如 i.pixiv.re（可带路径前缀）" autocomplete="off">
+                </div>
+                <span class="field-hint" id="mirrorHint"></span>
+            </div>
+            <div class="settings-field">
+                <label>直连 IP 管理</label>
+                <button class="btn-folder-ghost" onclick="refreshDirectIps()">
+                    <svg class="icon"><use href="#i-sync"/></svg>刷新直连 IP（DoH 查询）
+                </button>
+                <span class="field-hint" id="refreshIpHint"></span>
+            </div>
+        </div>
+        <div class="settings-actions">
+            <button onclick="saveSettings()" class="btn-primary">保存</button>
+            <button onclick="closeSettings()">取消</button>
+        </div>
+        <div id="settingsMsg" class="settings-msg" style="display:none;"></div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- 自定义右键菜单 -->
+<div class="ctx-menu hidden" id="ctxMenu"></div>
+
+<script>
+"use strict";
+
+// ===== State =====
+let currentView = 'gallery';
+let currentPage = 1;
+let currentTotalPages = 1;
+let currentTotal = 0;
+let currentFilter = { type: null, value: '' };
+let currentSearch = '';
+let _searchTimer = null;
+let _sortKey = 'id';
+let _sortOrder = 'desc';
+let _viewer = { data: null, idx: 0 };
+let _navIds = [];
+let _navIndex = -1;
+let _navCtx = { type: 'all', q: '', tag: '', author: '', favoriteId: 0, sort: 'id', order: 'desc', page: 1 };
+let _authorWorksIds = {};
+let _favSelectArtworkIds = [];
+let _favSelectCurrentIds = new Set();
+let _favCache = [];
+let _selectedIds = new Set();
+
+// ===== Elements =====
+const $ = id => document.getElementById(id);
+
+// ===== Sidebar collapse =====
+function updateSidebarToggle() {
+    const collapsed = document.documentElement.classList.contains('sb-collapsed');
+    const btn = $('btnSidebar');
+    if (btn) {
+        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
+        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
+    }
+}
+
+function toggleSidebar() {
+    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
+    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+    updateSidebarToggle();
+}
+
+// ===== View switching =====
+function switchView(view) {
+    const viewChanged = currentView !== view;
+    currentView = view;
+    ['viewGallery', 'viewAuthors', 'viewTags', 'viewFavorites', 'viewBookmarkSubs'].forEach(v => $(v).classList.toggle('active', v === 'view' + view[0].toUpperCase() + view.slice(1)));
+    $('btnGallery').classList.toggle('active', view === 'gallery');
+    $('btnBookmarkSubs').classList.toggle('active', view === 'bookmarkSubs');
+    $('btnAuthors').classList.toggle('active', view === 'authors');
+    $('btnTags').classList.toggle('active', view === 'tags');
+    $('btnFavorites').classList.toggle('active', view === 'favorites');
+    if (viewChanged) window.scrollTo({ top: 0 });
+    if (view === 'gallery' && $('wall').children.length === 0 && currentTotal === 0) {
+        loadGallery();
+    } else if (view === 'authors' && $('authorList').children.length === 0) {
+        loadAuthorsView();
+    } else if (view === 'tags' && $('tagCloud').children.length === 0) {
+        loadTagsView();
+    } else if (view === 'favorites' && $('favoriteGrid').children.length === 0) {
+        loadFavoritesView();
+    } else if (view === 'bookmarkSubs' && $('bookmarkSubGrid').children.length === 0) {
+        loadBookmarkSubsView();
+    }
+}
+
+// ===== Gallery =====
+const SORT_LABELS = {
+    'id': '添加时间',
+    'pixiv_id': 'Pixiv ID',
+    'title': '标题',
+    'create_date': '创作时间',
+    'random': '随机',
+};
+
+function sortArrowsHtml(key) {
+    if (key === 'random') return null;
+    const activeDir = key === _sortKey ? _sortOrder : null;
+    const span = dir => '<span class="sort-arrow' + (activeDir === dir ? ' active' : ' muted') + '">' + (dir === 'asc' ? '↑' : '↓') + '</span>';
+    return span('asc') + span('desc');
+}
+
+function updateSortBtn() {
+    const btn = $('sortBtn');
+    if (!btn) return;
+    const arrows = sortArrowsHtml(_sortKey);
+    btn.innerHTML = (SORT_LABELS[_sortKey] || SORT_LABELS['id']) + (arrows ? ' ' + arrows : '');
+}
+
+function toggleSortMenu() {
+    const menu = $('sortMenu');
+    if (!menu) return;
+    if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
+
+    menu.innerHTML = '';
+    Object.keys(SORT_LABELS).forEach(key => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        const active = key === _sortKey;
+        b.className = 'sort-menu-item' + (active ? ' active' : '');
+        const arrows = sortArrowsHtml(key);
+        b.innerHTML = SORT_LABELS[key] + (arrows ? ' ' + arrows : '');
+        b.addEventListener('click', function () { chooseSort(key); });
+        menu.appendChild(b);
+    });
+
+    menu.classList.remove('hidden');
+}
+
+function chooseSort(key) {
+    $('sortMenu').classList.add('hidden');
+    if (key !== _sortKey) {
+        _sortKey = key;
+        if (key !== 'random') _sortOrder = 'desc';
+    } else if (key !== 'random') {
+        _sortOrder = _sortOrder === 'desc' ? 'asc' : 'desc';
+    }
+    updateSortBtn();
+    if (currentView === 'gallery') loadGallery(1);
+}
+
+function doSearch() {
+    const q = $('searchInput').value.trim();
+    if (q === currentSearch) return;
+    currentSearch = q;
+    if (currentView !== 'gallery') switchView('gallery');
+    // 无筛选条件时，用头部状态条提示当前处于搜索结果（clearFilter 会连搜索一起清掉）
+    if (!currentFilter.type) {
+        if (q) {
+            $('galleryHeaderText').textContent = '搜索：' + q;
+            $('galleryHeader').style.display = 'flex';
+            $('filterClear').style.display = 'inline-block';
+        } else {
+            $('galleryHeader').style.display = 'none';
+            $('filterClear').style.display = 'none';
+        }
+    }
+    loadGallery(1);
+}
+
+function setFilter(type, value, label) {
+    currentFilter = { type, value };
+    $('filterClear').style.display = 'inline-block';
+    $('galleryHeaderText').textContent = label;
+    $('galleryHeader').style.display = 'flex';
+    currentSearch = '';
+    $('searchInput').value = '';
+}
+
+function clearFilter() {
+    currentFilter = { type: null, value: '' };
+    currentSearch = '';
+    $('searchInput').value = '';
+    $('filterClear').style.display = 'none';
+    $('galleryHeader').style.display = 'none';
+    loadGallery(1);
+}
+
+async function loadGallery(page = 1) {
+    if (currentView !== 'gallery') switchView('gallery');
+    currentPage = page;
+    $('loading').style.display = 'block';
+    $('empty').style.display = 'none';
+
+    const sort = _sortKey;
+    const order = _sortOrder;
+
+    _navCtx = { type: 'all', q: currentSearch, tag: '', author: '', favoriteId: 0, sort, order, page };
+    if (currentFilter.type === 'tag') _navCtx.tag = currentFilter.value;
+    else if (currentFilter.type === 'author') _navCtx.author = currentFilter.value;
+    else if (currentFilter.type === 'favorite') _navCtx.favoriteId = currentFilter.value;
+    if (currentSearch) {
+        _navCtx.type = 'search';
+    } else if (currentFilter.type === 'tag') {
+        _navCtx.type = 'tag';
+    } else if (currentFilter.type === 'author') {
+        _navCtx.type = 'author';
+    } else if (currentFilter.type === 'favorite') {
+        _navCtx.type = 'favorite';
+    }
+
+    let url = buildGalleryUrl(page, _navCtx);
+
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        renderGallery(data);
+    } catch (e) {
+        $('loading').style.display = 'none';
+        $('empty').style.display = 'block';
+        $('empty').textContent = '加载失败：' + e.message;
+    }
+}
+
+function buildGalleryUrl(page, ctx) {
+    let url;
+    if (ctx.type === 'search') {
+        url = `/api/search?q=${encodeURIComponent(ctx.q)}&page=${page}&per_page=100&sort=${ctx.sort}&order=${ctx.order}`;
+        if (ctx.tag) url += `&tag=${encodeURIComponent(ctx.tag)}`;
+        if (ctx.author) url += `&author=${encodeURIComponent(ctx.author)}`;
+        if (ctx.favoriteId) url += `&favorite_id=${ctx.favoriteId}`;
+    } else {
+        url = `/api/artworks?page=${page}&sort=${ctx.sort}&order=${ctx.order}&per_page=100`;
+        if (ctx.type === 'tag') url += `&tag=${encodeURIComponent(ctx.tag)}`;
+        else if (ctx.type === 'author') url += `&author=${encodeURIComponent(ctx.author)}`;
+        else if (ctx.type === 'favorite') url += `&favorite_id=${ctx.favoriteId}`;
+    }
+    const r = r18Param();
+    if (r) url += '&r18=' + r;
+    if (deletedFilter) url += '&status=deleted';
+    return url;
+}
+
+function renderGallery(data) {
+    $('loading').style.display = 'none';
+    currentTotal = data.total;
+    currentTotalPages = data.total_pages;
+    $('stats').textContent = `共 ${data.total} 件`;
+
+    const wall = $('wall');
+    wall.innerHTML = '';
+
+    if (!data.artworks.length) {
+        $('empty').style.display = 'block';
+        $('empty').textContent = currentSearch ? '没有找到匹配的作品。' : (currentFilter.value ? '该筛选下没有作品。' : '没有找到作品。\n请先扫描图片目录，然后同步元数据。');
+        $('pagination').style.display = 'none';
+        return;
+    }
+
+    const frag = document.createDocumentFragment();
+    _navIds = data.artworks.map(a => a.id);
+    data.artworks.forEach((a, idx) => {
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+        tile.style.animationDelay = Math.min(idx * 5, 100) + 'ms';
+        tile.dataset.id = a.id;
+        tile.dataset.title = a.title || `Pixiv ID: ${a.pixiv_id}`;
+        tile.dataset.author = a.author_name || '';
+        tile.dataset.pages = a.page_count;
+        tile.dataset.status = a.pixiv_status || 'active';
+        tile.dataset.pid = a.pixiv_id;
+        tile.onclick = () => { _navIndex = idx; showViewer(a.id); };
+
+        let badges = '';
+        if (a.page_count > 1) badges += `<span>${a.page_count}P</span>`;
+        if (a.is_r18) badges += `<span class="r18">R18</span>`;
+        if (a.pixiv_status === 'deleted') badges += `<span class="deleted">已删除</span>`;
+        if (a.sync_error) badges += `<span class="sync-err">同步失败</span>`;
+
+        const title = (a.title || `Pixiv ID: ${a.pixiv_id}`);
+        const favCls = a.is_favorited ? ' faved' : '';
+        const selected = _selectedIds.has(a.id);
+
+        tile.innerHTML = `
+            ${a.thumb_path ? `<img src="/thumbnails/${a.pixiv_id}.jpg" alt="" loading="lazy">` : ''}
+            <span class="tile-check${selected ? ' checked' : ''}" onclick="event.stopPropagation();if(event.target.tagName!=='INPUT')toggleTileCheck(this, ${a.id})">
+                <input type="checkbox" class="tile-checkbox" ${selected ? 'checked' : ''} onchange="toggleSelect(${a.id}, this)">
+            </span>
+            <div class="tile-badges">${badges}</div>
+            <div class="tile-title">${escapeHtml(title)}</div>
+            <div class="tile-actions">
+                <button class="tile-action-btn${favCls}" onclick="event.stopPropagation();event.preventDefault();openFavSelect(${a.id})" title="${a.is_favorited ? '已收藏（点击管理）' : '收藏'}"><svg class="icon"><use href="#i-${a.is_favorited ? 'star' : 'star-o'}"/></svg></button>
+                <button class="tile-action-btn del" onclick="event.stopPropagation();event.preventDefault();deleteArtworkFromTile(${a.id}, '${escapeAttr(title)}')" title="删除"><svg class="icon"><use href="#i-trash"/></svg></button>
+            </div>`;
+
+        frag.appendChild(tile);
+    });
+    wall.appendChild(frag);
+
+    renderPagination(data);
+}
+
+function toggleTileCheck(span, artworkId) {
+    const cb = span.querySelector('.tile-checkbox');
+    if (cb) {
+        cb.checked = !cb.checked;
+        toggleSelect(artworkId, cb);
+    }
+}
+
+function toggleSelect(artworkId, checkbox) {
+    const tile = checkbox.closest('.tile');
+    const check = checkbox.closest('.tile-check');
+    if (checkbox.checked) {
+        _selectedIds.add(artworkId);
+        if (tile) tile.classList.add('selected');
+        if (check) check.classList.add('checked');
+    } else {
+        _selectedIds.delete(artworkId);
+        if (tile) tile.classList.remove('selected');
+        if (check) check.classList.remove('checked');
+    }
+    updateBatchBar();
+}
+
+function clearSelection() {
+    _selectedIds.clear();
+    document.querySelectorAll('.tile-checkbox').forEach(cb => cb.checked = false);
+    document.querySelectorAll('.tile.selected').forEach(t => t.classList.remove('selected'));
+    document.querySelectorAll('.tile-check.checked').forEach(c => c.classList.remove('checked'));
+    updateBatchBar();
+}
+
+function selectAll() {
+    const tiles = document.querySelectorAll('#wall .tile[data-id]');
+    if (!tiles.length) return;
+    const ids = Array.from(tiles).map(t => parseInt(t.dataset.id, 10));
+    const allSelected = ids.every(id => _selectedIds.has(id));
+
+    if (allSelected) {
+        ids.forEach(id => _selectedIds.delete(id));
+        tiles.forEach(t => {
+            t.classList.remove('selected');
+            const cb = t.querySelector('.tile-checkbox');
+            if (cb) cb.checked = false;
+            const check = t.querySelector('.tile-check');
+            if (check) check.classList.remove('checked');
+        });
+    } else {
+        ids.forEach(id => _selectedIds.add(id));
+        tiles.forEach(t => {
+            t.classList.add('selected');
+            const cb = t.querySelector('.tile-checkbox');
+            if (cb) cb.checked = true;
+            const check = t.querySelector('.tile-check');
+            if (check) check.classList.add('checked');
+        });
+    }
+    updateBatchBar();
+}
+
+function updateBatchBar() {
+    const bar = $('batchBar');
+    const count = _selectedIds.size;
+    if (count > 0) {
+        bar.style.display = 'flex';
+        $('batchCount').textContent = `已选 ${count} 件`;
+    } else {
+        bar.style.display = 'none';
+    }
+    const btn = $('selectAllBtn');
+    if (btn) {
+        const tiles = document.querySelectorAll('#wall .tile[data-id]');
+        const allSelected = tiles.length > 0 && Array.from(tiles).every(t => _selectedIds.has(parseInt(t.dataset.id, 10)));
+        btn.textContent = allSelected ? '取消全选' : '全选';
+    }
+}
+
+function deleteArtworkFromTile(artworkId, title) {
+    openDeleteConfirm([artworkId], `确认删除作品「${title}」？`);
+}
+
+// ===== Batch operations =====
+function batchFav() {
+    if (_selectedIds.size === 0) return;
+    openFavSelect(Array.from(_selectedIds));
+}
+
+function batchDelete() {
+    if (_selectedIds.size === 0) return;
+    openDeleteConfirm(Array.from(_selectedIds), `确认删除选中的 ${_selectedIds.size} 个作品？`);
+}
+
+let _pendingDeleteIds = [];
+
+function openDeleteConfirm(ids, message) {
+    _pendingDeleteIds = ids;
+    $('deleteConfirmOverlay').classList.remove('hidden');
+    $('delMsg').textContent = message;
+    $('delFilesCheck').checked = false;
+    $('delMsgResult').style.display = 'none';
+}
+
+function closeDeleteConfirm() {
+    $('deleteConfirmOverlay').classList.add('hidden');
+    _pendingDeleteIds = [];
+}
+
+async function confirmDelete() {
+    const ids = _pendingDeleteIds;
+    const deleteFiles = $('delFilesCheck').checked;
+    if (!ids.length) return;
+    try {
+        const resp = await fetch('/api/artworks/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artwork_ids: ids, delete_files: deleteFiles })
+        });
+        const data = await resp.json();
+        closeDeleteConfirm();
+        clearSelection();
+        showToast(`已删除 ${data.deleted} 个作品${data.files_deleted ? '（含源文件）' : ''}`);
+        if (!($('viewerOverlay').classList.contains('hidden'))) hideViewer();
+        loadGallery(currentPage);
+    } catch (e) {
+        showToast('删除失败：' + e.message);
+    }
+}
+
+async function refreshTileFavState(artworkId) {
+    const tile = document.querySelector(`.tile[data-id="${artworkId}"]`);
+    if (!tile) return;
+    try {
+        const resp = await fetch(`/api/artworks/${artworkId}`);
+        const data = await resp.json();
+        const hasFav = (data.favorites || []).length > 0;
+        const btn = tile.querySelector('.tile-action-btn');
+        if (btn) {
+            btn.classList.toggle('faved', hasFav);
+            btn.innerHTML = '<svg class="icon"><use href="#i-' + (hasFav ? 'star' : 'star-o') + '"/></svg>';
+            btn.title = hasFav ? '已收藏（点击管理）' : '收藏';
+        }
+    } catch (e) {}
+}
+
+function renderPagination(data) {
+    const pag = $('pagination');
+    if (data.total_pages <= 1) { pag.style.display = 'none'; return; }
+    pag.style.display = 'flex';
+    pag.innerHTML = `
+        <button ${data.page <= 1 ? 'disabled' : ''} onclick="goPage(${data.page - 1})">上一页</button>
+        <span class="page-info">第 ${data.page} / ${data.total_pages} 页</span>
+        <button ${data.page >= data.total_pages ? 'disabled' : ''} onclick="goPage(${data.page + 1})">下一页</button>`;
+}
+
+function goPage(page) {
+    loadGallery(page);
+    window.scrollTo({ top: 0 });
+}
+
+// ===== Authors view =====
+async function loadAuthorsView() {
+    const list = $('authorList');
+    const q = $('authorSearchInput') ? $('authorSearchInput').value.trim() : '';
+    list.innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        let url = '/api/authors/works?limit=20&r18=' + r18Param();
+        if (q) url += '&q=' + encodeURIComponent(q);
+        const resp = await fetch(url);
+        const authors = await resp.json();
+        list.innerHTML = '';
+        if (!authors.length) { list.innerHTML = '<div class="empty-state">暂无作者</div>'; return; }
+
+        const frag = document.createDocumentFragment();
+        authors.forEach(a => {
+            const row = document.createElement('div');
+            row.className = 'author-row';
+            const works = a.works || [];
+            let worksHtml = '';
+            works.forEach((w, wi) => {
+                const src = w.thumb_path ? `/thumbnails/${w.pixiv_id}.jpg` : '';
+                worksHtml += `<img src="${src}" alt="" loading="lazy" onclick="openViewerFromAuthor(${a.id},${wi})">`;
+            });
+            if (!worksHtml) worksHtml = '<span style="color:#666;font-size:12px;">无作品预览</span>';
+            _authorWorksIds[a.id] = works.map(w => w.id);
+            row.innerHTML = `
+                <div class="author-row-head">
+                    <img class="author-avatar" src="/api/authors/${a.id}/avatar" alt="" loading="lazy"
+                         onerror="this.style.display='none'">
+                    <span class="author-name" onclick="filterByAuthor('${escapeAttr(a.name)}')">${escapeHtml(a.name)}</span>
+                    <span class="author-id">ID：${a.pixiv_user_id}</span>
+                    <span class="author-meta">作品：${a.artwork_count}</span>
+                </div>
+                <div class="author-works">${worksHtml}</div>`;
+            frag.appendChild(row);
+        });
+        list.appendChild(frag);
+    } catch (e) {
+        list.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+}
+
+function filterByAuthor(name) {
+    setFilter('author', name, `作者：${name}`);
+    switchView('gallery');
+    loadGallery(1);
+}
+
+// ===== Tags view (word cloud) =====
+async function loadTagsView() {
+    const cloud = $('tagCloud');
+    const q = $('tagSearchInput') ? $('tagSearchInput').value.trim() : '';
+    cloud.innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        let url = '/api/tags';
+        if (q) url += '?q=' + encodeURIComponent(q);
+        const resp = await fetch(url);
+        const tags = await resp.json();
+        cloud.innerHTML = '';
+        if (!tags.length) { cloud.innerHTML = '<div class="empty-state">暂无标签</div>'; return; }
+
+        const maxCount = Math.max(...tags.map(t => t.artwork_count || 0), 1);
+        const frag = document.createDocumentFragment();
+        tags.forEach(t => {
+            const a = document.createElement('a');
+            const fs = tagFontSize(t.artwork_count || 0, maxCount);
+            a.style.fontSize = fs + 'px';
+            a.style.fontWeight = t.artwork_count >= maxCount ? 700 : 400;
+            a.title = `${t.name} (${t.artwork_count})`;
+            a.innerHTML = escapeHtml(t.name) + `<span class="tag-count">${t.artwork_count}</span>`;
+            a.onclick = () => filterByTag(t.name);
+            frag.appendChild(a);
+        });
+        cloud.appendChild(frag);
+    } catch (e) {
+        cloud.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+}
+
+function tagFontSize(count, max) {
+    const min = 13, maxF = 38;
+    if (max <= 1) return maxF;
+    return Math.round(min + (maxF - min) * Math.sqrt(count / max));
+}
+
+function filterByTag(name) {
+    setFilter('tag', name, `#${name}`);
+    switchView('gallery');
+    loadGallery(1);
+}
+
+// ===== Favorites =====
+async function loadFavoritesView() {
+    const grid = $('favoriteGrid');
+    grid.innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        const resp = await fetch('/api/favorites?r18=' + r18Param());
+        const favorites = await resp.json();
+        _favCache = favorites;
+        grid.innerHTML = '';
+        if (!favorites.length) {
+            grid.innerHTML = '<div class="empty-state">暂无收藏夹，点击右上角「新建收藏夹」创建</div>';
+            return;
+        }
+        const frag = document.createDocumentFragment();
+        favorites.forEach(f => {
+            const card = document.createElement('div');
+            card.className = 'folder-card';
+            let thumbs = '';
+            (f.works || []).slice(0, 6).forEach(w => {
+                const src = w.thumb_path ? `/thumbnails/${w.pixiv_id}.jpg` : '';
+                thumbs += `<img src="${src}" alt="" loading="lazy">`;
+            });
+            card.innerHTML = `
+                <div class="folder-thumbs" onclick="filterByFavorite(${f.id}, '${escapeAttr(f.name)}')">${thumbs || '<div class="folder-empty">空</div>'}</div>
+                <div class="folder-info" onclick="filterByFavorite(${f.id}, '${escapeAttr(f.name)}')">
+                    <div class="folder-name"><svg class="icon"><use href="#i-folder"/></svg><span>${escapeHtml(f.name)}</span></div>
+                    <div class="folder-meta">${f.artwork_count} 个作品</div>
+                </div>
+                <button class="folder-delete" onclick="deleteFavorite(${f.id}, '${escapeAttr(f.name)}')" title="删除收藏夹">×</button>`;
+            frag.appendChild(card);
+        });
+        grid.appendChild(frag);
+    } catch (e) {
+        grid.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+}
+
+function filterByFavorite(favId, name) {
+    currentFilter = { type: 'favorite', value: favId };
+    $('filterClear').style.display = 'inline-block';
+    $('galleryHeaderText').textContent = `收藏夹：${name}`;
+    $('galleryHeader').style.display = 'flex';
+    currentSearch = '';
+    $('searchInput').value = '';
+    switchView('gallery');
+    loadGallery(1);
+}
+
+function showCreateFavorite() {
+    $('createFavName').value = '';
+    $('createFavMsg').style.display = 'none';
+    $('createFavOverlay').classList.remove('hidden');
+    $('createFavName').focus();
+}
+
+function closeCreateFavorite() {
+    $('createFavOverlay').classList.add('hidden');
+}
+
+function confirmCreateFavorite() {
+    const name = $('createFavName').value.trim();
+    const msg = $('createFavMsg');
+    if (!name) { msg.textContent = '请输入收藏夹名称'; msg.style.display = 'block'; msg.style.color = '#e94560'; return; }
+    createFavorite(name);
+}
+
+async function createFavorite(name) {
+    try {
+        const resp = await fetch('/api/favorites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name })
+        });
+        const data = await resp.json();
+        if (data.error) { showToast('创建失败：' + data.error); return; }
+        closeCreateFavorite();
+        showToast('已创建收藏夹');
+        loadFavoritesView();
+    } catch (e) {
+        showToast('创建失败：' + e.message);
+    }
+}
+
+function deleteFavorite(favId, name) {
+    showConfirmDialog('删除收藏夹', `确认删除收藏夹「${name}」？收藏夹内的作品不会被删除。`, async function () {
+        try {
+            await fetch(`/api/favorites/${favId}`, { method: 'DELETE' });
+            showToast('已删除收藏夹');
+            if (currentFilter.type === 'favorite' && currentFilter.value == favId) clearFilter();
+            loadFavoritesView();
+        } catch (e) {
+            showToast('删除失败：' + e.message);
+        }
+    }, '删除');
+}
+
+// ===== Bookmarks Subscriptions =====
+let _bmPreviewName = '';
+
+async function loadBookmarkSubsView() {
+    const grid = $('bookmarkSubGrid');
+    grid.innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        const resp = await fetch('/api/bookmark-subs');
+        const subs = await resp.json();
+        grid.innerHTML = '';
+        if (!subs.length) {
+            grid.innerHTML = '<div class="empty-state">还没有订阅任何收藏列表。\n点「订阅收藏」输入用户的 Pixiv ID 即可订阅其公开收藏。</div>';
+            return;
+        }
+        const frag = document.createDocumentFragment();
+        subs.forEach(s => {
+            const card = document.createElement('div');
+            card.className = 'folder-card sub-card';
+            const name = escapeHtml(s.name || ('用户 ' + s.pixiv_user_id));
+            let cursorLine = s.last_pid ? ('游标 PID：' + s.last_pid) : '尚未检查（首次将下载全部公开收藏）';
+            let resultLine = '';
+            if (s.last_result) {
+                try {
+                    const r = JSON.parse(s.last_result);
+                    resultLine = ` — 上次：新 ${r.new || 0} · 下 ${r.downloaded || 0}${r.failed ? ' · 败 ' + r.failed : ''}`;
+                } catch (e) {}
+            }
+            const checkedOn = s.auto_download ? 'checked' : '';
+            card.innerHTML = `
+                <div class="folder-info sub-info">
+                    <div class="folder-name">
+                        ${s.author_id ? `<img class="sub-avatar" src="/api/authors/${s.author_id}/avatar" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}<span>${name}</span>
+                    </div>
+                    <div class="folder-meta">用户 ID ${s.pixiv_user_id} · ${escapeHtml(cursorLine)}</div>
+                    <div class="folder-meta">${escapeHtml(s.last_checked || '从未检查')}${resultLine}</div>
+                </div>
+                <div class="sub-actions">
+                    <label class="fav-check sub-auto">
+                        <input type="checkbox" ${checkedOn} onchange="toggleBookmarkSub(${s.pixiv_user_id})">
+                        自动下载
+                    </label>
+                    <button class="batch-btn" onclick="checkOneBookmarkSub(${s.pixiv_user_id})">检查</button>
+                    <button class="batch-btn danger" onclick="deleteBookmarkSub(${s.pixiv_user_id}, '${escapeAttr(s.name || '')}')">退订</button>
+                </div>`;
+            frag.appendChild(card);
+        });
+        grid.appendChild(frag);
+    } catch (e) {
+        grid.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+}
+
+function toggleBookmarkSub(uid) {
+    fetch(`/api/bookmark-subs/${uid}/toggle`, { method: 'POST' })
+        .then(r => r.json())
+        .then(() => loadBookmarkSubsView())
+        .catch(() => showToast('操作失败'));
+}
+
+function deleteBookmarkSub(uid, name) {
+    showConfirmDialog('取消订阅', `确认取消订阅用户「${name || uid}」的收藏列表？已下载的作品会保留。`, function () {
+        fetch(`/api/bookmark-subs/${uid}`, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(() => { showToast('已取消订阅'); loadBookmarkSubsView(); })
+            .catch(() => showToast('操作失败'));
+    }, '退订');
+}
+
+function checkOneBookmarkSub(uid) {
+    launchJob(`/api/bookmark-subs/${uid}/check`, 'bookmark_check', 'POST');
+}
+
+function openBmAdd() {
+    $('bmAddInput').value = '';
+    $('bmAddMsg').style.display = 'none';
+    $('bmPreviewHint').textContent = '';
+    $('bmAddCheckNow').checked = true;
+    _bmPreviewName = '';
+    $('bmAddOverlay').classList.remove('hidden');
+    $('bmAddInput').focus();
+}
+
+function closeBmAdd() {
+    $('bmAddOverlay').classList.add('hidden');
+}
+
+function resetBmPreview() {
+    $('bmPreviewHint').textContent = '';
+    _bmPreviewName = '';
+}
+
+function previewBmAdd() {
+    const id = $('bmAddInput').value.trim();
+    const hint = $('bmPreviewHint');
+    if (!/^\d+$/.test(id)) { hint.textContent = '请先输入数字用户 ID'; return; }
+    hint.textContent = '正在查询…';
+    fetch('/api/bookmark-subs/preview/' + id)
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) { hint.textContent = (d.error && (d.error.hint || d.error.message)) || '查询失败'; return; }
+            _bmPreviewName = d.name || '';
+            hint.textContent = `${d.name}：首页可见 ${d.first_page} 条公开收藏（首次订阅将沿列表下载全部新增）`;
+        })
+        .catch(() => { hint.textContent = '查询失败：无法连接服务器'; });
+}
+
+function confirmBmAdd() {
+    const id = $('bmAddInput').value.trim();
+    const msg = $('bmAddMsg');
+    if (!/^\d+$/.test(id)) { msg.textContent = '用户 ID 应为数字'; msg.style.display = 'block'; return; }
+    fetch('/api/bookmark-subs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: parseInt(id, 10), name: _bmPreviewName })
+    })
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) { msg.textContent = d.error.message || '添加失败'; msg.style.display = 'block'; return; }
+            closeBmAdd();
+            showToast(d.exists ? '该用户已在订阅列表中' : '已添加收藏订阅');
+            switchView('bookmarkSubs');
+            loadBookmarkSubsView();
+            if ($('bmAddCheckNow').checked) {
+                launchJob(`/api/bookmark-subs/${id}/check`, 'bookmark_check', 'POST');
+            }
+        })
+        .catch(() => { msg.textContent = '添加失败：无法连接服务器'; msg.style.display = 'block'; });
+}
+
+// ===== Favorite select dialog =====
+async function openFavSelect(ids) {
+    const idList = Array.isArray(ids) ? ids : [ids];
+    _favSelectArtworkIds = idList;
+    _favSelectCurrentIds = new Set();
+    $('favSelectOverlay').classList.remove('hidden');
+    $('favSelectMsg').style.display = 'none';
+    $('favNewName').value = '';
+    const list = $('favSelectList');
+    list.innerHTML = '<div class="loading">加载中...</div>';
+    try {
+        const favsResp = await fetch('/api/favorites');
+        const favorites = await favsResp.json();
+        _favCache = favorites;
+
+        // Collect which favorites currently contain ANY of the selected artworks
+        for (const id of idList) {
+            try {
+                const r = await fetch(`/api/artworks/${id}`);
+                const d = await r.json();
+                (d.favorites || []).forEach(f => _favSelectCurrentIds.add(f.id));
+            } catch (e) {}
+        }
+
+        list.innerHTML = '';
+        if (!favorites.length) {
+            list.innerHTML = '<div class="fav-empty">还没有收藏夹，可在下方新建</div>';
+            return;
+        }
+        favorites.forEach(f => {
+            const label = document.createElement('label');
+            label.className = 'fav-check';
+            label.innerHTML = `<input type="checkbox" value="${f.id}" ${_favSelectCurrentIds.has(f.id) ? 'checked' : ''}> ${escapeHtml(f.name)} <span class="fav-count">${f.artwork_count}</span>`;
+            list.appendChild(label);
+        });
+    } catch (e) {
+        list.innerHTML = '<div class="empty-state">加载失败</div>';
+    }
+}
+
+function closeFavSelect() {
+    $('favSelectOverlay').classList.add('hidden');
+    _favSelectArtworkIds = [];
+    _favSelectCurrentIds = new Set();
+}
+
+async function confirmFavSelect() {
+    if (!_favSelectArtworkIds.length) return;
+    const msg = $('favSelectMsg');
+    const ids = _favSelectArtworkIds.slice();
+
+    // All favorite ids in the list
+    const allFavIds = Array.from($('favSelectList').querySelectorAll('input[type="checkbox"]')).map(c => parseInt(c.value));
+    // Checked favorite ids
+    const checked = Array.from($('favSelectList').querySelectorAll('input[type="checkbox"]:checked')).map(c => parseInt(c.value));
+
+    let newName = $('favNewName').value.trim();
+    if (newName) {
+        const resp = await fetch('/api/favorites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName })
+        });
+        const data = await resp.json();
+        if (data.error) { msg.style.display = 'block'; msg.textContent = '新建失败：' + data.error; msg.style.color = '#e94560'; return; }
+        checked.push(data.id);
+    }
+
+    // Determine add vs remove
+    const toAdd = checked.filter(fid => !_favSelectCurrentIds.has(fid));
+    const toRemove = allFavIds.filter(fid => _favSelectCurrentIds.has(fid) && !checked.includes(fid));
+
+    try {
+        if (toAdd.length) {
+            await Promise.all(toAdd.map(fid =>
+                fetch(`/api/favorites/${fid}/artworks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ artwork_ids: ids })
+                })
+            ));
+        }
+        if (toRemove.length) {
+            await Promise.all(toRemove.map(fid =>
+                fetch(`/api/favorites/${fid}/artworks/batch-remove`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ artwork_ids: ids })
+                })
+            ));
+        }
+
+        if (toAdd.length && toRemove.length) msg.textContent = '已更新收藏夹';
+        else if (toAdd.length) msg.textContent = '收藏成功';
+        else if (toRemove.length) msg.textContent = '已从收藏夹移除';
+        else msg.textContent = '没有变化';
+
+        msg.style.display = 'block';
+        msg.style.color = '#4caf50';
+        setTimeout(() => {
+            closeFavSelect();
+            ids.forEach(refreshTileFavState);
+            if (!($('viewerOverlay').classList.contains('hidden')) && ids.length === 1) showViewer(ids[0]);
+            if (currentView === 'gallery') updateBatchBar();
+        }, 800);
+    } catch (e) {
+        msg.style.display = 'block';
+        msg.textContent = '操作失败：' + e.message;
+        msg.style.color = '#e94560';
+    }
+}
+
+// ===== Viewer (left info / right image) =====
+async function showViewer(artworkId) {
+    const overlay = $('viewerOverlay');
+    overlay.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    $('vLoading').style.display = 'block';
+    $('vMainImage').style.display = 'none';
+    $('vNav').style.display = 'none';
+
+    try {
+        const resp = await fetch(`/api/artworks/${artworkId}`);
+        const data = await resp.json();
+        if (data.error) { hideViewer(); return; }
+
+        _viewer = { data, idx: 0 };
+        $('vLoading').style.display = 'none';
+
+        $('vTitle').textContent = data.title;
+        $('vAuthor').innerHTML = data.author_id ? `作者：<a onclick="closeViewerToAuthor('${escapeAttr(data.author_name || '')}', ${data.author_id})">${escapeHtml(data.author_name)}</a>` : '作者：未知';
+        $('vMeta').innerHTML = `
+            <div>Pixiv ID：<span>${data.pixiv_id}</span></div>
+            <div>页数：<span>${data.page_count}</span></div>
+            <div>尺寸：<span>${data.width || '?'} × ${data.height || '?'}</span></div>
+            <div>发布时间：<span>${data.create_date || '未知'}</span></div>
+            <div>状态：<span>${data.pixiv_status === 'deleted' ? '已从 Pixiv 删除' : '活跃'}</span></div>
+            <div>首次扫描：<span>${data.first_seen || '未知'}</span></div>
+            <div>最后同步：<span>${data.last_synced || '未同步'}</span></div>
+            ${data.sync_error ? `<div>同步状态：<span style="color:#e0575b;">上次同步失败：${escapeHtml(data.sync_error)}</span></div>` : ''}`;
+
+        let tagsHtml = '';
+        (data.tags || []).forEach(t => {
+            tagsHtml += `<a onclick="closeViewerToTag('${escapeAttr(t.name)}')">#${escapeHtml(t.name)}</a>`;
+        });
+        $('vTags').innerHTML = tagsHtml;
+
+        let favTagsHtml = '';
+        (data.favorites || []).forEach(f => {
+            favTagsHtml += `<a onclick="closeViewerToFavorite(${f.id}, '${escapeAttr(f.name)}')">${escapeHtml(f.name)}</a>`;
+        });
+        if (favTagsHtml) {
+            $('vFav').style.display = 'flex';
+            $('vFavTags').innerHTML = favTagsHtml;
+        } else {
+            $('vFav').style.display = 'none';
+        }
+
+        const hasFav = (data.favorites || []).length > 0;
+        const favBtn = $('vFavBtn');
+        favBtn.classList.toggle('faved', hasFav);
+        favBtn.innerHTML = '<svg class="icon"><use href="#i-' + (hasFav ? 'star' : 'star-o') + '"/></svg><span>' + (hasFav ? '已收藏' : '收藏') + '</span>';
+        favBtn.title = hasFav ? '已收藏（点击管理）' : '收藏';
+
+        if (data.description) {
+            $('vDesc').style.display = 'block';
+            $('vDesc').innerHTML = sanitizeHtml(data.description);
+        } else {
+            $('vDesc').style.display = 'none';
+        }
+
+        window._viewerArtworkId = data.id;
+        window._viewerTitle = data.title;
+        renderViewerImage();
+        updateArtNav();
+    } catch (e) {
+        $('vLoading').style.display = 'none';
+        showToast('加载作品失败');
+    }
+}
+
+let _viewerZoom = 1;
+let _viewerPanX = 0, _viewerPanY = 0;
+
+function _viewerTransform() {
+    const img = $('vMainImage');
+    if (img) {
+        img.style.transformOrigin = 'center center';
+        img.style.transform = 'translate(' + _viewerPanX + 'px,' + _viewerPanY + 'px) scale(' + _viewerZoom + ')';
+    }
+}
+
+function resetViewerZoom() {
+    _viewerZoom = 1;
+    _viewerPanX = 0;
+    _viewerPanY = 0;
+    const img = $('vMainImage');
+    if (img) img.style.transform = '';
+}
+
+function applyViewerZoom(factor) {
+    _viewerZoom = Math.min(5, Math.max(0.2, _viewerZoom * factor));
+    _viewerTransform();
+}
+
+function renderViewerImage() {
+    resetViewerZoom();
+    const img = _viewer.data.images[_viewer.idx];
+    if (!img) { $('vMainImage').style.display = 'none'; return; }
+    $('vMainImage').src = paImg('/image/' + encodeURI(img.path));
+    $('vMainImage').style.display = 'block';
+
+    const total = _viewer.data.images.length;
+    if (total > 1) {
+        $('vNav').style.display = 'flex';
+        $('vPageIndicator').textContent = `${_viewer.idx + 1} / ${total}`;
+        $('vPrev').disabled = _viewer.idx <= 0;
+        $('vNext').disabled = _viewer.idx >= total - 1;
+    } else {
+        $('vNav').style.display = 'none';
+    }
+}
+
+function viewerNav(delta) {
+    if (!_viewer.data) return;
+    const total = _viewer.data.images.length;
+    const next = _viewer.idx + delta;
+    if (next < 0 || next >= total) return;
+    _viewer.idx = next;
+    renderViewerImage();
+}
+
+function openViewerFromAuthor(authorId, workIndex) {
+    const ids = _authorWorksIds[authorId] || [];
+    if (!ids.length) return;
+    _navIds = ids;
+    _navIndex = workIndex;
+    _navCtx = { type: 'author', q: '', tag: '', author: '', sort: 'id', order: 'desc', page: 1 };
+    showViewer(ids[workIndex]);
+}
+
+function updateArtNav() {
+    const hasPrev = _navIndex > 0;
+    const hasNext = _navIndex >= 0 && _navIndex < _navIds.length - 1;
+    const artNavVisible = _navIds.length > 1;
+    $('vPrevArt').style.display = (artNavVisible && hasPrev) ? '' : 'none';
+    $('vNextArt').style.display = (artNavVisible && hasNext) ? '' : 'none';
+}
+
+async function viewerArtworkNav(delta) {
+    if (!_navIds.length) return;
+    let idx = _navIndex + delta;
+
+    if (idx < 0) {
+        const loaded = await loadAdjacentNavPage(-1);
+        if (!loaded) return;
+        idx = _navIndex + delta;
+    } else if (idx >= _navIds.length) {
+        const loaded = await loadAdjacentNavPage(1);
+        if (!loaded) return;
+        idx = _navIndex + delta;
+    }
+
+    if (idx < 0 || idx >= _navIds.length) return;
+    _navIndex = idx;
+    showViewer(_navIds[idx]);
+}
+
+async function loadAdjacentNavPage(direction) {
+    const nextPage = _navCtx.page + direction;
+    if (nextPage < 1) return false;
+    try {
+        const url = buildGalleryUrl(nextPage, _navCtx);
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const ids = (data.artworks || []).map(a => a.id);
+        if (!ids.length) return false;
+        if (direction > 0) {
+            _navIds = _navIds.concat(ids);
+        } else {
+            _navIds = ids.concat(_navIds);
+            _navIndex += ids.length;
+        }
+        _navCtx.page = nextPage;
+        currentPage = nextPage;
+        return true;
+    } catch (e) {
+        showToast('加载失败');
+        return false;
+    }
+}
+
+function hideViewer() {
+    resetViewerZoom();
+    hideCtxMenu();
+    $('viewerOverlay').classList.add('hidden');
+    document.body.style.overflow = '';
+    _viewer = { data: null, idx: 0 };
+    $('vMainImage').src = '';
+}
+
+function closeViewerToAuthor(name, authorId) {
+    hideViewer();
+    setFilter('author', name, `作者：${name}`);
+    switchView('gallery');
+    loadGallery(1);
+}
+
+function closeViewerToTag(name) {
+    hideViewer();
+    setFilter('tag', name, `#${name}`);
+    switchView('gallery');
+    loadGallery(1);
+}
+
+function closeViewerToFavorite(favId, name) {
+    hideViewer();
+    currentFilter = { type: 'favorite', value: favId };
+    $('filterClear').style.display = 'inline-block';
+    $('galleryHeaderText').textContent = `收藏夹：${name}`;
+    $('galleryHeader').style.display = 'flex';
+    currentSearch = '';
+    $('searchInput').value = '';
+    switchView('gallery');
+    loadGallery(1);
+}
+
+// ===== Delete =====
+function deleteCurrent() {
+    if (!window._viewerArtworkId) return;
+    const title = window._viewerTitle || '此作品';
+    openDeleteConfirm([window._viewerArtworkId], `确认删除作品「${title}」？`);
+}
+
+async function openInFolder() {
+    if (!_viewer.data) return;
+    const img = _viewer.data.images[_viewer.idx];
+    if (!img) { showToast('当前没有可打开的图片'); return; }
+    try {
+        const resp = await fetch('/api/open-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_id: img.id })
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') showToast('已在文件夹中打开');
+        else showToast('打开失败：' + (data.error || '未知错误'));
+    } catch (e) {
+        showToast('打开失败：' + e.message);
+    }
+}
+
+// ===== Keyboard nav =====
+document.addEventListener('keydown', function (e) {
+    if (!$('viewerOverlay').classList.contains('hidden')) {
+        if (e.key === 'Escape') { hideViewer(); }
+        else if (e.key === 'ArrowLeft') { viewerArtworkNav(-1); }
+        else if (e.key === 'ArrowRight') { viewerArtworkNav(1); }
+        else if (e.key === 'ArrowUp') { viewerNav(-1); }
+        else if (e.key === 'ArrowDown') { viewerNav(1); }
+    }
+});
+
+// ===== Background jobs: scan / sync（右下角进度悬浮窗，关闭=停止） =====
+let _jobPollTimer = null;
+let _jobCloseTimer = null;
+let _currentJobId = null;
+
+function setFabBusy(busy) {
+    const scanBtn = $('btnScan');
+    const syncBtn = $('btnSync');
+    [scanBtn, syncBtn, $('btnBookmarkCheck')].forEach(b => {
+        if (!b) return;
+        b.disabled = busy;
+        b.style.opacity = busy ? 0.55 : 1;
+        b.style.cursor = busy ? 'not-allowed' : 'pointer';
+    });
+}
+
+function showJobWindow() {
+    $('jobWindow').classList.remove('hidden');
+}
+
+function hideJobWindow() {
+    $('jobWindow').classList.add('hidden');
+}
+
+function jobKindLabel(kind) {
+    if (kind === 'scan') return '扫描图片';
+    if (kind === 'bookmark_check') return '收藏订阅更新';
+    return '同步元数据';
+}
+
+function startJob(kind) {
+    let reqUrl = kind === 'scan' ? '/api/scan' : '/api/sync';
+    if (kind === 'bookmark_check') {
+        reqUrl = '/api/bookmark-subs/check';
+    }
+    launchJob(reqUrl, kind);
+}
+
+// 通用任务启动：任意 URL/方法触发后台任务并接入进度窗轮询
+function launchJob(reqUrl, kind, method) {
+    clearTimeout(_jobCloseTimer);
+    clearTimeout(_jobPollTimer);
+    setFabBusy(true);
+    $('jobTitle').textContent = jobKindLabel(kind);
+    $('jobBody').style.display = 'block';
+    $('jobResult').style.display = 'none';
+    $('jobError').style.display = 'none';
+    $('jobPhase').textContent = '正在启动…';
+    $('jobPct').textContent = '';
+    $('jobBarFill').style.width = '0%';
+    showJobWindow();
+
+    fetch(reqUrl, { method: method || 'GET' })
+        .then(r => r.json())
+        .then(d => {
+            if (d && d.job_id) {
+                _currentJobId = d.job_id;
+                pollJob(d.job_id);
+            } else {
+                const err = (d && d.error) ? d.error : { message: '任务启动失败', code: 'UNKNOWN' };
+                showJobError(err);
+            }
+        })
+        .catch(e => {
+            showJobError({ code: 'CONN', message: '无法连接服务器：' + e.message,
+                           hint: '请确认服务仍在运行' });
+        });
+}
+
+function pollJob(jobId) {
+    clearTimeout(_jobPollTimer);
+    fetch('/api/jobs/' + jobId)
+        .then(r => r.json())
+        .then(d => {
+            if (d.status === 'running') {
+                renderJobProgress(d);
+                _jobPollTimer = setTimeout(() => pollJob(jobId), 500);
+            } else {
+                finishJob(d);
+            }
+        })
+        .catch(() => {
+            _jobPollTimer = setTimeout(() => pollJob(jobId), 1000);
+        });
+}
+
+function renderJobProgress(d) {
+    $('jobTitle').textContent = jobKindLabel(d.kind);
+    $('jobPhase').textContent = d.message || '处理中…';
+    const fill = $('jobBarFill');
+    if (d.total != null && d.total > 0) {
+        fill.classList.remove('indeterminate');
+        const pct = Math.min(100, Math.round(((d.current || 0) / d.total) * 100));
+        fill.style.width = pct + '%';
+        $('jobPct').textContent = `${d.current || 0} / ${d.total}`;
+    } else {
+        fill.classList.add('indeterminate');
+        fill.style.width = '40%';
+        $('jobPct').textContent = '';
+    }
+}
+
+function finishJob(d) {
+    _currentJobId = null;
+    setFabBusy(false);
+    if (d.status === 'error') {
+        showJobError(d.error || { message: '任务执行出错', code: 'INTERNAL' });
+        return;
+    }
+    if (d.status === 'cancelled') {
+        hideJobWindow();
+        showToast('任务已停止');
+        return;
+    }
+    renderJobResult(d);
+    if (d.kind === 'scan') {
+        const r = d.result || {};
+        if (r.new_artworks > 0 || r.pruned_artworks > 0) loadGallery(1);
+    } else if (d.kind === 'sync') {
+        loadGallery(1);
+        if ($('viewAuthors').classList.contains('active')) loadAuthorsView();
+        if ($('viewTags').classList.contains('active')) loadTagsView();
+    } else if (d.kind === 'bookmark_check') {
+        loadGallery(1);
+        loadBookmarkSubsView();
+    }
+    clearTimeout(_jobCloseTimer);
+    _jobCloseTimer = setTimeout(hideJobWindow, 3500);
+}
+
+function renderJobResult(d) {
+    const r = d.result || {};
+    let html = '';
+    if (d.kind === 'scan') {
+        html = `扫描完成<br>新作品 ${r.new_artworks || 0} · 新图片 ${r.new_images || 0} · 跳过 ${r.skipped || 0}`;
+        if (r.duplicates || r.pruned_duplicates) {
+            html += `<br>去重：本次跳过 ${r.duplicates || 0} · 清理存量重复 ${r.pruned_duplicates || 0}`;
+        }
+        if (r.pruned_artworks || r.pruned_images) {
+            html += `<br>清理 ${r.pruned_artworks || 0} 作品 / ${r.pruned_images || 0} 图片（本地文件已不存在）`;
+        }
+        if (r.thumbnails) {
+            html += `<br>缩略图：生成 ${r.thumbnails.generated || 0} · 失败 ${r.thumbnails.failed || 0}`;
+        }
+    } else if (d.kind === 'bookmark_check') {
+        html = `收藏订阅更新完成<br>检查 ${r.checked || 0} 个订阅 · 新增收藏 ${r.new_found || 0} · 下载 ${r.downloaded || 0} · 失败 ${r.failed || 0}`;
+        if (r.cancelled) html += `<br>任务已中途停止`;
+        if ((r.subs || []).length) {
+            html += `<div class="job-err-line">${r.subs.map(s =>
+                `用户 ${s.pixiv_user_id}：新收藏 ${s.new} · 下载 ${s.downloaded}${s.failed ? ' · 失败 ' + s.failed : ''}`
+            ).join('<br>')}</div>`;
+        }
+        if (r.scan) {
+            html += `<div class="job-err-line">入库：新作品 ${r.scan.new_artworks || 0} · 新图片 ${r.scan.new_images || 0}${r.synced ? ' · 元数据同步 ' + r.synced : ''}</div>`;
+        } else if (!r.cancelled) {
+            html += `<div class="job-err-line">没有新增收藏，无需入库。</div>`;
+        }
+    } else {
+        html = `同步完成<br>成功 ${r.synced || 0} · 已删除 ${r.deleted || 0} · 失败 ${r.failed || 0}`;
+        const fails = (r.details || []).filter(x => x.status === 'failed').slice(0, 3);
+        if (fails.length) {
+            html += `<div class="job-err-line">失败示例：<br>${fails.map(f => `PID ${f.pixiv_id}：${escapeHtml(f.error)}`).join('<br>')}</div>`;
+        }
+        if (r.auth_error) {
+            html += `<div class="job-err-line">认证错误：${escapeHtml(r.auth_error)}</div>`;
+        }
+        if (r.failed > 0) {
+            html += `<div class="job-err-line">失败的作品将在下次同步时自动重试。</div>`;
+        }
+    }
+    $('jobTitle').textContent = jobKindLabel(d.kind);
+    $('jobBody').style.display = 'none';
+    $('jobError').style.display = 'none';
+    $('jobResult').style.display = 'block';
+    $('jobResult').innerHTML = html;
+}
+
+function showJobError(err) {
+    setFabBusy(false);
+    $('jobTitle').textContent = '出错了';
+    $('jobBody').style.display = 'none';
+    $('jobResult').style.display = 'none';
+    $('jobError').style.display = 'block';
+    const code = escapeHtml(err.code || 'ERROR');
+    const message = escapeHtml(err.message || '未知错误');
+    const hint = err.hint ? `<div class="job-err-hint">${escapeHtml(err.hint)}</div>` : '';
+    const detail = err.detail ? `<details class="job-err-detail"><summary>详细信息</summary><pre>${escapeHtml(err.detail)}</pre></details>` : '';
+    $('jobError').innerHTML = `<div class="job-err-code">${code}</div><div>${message}</div>${hint}${detail}`;
+    showJobWindow();
+}
+
+function closeJobWindow() {
+    clearTimeout(_jobPollTimer);
+    clearTimeout(_jobCloseTimer);
+    if (_currentJobId) {
+        fetch('/api/jobs/' + _currentJobId + '/cancel', { method: 'POST' }).catch(() => {});
+        _currentJobId = null;
+    }
+    setFabBusy(false);
+    hideJobWindow();
+}
+
+// ===== Toast =====
+let _toastTimer = null;
+function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('visible');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => t.classList.remove('visible'), 3500);
+}
+
+// ===== 通用确认弹窗（替代原生 confirm） =====
+let _cdCallback = null;
+function showConfirmDialog(title, message, onConfirm, okText) {
+    $('cdTitle').textContent = title || '确认操作';
+    $('cdMsg').textContent = message || '';
+    $('cdOkBtn').textContent = okText || '确认';
+    _cdCallback = onConfirm;
+    $('confirmDialogOverlay').classList.remove('hidden');
+}
+function closeConfirmDialog() {
+    $('confirmDialogOverlay').classList.add('hidden');
+    _cdCallback = null;
+}
+function doConfirmDialog() {
+    const cb = _cdCallback;
+    closeConfirmDialog();
+    if (cb) cb();
+}
+
+// ===== R18 显示模式 / 已删除快速筛选 / 设置分页 =====
+let _r18Mode = 'all';
+let deletedFilter = false;
+
+function r18Param() {
+    return _r18Mode === 'all' ? '' : _r18Mode;
+}
+
+function initR18() {
+    try {
+        const v = localStorage.getItem('pa-r18');
+        if (v === 'hide' || v === 'only') _r18Mode = v;
+    } catch (e) {}
+    updateR18Btn();
+}
+
+function cycleR18() {
+    _r18Mode = ({ all: 'hide', hide: 'only', only: 'all' })[_r18Mode] || 'all';
+    try { localStorage.setItem('pa-r18', _r18Mode); } catch (e) {}
+    updateR18Btn();
+    if (currentView === 'authors') loadAuthorsView();
+    else if (currentView === 'tags') loadTagsView();
+    else if (currentView === 'favorites') loadFavoritesView();
+    else loadGallery(1);
+}
+
+function updateR18Btn() {
+    const labels = { all: 'R18：全部', hide: 'R18：隐藏', only: 'R18：仅R18' };
+    const btn = $('btnR18');
+    if (btn) btn.textContent = labels[_r18Mode] || 'R18：全部';
+}
+
+function toggleDeletedFilter() {
+    deletedFilter = !deletedFilter;
+    const btn = $('btnDeleted');
+    if (btn) btn.classList.toggle('active', deletedFilter);
+    if (deletedFilter) {
+        setFilter('status', 'deleted', '已删除作品');
+    } else {
+        clearFilter();
+    }
+    if (currentView !== 'gallery') switchView('gallery');
+    loadGallery(1);
+}
+
+function switchSettingsTab(name) {
+    if ($('secBasic')) $('secBasic').style.display = name === 'basic' ? '' : 'none';
+    if ($('secNetwork')) $('secNetwork').style.display = name === 'network' ? '' : 'none';
+    if ($('tabBasic')) $('tabBasic').classList.toggle('active', name === 'basic');
+    if ($('tabNetwork')) $('tabNetwork').classList.toggle('active', name === 'network');
+}
+
+// ===== Theme =====
+function toggleTheme() {
+    const root = document.documentElement;
+    const isLight = root.getAttribute('data-theme') === 'light';
+    root.setAttribute('data-theme', isLight ? '' : 'light');
+    try { localStorage.setItem('pa-theme', isLight ? 'dark' : 'light'); } catch (e) {}
+    updateThemeBtn();
+}
+
+function updateThemeBtn() {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const btn = $('btnTheme');
+    if (btn) {
+        btn.innerHTML = '<svg class="icon"><use href="#i-' + (isLight ? 'moon' : 'sun') + '"/></svg><span class="nav-label">' + (isLight ? '暗色模式' : '亮色模式') + '</span>';
+        btn.title = isLight ? '切换到暗色主题' : '切换到亮色主题';
+    }
+}
+
+// ===== Safe mode =====
+function setSafeMode(on) {
+    document.documentElement.classList.toggle('safe-mode', on);
+    try { localStorage.setItem('pa-safe', on ? '1' : '0'); } catch (e) {}
+    updateSafeBadge();
+}
+
+function updateSafeBadge() {
+    const on = document.documentElement.classList.contains('safe-mode');
+    const badge = $('safeBadge');
+    if (badge) badge.style.display = on ? 'inline-flex' : 'none';
+}
+
+function openExternalBrowser() {
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.open_external(window.location.origin).then(function () {
+            showToast('已用外部浏览器打开');
+        });
+    } else {
+        window.open(window.location.origin, '_blank');
+    }
+}
+
+// ===== Settings =====
+async function openSettings() {
+    $('settingsOverlay').classList.remove('hidden');
+    $('settingsMsg').style.display = 'none';
+    $('settingSafeMode').checked = document.documentElement.classList.contains('safe-mode');
+    try {
+        const resp = await fetch('/api/settings');
+        const data = await resp.json();
+        $('tokenHint').textContent = data.has_token ? `当前: ${data.token_preview}` : '未设置';
+        $('dirHint').textContent = data.image_source_dir ? `当前: ${data.image_source_dir}` : '未设置';
+        $('proxyHint').textContent = data.proxy ? `当前: ${data.proxy}` : '未设置';
+        $('modeHint').textContent = data.connection_mode === 'direct' ? '直连模式：无需代理' : (data.connection_mode === 'proxy' ? '代理模式：使用下方代理地址' : '自动模式：直连失败自动回退代理');
+        $('portHint').textContent = data.server_port ? `当前端口: ${data.server_port}（修改后需重启服务生效，默认 6814）` : '当前端口: 6814（修改后需重启服务生效）';
+        $('tokenHint2').textContent = data.access_token_auto ? '局域网模式下自动生成，无固定令牌' : (data.access_token ? '当前使用固定令牌' : '未设置（非局域网模式无需令牌）');
+        $('syncDelayHint').textContent = data.sync_delay_ms != null ? `当前: ${data.sync_delay_ms} ms（0=不限速）` : '当前: 800 ms（0=不限速）';
+        const mirror = data.image_mirror || '';
+        $('settingMirrorToggle').checked = !!mirror;
+        $('settingImageMirror').value = mirror;
+        $('mirrorHint').textContent = mirror
+            ? `当前: 图片下载走 ${mirror}（仅影响收藏订阅下载与头像抓取；同步元数据不涉及图片）`
+            : '关闭时使用 Pixiv 官方 i.pximg.net。部分镜像不支持无 Referer 图片或头像，会失败或自动回退';
+        onMirrorToggleChange();
+        $('settingToken').value = '';
+        $('settingDir').value = data.image_source_dir || '';
+        $('settingProxy').value = data.proxy || '';
+        $('settingSyncDelay').value = data.sync_delay_ms != null ? data.sync_delay_ms : '';
+        $('settingMode').value = data.connection_mode || 'auto';
+        $('settingPort').value = data.server_port || '';
+        $('settingAccessToken').value = data.access_token_auto ? '' : (data.access_token || '');
+    } catch (e) {
+        $('tokenHint').textContent = '无法加载';
+    }
+}
+
+function closeSettings() {
+    $('settingsOverlay').classList.add('hidden');
+}
+
+function onMirrorToggleChange() {
+    const f = $('mirrorDomainField');
+    if (f) f.style.display = $('settingMirrorToggle').checked ? 'block' : 'none';
+}
+
+async function refreshDirectIps() {
+    const hint = $('refreshIpHint');
+    hint.textContent = '正在通过 DoH 查询最新 IP...';
+    try {
+        const resp = await fetch('/api/settings/refresh-ips', { method: 'POST' });
+        const data = await resp.json();
+        const updated = data.updated || {};
+        const count = Object.keys(updated).length;
+        if (count > 0) {
+            hint.textContent = `已更新 ${count} 个 IP：` + Object.entries(updated).map(([k, v]) => `${k.replace('PIXIV_IP_', '')}=${v}`).join('，');
+        } else {
+            hint.textContent = '未获取到新 IP（DoH 可能被网络阻断），可手动在 .env 中设置 PIXIV_IP_*';
+        }
+    } catch (e) {
+        hint.textContent = '刷新失败：' + e.message;
+    }
+}
+
+async function saveSettings() {
+    const token = $('settingToken').value.trim();
+    const dir = $('settingDir').value.trim();
+    const proxy = $('settingProxy').value.trim();
+    const mode = $('settingMode').value;
+    const port = $('settingPort').value.trim();
+    const accessToken = $('settingAccessToken').value.trim();
+    const syncDelay = $('settingSyncDelay').value.trim();
+    const imageMirror = $('settingMirrorToggle').checked ? $('settingImageMirror').value.trim() : '';
+    const msg = $('settingsMsg');
+
+    const payload = {
+        refresh_token: token,
+        image_source_dir: dir,
+        proxy: proxy,
+        connection_mode: mode,
+        sync_delay_ms: syncDelay,
+        image_mirror: imageMirror
+    };
+    if (port) payload.server_port = port;
+    payload.access_token = accessToken;
+
+    if (!token && !dir && !proxy && !port && !accessToken && !syncDelay && !imageMirror) {
+        msg.style.display = 'block';
+        msg.textContent = '请至少填写一项';
+        msg.style.color = '#e94560';
+        return;
+    }
+    try {
+        const resp = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (data.error) {
+            msg.style.display = 'block';
+            msg.textContent = (data.error.hint || data.error.message || '保存失败');
+            msg.style.color = '#e94560';
+            return;
+        }
+        if (data.status === 'ok') {
+            msg.style.display = 'block';
+            msg.textContent = '保存成功' + (port ? '（端口修改需重启服务生效）' : '');
+            msg.style.color = '#4caf50';
+            setTimeout(closeSettings, 1200);
+        }
+    } catch (e) {
+        msg.style.display = 'block';
+        msg.textContent = '保存失败: ' + e.message;
+        msg.style.color = '#e94560';
+    }
+}
+
+// ===== Helpers =====
+function escapeHtml(text) {
+    if (text == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(text);
+    return div.innerHTML;
+}
+
+function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const SAFE_TAGS = new Set(['A', 'B', 'I', 'U', 'STRONG', 'EM', 'P', 'BR', 'SPAN', 'DIV', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'CODE', 'PRE']);
+
+function sanitizeHtml(html) {
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+    const toRemove = [];
+    while (walker.nextNode()) {
+        const el = walker.currentNode;
+        if (!SAFE_TAGS.has(el.tagName)) {
+            toRemove.push(el);
+            continue;
+        }
+        for (const attr of Array.from(el.attributes)) {
+            const name = attr.name.toLowerCase();
+            if (name === 'href' && /^https?:/i.test(attr.value)) continue;
+            if (name === 'target') { el.target = '_blank'; continue; }
+            if (name === 'rel') continue;
+            el.removeAttribute(attr.name);
+        }
+        if (el.tagName === 'A') {
+            el.setAttribute('target', '_blank');
+            el.setAttribute('rel', 'noopener noreferrer');
+        }
+    }
+    for (const el of toRemove) {
+        el.replaceWith(document.createTextNode(el.textContent || ''));
+    }
+    return template.innerHTML;
+}
+
+// ===== 自定义右键菜单 =====
+function showCtxMenu(x, y, items) {
+    const menu = $('ctxMenu');
+    menu.innerHTML = '';
+    items.forEach(it => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+        b.textContent = it.label;
+        b.addEventListener('click', function () { hideCtxMenu(); it.action(); });
+        menu.appendChild(b);
+    });
+    menu.classList.remove('hidden');
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    const r = menu.getBoundingClientRect();
+    const nx = Math.min(x, window.innerWidth - r.width - 8);
+    const ny = Math.min(y, window.innerHeight - r.height - 8);
+    menu.style.left = Math.max(4, nx) + 'px';
+    menu.style.top = Math.max(4, ny) + 'px';
+}
+
+function hideCtxMenu() {
+    const menu = $('ctxMenu');
+    menu.classList.add('hidden');
+    menu.innerHTML = '';
+}
+
+document.addEventListener('contextmenu', function (e) {
+    const t = e.target;
+    if (t && (t.closest('input') || t.closest('textarea') || t.closest('[contenteditable="true"]'))) return;
+    e.preventDefault();
+
+    const tile = t.closest ? t.closest('.tile[data-id]') : null;
+    if (tile) {
+        const id = parseInt(tile.dataset.id, 10);
+        const pid = tile.dataset.pid || '';
+        const title = tile.dataset.title || ('Pixiv ID: ' + pid);
+        showCtxMenu(e.clientX, e.clientY, [
+            { label: '查看', action: function () { showViewer(id); } },
+            { label: '收藏', action: function () { openFavSelect(id); } },
+            { label: '删除', danger: true, action: function () { deleteArtworkFromTile(id, title); } },
+            { label: '复制 Pixiv ID', action: function () {
+                if (pid) { try { navigator.clipboard.writeText(pid); } catch (err) {} }
+            } },
+        ]);
+        return;
+    }
+
+    if (!document.getElementById('viewerOverlay').classList.contains('hidden')) {
+        const items = [
+            { label: '在文件夹中打开', action: function () { openInFolder(); } },
+            { label: '收藏', action: function () { openFavSelect(window._viewerArtworkId); } },
+            { label: '删除作品', danger: true, action: function () { deleteCurrent(); } },
+        ];
+        const prev = $('vPrevArt'), next = $('vNextArt');
+        if (prev && prev.style.display !== 'none') items.unshift({ label: '上一作品', action: function () { viewerArtworkNav(-1); } });
+        if (next && next.style.display !== 'none') items.push({ label: '下一作品', action: function () { viewerArtworkNav(1); } });
+        items.push({ label: '关闭查看器', action: function () { hideViewer(); } });
+        showCtxMenu(e.clientX, e.clientY, items);
+        return;
+    }
+
+    showCtxMenu(e.clientX, e.clientY, [
+        { label: '刷新', action: function () { location.reload(); } },
+        { label: '返回首页', action: function () { window.location.href = '/'; } },
+        { label: '切换主题', action: function () { toggleTheme(); } },
+        { label: '打开设置', action: function () { openSettings(); } },
+    ]);
+});
+
+document.addEventListener('click', function (e) {
+    if (!(e.target.closest && e.target.closest('#ctxMenu'))) hideCtxMenu();
+    if (!(e.target.closest && e.target.closest('.sort-widget'))) {
+        const sm = $('sortMenu');
+        if (sm) sm.classList.add('hidden');
+    }
+});
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+        hideCtxMenu();
+        const sm = $('sortMenu');
+        if (sm) sm.classList.add('hidden');
+        // 依次关闭最上层的模态弹窗
+        const closers = [
+            ['favSelectOverlay', closeFavSelect],
+            ['bmAddOverlay', closeBmAdd],
+            ['confirmDialogOverlay', closeConfirmDialog],
+            ['settingsOverlay', closeSettings],
+            ['deleteConfirmOverlay', closeDeleteConfirm],
+        ];
+        for (const [id, fn] of closers) {
+            const el = $(id);
+            if (el && !el.classList.contains('hidden')) { fn(); break; }
+        }
+    }
+});
+window.addEventListener('scroll', function () { hideCtxMenu(); }, true);
+window.addEventListener('resize', function () { hideCtxMenu(); });
+
+// 查看器滚轮缩放（双击还原）
+(function () {
+    const right = document.querySelector('.viewer-right');
+    if (!right) return;
+    // 禁止图片原生 HTML5 拖拽：消除拖动幽灵缩略图、避免 mouseup 被系统拖拽吞掉
+    document.addEventListener('dragstart', function (e) {
+        if (e.target && e.target.tagName === 'IMG') e.preventDefault();
+    });
+
+    right.addEventListener('wheel', function (e) {
+        if (e.deltaY !== 0) { e.preventDefault(); applyViewerZoom(e.deltaY < 0 ? 1.25 : 0.8); }
+    }, { passive: false });
+
+    let dragging = false, sx = 0, sy = 0, px = 0, py = 0;
+    right.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        if (e.target.closest && (e.target.closest('button') || e.target.closest('a'))) return;
+        if (_viewerZoom <= 1) return;
+        e.preventDefault();
+        dragging = true;
+        sx = e.clientX; sy = e.clientY;
+        px = _viewerPanX; py = _viewerPanY;
+    });
+    document.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        _viewerPanX = px + (e.clientX - sx);
+        _viewerPanY = py + (e.clientY - sy);
+        _viewerTransform();
+    });
+    document.addEventListener('mouseup', function () { dragging = false; });
+    // 防止任何中断导致拖动状态卡死（原生拖拽结束/失焦/标签页隐藏）
+    document.addEventListener('dragend', function () { dragging = false; });
+    window.addEventListener('blur', function () { dragging = false; });
+    document.addEventListener('visibilitychange', function () { dragging = false; });
+
+    const img = $('vMainImage');
+    if (img) {
+        img.draggable = false;
+        img.addEventListener('dblclick', function () { resetViewerZoom(); });
+    }
+})();
+
+// ===== Init =====
+// Debounced search
+$('searchInput').addEventListener('input', function () {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(doSearch, 350);
+});
+$('searchInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+        clearTimeout(_searchTimer);
+        doSearch();
+    }
+});
+
+updateThemeBtn();
+updateSidebarToggle();
+updateSafeBadge();
+initR18();
+updateSortBtn();
+if (window.pywebview && window.pywebview.api) {
+    const f = $('openExternalField');
+    if (f) f.style.display = 'block';
+}
+loadGallery(1);
+</script>
+</body>
+</html>

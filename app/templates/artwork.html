@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>作品详情 - Pixiv Archive</title>
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('pa-theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+                if (localStorage.getItem('pa-safe') === '1') {
+                    document.documentElement.classList.add('safe-mode');
+                }
+                if (localStorage.getItem('pa-sidebar') === 'collapsed') {
+                    document.documentElement.classList.add('sb-collapsed');
+                }
+            } catch (e) {}
+        })();
+    </script>
+    <script src="/static/js/pa_token.js"></script>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+{% include 'icons.html' %}
+
+<aside class="sidebar">
+    <div class="brand-row">
+        <div class="brand"><a href="/" class="brand-text">Pixiv Archive</a></div>
+        <button class="sb-toggle" id="btnSidebar" title="收起侧栏" onclick="toggleSidebar()"></button>
+    </div>
+    <div class="sidebar-body">
+        <nav>
+            <a class="side-nav-item active" href="/" title="画廊">
+                <svg class="icon"><use href="#i-image"/></svg><span class="nav-label">画廊</span>
+            </a>
+        </nav>
+    </div>
+</aside>
+
+<script>
+function updateSidebarToggle() {
+    const collapsed = document.documentElement.classList.contains('sb-collapsed');
+    const btn = document.getElementById('btnSidebar');
+    if (btn) {
+        btn.title = collapsed ? '展开侧栏' : '收起侧栏';
+        btn.innerHTML = '<svg class="icon" style="transform:rotate(' + (collapsed ? 180 : 0) + 'deg)"><use href="#i-panel"/></svg>';
+    }
+}
+function toggleSidebar() {
+    const collapsed = document.documentElement.classList.toggle('sb-collapsed');
+    try { localStorage.setItem('pa-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
+    updateSidebarToggle();
+}
+updateSidebarToggle();
+</script>
+
+<div class="content">
+    <main>
+        <div class="detail" id="detail">
+            <div id="loading" class="loading">加载中...</div>
+        </div>
+    </main>
+</div>
+
+<!-- Generic confirm dialog -->
+<div id="confirmDialogOverlay" class="settings-overlay hidden" onclick="if(event.target===this)closeConfirmDialog()">
+    <div class="settings-panel" style="width:400px;">
+        <h3 id="cdTitle">确认操作</h3>
+        <div id="cdMsg" class="settings-field" style="font-size:14px;line-height:1.7;"></div>
+        <div class="settings-actions">
+            <button id="cdOkBtn" onclick="doConfirmDialog()" class="btn-danger">确认</button>
+            <button onclick="closeConfirmDialog()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- 自定义右键菜单 -->
+<div class="ctx-menu hidden" id="ctxMenu"></div>
+
+<script>
+const artworkId = {{ artwork_id }};
+const $ = id => document.getElementById(id);
+
+// ===== Toast（与应用主界面风格一致，替代 alert） =====
+let _toastTimer = null;
+function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('visible');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => t.classList.remove('visible'), 3500);
+}
+
+// ===== 通用确认弹窗（替代原生 confirm） =====
+let _cdCallback = null;
+function showConfirmDialog(title, message, onConfirm, okText) {
+    $('cdTitle').textContent = title || '确认操作';
+    $('cdMsg').textContent = message || '';
+    $('cdOkBtn').textContent = okText || '确认';
+    _cdCallback = onConfirm;
+    $('confirmDialogOverlay').classList.remove('hidden');
+}
+function closeConfirmDialog() {
+    $('confirmDialogOverlay').classList.add('hidden');
+    _cdCallback = null;
+}
+function doConfirmDialog() {
+    const cb = _cdCallback;
+    closeConfirmDialog();
+    if (cb) cb();
+}
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !$('confirmDialogOverlay').classList.contains('hidden')) closeConfirmDialog();
+});
+
+async function loadDetail() {
+    const resp = await fetch(`/api/artworks/${artworkId}`);
+    const data = await resp.json();
+
+    if (data.error) {
+        document.getElementById('detail').innerHTML = '<div class="empty-state">作品未找到</div>';
+        return;
+    }
+
+    let tagsHtml = '';
+    data.tags.forEach(t => {
+        tagsHtml += `<a href="/tag/${encodeURIComponent(t.name)}">#${t.name}</a>`;
+    });
+
+    let imagesHtml = '';
+    if (data.images.length > 0) {
+        imagesHtml = `
+        <div class="image-viewer">
+            <img id="mainImage" src="${paImg('/image/' + encodeURI(data.images[0].path))}" alt="${data.title}">
+        </div>`;
+        if (data.images.length > 1) {
+            imagesHtml += `
+            <div class="image-nav">
+                <button onclick="prevImage()">上一页</button>
+                <span class="page-indicator" id="pageIndicator">1 / ${data.images.length}</span>
+                <button onclick="nextImage()">下一页</button>
+            </div>`;
+        }
+    }
+
+    let html = `
+        <a href="/" class="back-link"><svg class="icon"><use href="#i-arrow-left"/></svg>返回首页</a>
+        <div class="detail-title-row">
+            <h2>${escapeHtml(data.title)}</h2>
+            <button class="btn-folder-ghost" onclick="openInFolder()"><svg class="icon"><use href="#i-folder"/></svg>在文件夹中打开</button>
+            <button class="btn-delete-ghost" onclick="deleteCurrent()"><svg class="icon"><use href="#i-trash"/></svg>删除作品</button>
+        </div>
+        <div class="meta-section">
+            <div>作者：<a href="javascript:void(0)" onclick="window.location.href='/author/${data.author_id}'">${escapeHtml(data.author_name)}</a></div>
+            <div>Pixiv ID：<span>${data.pixiv_id}</span></div>
+            <div>页数：<span>${data.page_count}</span></div>
+            <div>尺寸：<span>${data.width || '?'} × ${data.height || '?'}</span></div>
+            <div>发布时间：<span>${data.create_date || '未知'}</span></div>
+            <div>状态：<span>${data.pixiv_status === 'deleted' ? '已从 Pixiv 删除' : '活跃'}</span></div>
+            <div>首次扫描：<span>${data.first_seen || '未知'}</span></div>
+            <div>最后同步：<span>${data.last_synced || '未同步'}</span></div>
+        </div>
+        ${tagsHtml ? '<div class="tags">' + tagsHtml + '</div>' : ''}
+        ${data.description ? '<div class="description">' + escapeHtml(data.description) + '</div>' : ''}
+        ${imagesHtml}
+    `;
+
+    window._detailImages = data.images;
+    document.getElementById('detail').innerHTML = html;
+
+    if (data.images.length > 1) {
+        window._imageList = data.images;
+        window._currentIdx = 0;
+    }
+}
+
+function prevImage() {
+    if (!window._imageList) return;
+    window._currentIdx = (window._currentIdx - 1 + window._imageList.length) % window._imageList.length;
+    updateImage();
+}
+
+function nextImage() {
+    if (!window._imageList) return;
+    window._currentIdx = (window._currentIdx + 1) % window._imageList.length;
+    updateImage();
+}
+
+function updateImage() {
+    resetArtZoom();
+    const img = window._imageList[window._currentIdx];
+    document.getElementById('mainImage').src = paImg('/image/' + encodeURI(img.path));
+    document.getElementById('pageIndicator').textContent = `${window._currentIdx + 1} / ${window._imageList.length}`;
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function openInFolder() {
+    const list = window._detailImages || [];
+    const img = (window._imageList && window._imageList.length && window._currentIdx != null)
+        ? window._imageList[window._currentIdx]
+        : (list[0] || null);
+    if (!img) { showToast('没有可打开的图片'); return; }
+    try {
+        const resp = await fetch('/api/open-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_id: img.id })
+        });
+        const data = await resp.json();
+        if (data.status === 'ok') showToast('已在文件夹中打开');
+        else showToast('打开失败：' + (data.error || '未知错误'));
+    } catch (e) {
+        showToast('打开失败：' + e.message);
+    }
+}
+
+function deleteCurrent() {
+    showConfirmDialog('删除作品', '确认删除此作品？这将从数据库中移除该作品（本地文件保留）。', async function () {
+        try {
+            const resp = await fetch(`/api/artworks/${artworkId}`, { method: 'DELETE' });
+            const data = await resp.json();
+            if (data.status === 'deleted') {
+                window.location.href = '/';
+                return;
+            }
+            showToast('删除失败：' + (data.error || '未知错误'));
+        } catch (e) {
+            showToast('删除失败：' + e.message);
+        }
+    }, '删除');
+}
+
+let _artZoom = 1;
+let _artPanX = 0, _artPanY = 0;
+
+function _artTransform() {
+    const img = document.getElementById('mainImage');
+    if (img) {
+        img.style.transformOrigin = 'center center';
+        img.style.transform = 'translate(' + _artPanX + 'px,' + _artPanY + 'px) scale(' + _artZoom + ')';
+    }
+}
+
+function resetArtZoom() {
+    _artZoom = 1;
+    _artPanX = 0;
+    _artPanY = 0;
+    const img = document.getElementById('mainImage');
+    if (img) img.style.transform = '';
+}
+
+function applyArtZoom(factor) {
+    _artZoom = Math.min(5, Math.max(0.2, _artZoom * factor));
+    _artTransform();
+}
+
+function showCtxMenu(x, y, items) {
+    const menu = document.getElementById('ctxMenu');
+    menu.innerHTML = '';
+    items.forEach(it => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+        b.textContent = it.label;
+        b.addEventListener('click', function () { hideCtxMenu(); it.action(); });
+        menu.appendChild(b);
+    });
+    menu.classList.remove('hidden');
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    const r = menu.getBoundingClientRect();
+    const nx = Math.min(x, window.innerWidth - r.width - 8);
+    const ny = Math.min(y, window.innerHeight - r.height - 8);
+    menu.style.left = Math.max(4, nx) + 'px';
+    menu.style.top = Math.max(4, ny) + 'px';
+}
+
+function hideCtxMenu() {
+    const menu = document.getElementById('ctxMenu');
+    menu.classList.add('hidden');
+    menu.innerHTML = '';
+}
+
+document.addEventListener('contextmenu', function (e) {
+    const t = e.target;
+    if (t && (t.closest('input') || t.closest('textarea') || t.closest('[contenteditable="true"]') || t.closest('#ctxMenu'))) return;
+    e.preventDefault();
+    const img = document.getElementById('mainImage');
+    const onImg = img && (t === img);
+    const items = onImg ? [
+        { label: '在文件夹中打开', action: function () { openInFolder(); } },
+        { label: '删除作品', danger: true, action: function () { deleteCurrent(); } },
+        { label: '返回首页', action: function () { window.location.href = '/'; } },
+    ] : [
+        { label: '刷新', action: function () { location.reload(); } },
+        { label: '返回首页', action: function () { window.location.href = '/'; } },
+    ];
+    showCtxMenu(e.clientX, e.clientY, items);
+});
+
+document.addEventListener('click', function (e) {
+    if (!(e.target.closest && e.target.closest('#ctxMenu'))) hideCtxMenu();
+});
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') hideCtxMenu();
+});
+window.addEventListener('scroll', function () { hideCtxMenu(); }, true);
+window.addEventListener('resize', function () { hideCtxMenu(); });
+
+document.addEventListener('wheel', function (e) {
+    const img = document.getElementById('mainImage');
+    if (img && e.target === img) {
+        e.preventDefault();
+        if (e.deltaY !== 0) applyArtZoom(e.deltaY < 0 ? 1.25 : 0.8);
+    }
+}, { passive: false });
+document.addEventListener('dblclick', function (e) {
+    const img = document.getElementById('mainImage');
+    if (img && e.target === img) resetArtZoom();
+});
+(function () {
+    const img = document.getElementById('mainImage');
+    if (!img) return;
+    // 禁止图片原生 HTML5 拖拽：消除拖动幽灵缩略图、避免 mouseup 被系统拖拽吞掉
+    img.draggable = false;
+    document.addEventListener('dragstart', function (e) {
+        if (e.target && e.target.tagName === 'IMG') e.preventDefault();
+    });
+    let dragging = false, sx = 0, sy = 0, px = 0, py = 0;
+    img.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        if (_artZoom <= 1) return;
+        e.preventDefault();
+        dragging = true;
+        sx = e.clientX; sy = e.clientY;
+        px = _artPanX; py = _artPanY;
+    });
+    document.addEventListener('mousemove', function (e) {
+        if (!dragging) return;
+        _artPanX = px + (e.clientX - sx);
+        _artPanY = py + (e.clientY - sy);
+        _artTransform();
+    });
+    document.addEventListener('mouseup', function () { dragging = false; });
+    // 防止任何中断导致拖动状态卡死（原生拖拽结束/失焦/标签页隐藏）
+    document.addEventListener('dragend', function () { dragging = false; });
+    window.addEventListener('blur', function () { dragging = false; });
+    document.addEventListener('visibilitychange', function () { dragging = false; });
+})();
+
+loadDetail();
+</script>
+</body>
+</html>
