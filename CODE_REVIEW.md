@@ -828,6 +828,7 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 - [README.md](README.md)：删掉「方式二：直接使用 exe」「构建方式」（一键脚本 / PowerShell 脚本 / 手动步骤 / spec 说明）两节、目录结构里的打包条目、`requirements-build.txt` 依赖说明、杀毒软件报毒 FAQ、命令行参数表里的 exe 列；依赖清单补上此前漏写的 `hypercorn`；新增「回归测试」一节。
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：删掉 Build time（PyInstaller）一节。
 - [.gitignore](.gitignore)：删掉 `Release/` / `dist/` / `build/` 三条构建产物忽略规则。
+- `venv/` 里本会话为打包临时装的 `pyinstaller`、`pyinstaller-hooks-contrib`、`altgraph`、`pefile`、`pywin32-ctypes` 也已卸载（`packaging` / `setuptools` 是原有依赖，保留）；卸载后 `requirements.txt` 声明与实现仍完全对应，256 项测试全绿。
 - [tests/test_static_assets.py](tests/test_static_assets.py)：原 L10 断言（校验 `build.ps1` / spec）改为**反向断言**——打包文件必须不存在、文档（去掉「本次变更」小节后）不得再出现 `PyInstaller` / `Release\PixivArchive.exe` / 已删文件名；并断言 [Start.bat](Start.bat) 只调用 `run.py`、保持未被改动（原因见 15.7）。
 
 保留未动的一处：`app/paths.py` 里 `getattr(sys, "frozen", False)` 的「冻结时用 exe 同级目录」分支。它是几行运行时路径决策，源码运行走的是同一个 `else` 分支——删掉对现状零影响、留着对将来零成本，所以按「运行时代码」而非「打包工具」处理。（若希望连它一起删，说一声即可。）
