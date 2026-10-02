@@ -7,7 +7,9 @@ import urllib3
 from requests.adapters import HTTPAdapter
 from app import paths
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# 注意：不在 import 时全局抑制 TLS 告警。免 SNI 直连必须关闭证书校验，
+# 但 urllib3.disable_warnings() 是进程级全局副作用，import 本模块就静音会
+# 掩盖其它模块真实的 TLS 告警；改为只在 enable_direct() 里抑制（见下）。
 
 # Hardcoded IP overrides (mirrors pixez Hoster._constMap)
 DEFAULT_IP_MAP = {
@@ -89,6 +91,10 @@ def enable_direct():
     with _patch_lock:
         if _patched:
             return
+        # 只有真正启用直连时才抑制告警：该抑制仅针对本模块发起的免 SNI 连接
+        # （IP 直连没有域名可用于 SNI，也就无法做证书主机名校验，见
+        # DirectAdapter._make_ssl_context），与调用方其它 HTTPS 请求无关。
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         socket.getaddrinfo = _patched_getaddrinfo
         _patched = True
 
@@ -97,6 +103,12 @@ class DirectAdapter(HTTPAdapter):
     """HTTPAdapter that connects without TLS SNI and without cert verification."""
 
     def _make_ssl_context(self):
+        # 为什么必须关校验：直连用 IP 连接但 Host 仍是 pixiv 域名，TLS 握手时
+        # 不发送 SNI（server_hostname=None）。缺少 SNI 时服务器返回的证书链
+        # 不保证匹配所请求域名，且证书主机名校验也无法进行——一旦开启
+        # check_hostname/CERT_REQUIRED，握手会直接失败，直连功能即失效。
+        # 代价：该会话不再有中间人防护，仅适用于本工具对 pixiv 固定 IP 的
+        # 媒体/API 拉取；不要把此 adapter 复用到需要真实校验的场景。
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -134,6 +146,8 @@ def resolve_ip_via_doh(host, timeout=10):
 
 
 def _doh_query(doh_host, doh_ip, query_host, timeout):
+    # 与 DirectAdapter 同理：DoH 服务器用 IP 直连、握手不带 SNI，必须关校验
+    # （见 _make_ssl_context 的说明）；代价同样是没有中间人防护。
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -173,6 +187,35 @@ def _doh_query(doh_host, doh_ip, query_host, timeout):
         ssock.close()
 
 
+def _response_is_usable(resp):
+    """判断一次探测响应是否说明该 IP 可用（可直连 pixiv 主机）。
+
+    只排除明确的拦截/代理信号，避免误杀正常 Pixiv IP：
+    - 无鉴权访问 "/" 时 Pixiv 返回 404 JSON 属正常，仍算可用；
+    - 451（法律封禁）/ 407（代理要求认证）→ 被拦截，不可用；
+    - 403 且 Content-Type 为 text/html → 典型中间盒拦截页，不可用
+      （403 + JSON 则可能是 API 鉴权类响应，不代表 IP 不通，仍算可用）；
+    - 其余 < 500 视为可用。
+    """
+    status = getattr(resp, "status_code", None)
+    if not isinstance(status, int):
+        return False
+    if status >= 500:
+        return False
+    if status in (451, 407):
+        return False
+    if status == 403:
+        headers = getattr(resp, "headers", None) or {}
+        content_type = ""
+        for key, value in getattr(headers, "items", lambda: [])():
+            if str(key).lower() == "content-type":
+                content_type = str(value or "")
+                break
+        if "text/html" in content_type.lower():
+            return False
+    return True
+
+
 def _validate_ip(host, ip, timeout=10):
     """Test if an IP works for SNI-less direct connection to a pixiv host."""
     try:
@@ -194,7 +237,7 @@ def _validate_ip(host, ip, timeout=10):
         socket.getaddrinfo = forced
         try:
             resp = session.get(f"https://{host}/", timeout=timeout)
-            return resp.status_code < 500
+            return _response_is_usable(resp)
         finally:
             socket.getaddrinfo = original
     except Exception:

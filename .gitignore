@@ -14,6 +14,7 @@ thumbnails/
 metadata/
 *.log
 pixiv_archive_check.txt
+.instance.lock
 
 # ---- 用户配置（含 refresh token 等机密，切勿提交）----
 .env

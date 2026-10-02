@@ -16,6 +16,33 @@ load_dotenv(paths.ENV_FILE)
 
 METADATA_DIR = os.getenv("METADATA_DIR", "metadata")
 
+# 已删除作品的复查间隔（天）：标记 deleted 时写入了 last_synced，
+# 只有距上次确认超过该天数的 deleted 作品才会被再次请求。
+_DELETED_RECHECK_DAYS = 30
+
+
+def _select_pending_rows(conn, specific_pixiv_id=None):
+    """选出本轮需要同步的作品行（id, pixiv_id）。
+
+    - 指定 specific_pixiv_id：只取该作品，无条件同步。
+    - 否则取：从未同步（last_synced IS NULL）、缺标题（title IS NULL）、
+      上次同步失败（sync_error IS NOT NULL，每轮都重试），以及已删除但
+      距上次确认已超过 _DELETED_RECHECK_DAYS 天的作品。
+    """
+    if specific_pixiv_id:
+        return conn.execute(
+            "SELECT id, pixiv_id FROM artworks WHERE pixiv_id = ?",
+            (specific_pixiv_id,),
+        ).fetchall()
+
+    return conn.execute(
+        "SELECT id, pixiv_id FROM artworks "
+        "WHERE title IS NULL OR last_synced IS NULL "
+        "   OR sync_error IS NOT NULL "
+        "   OR (pixiv_status = 'deleted' AND last_synced < datetime('now', ?))",
+        (f"-{_DELETED_RECHECK_DAYS} days",),
+    ).fetchall()
+
 
 def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=None):
     init_db()
@@ -27,17 +54,7 @@ def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=N
     delay_ms = max(0, min(delay_ms, 10000))
 
     with get_db() as conn:
-        if specific_pixiv_id:
-            rows = conn.execute(
-                "SELECT id, pixiv_id FROM artworks WHERE pixiv_id = ?",
-                (specific_pixiv_id,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT id, pixiv_id FROM artworks "
-                "WHERE title IS NULL OR last_synced IS NULL "
-                "   OR pixiv_status = 'deleted' OR sync_error IS NOT NULL"
-            ).fetchall()
+        rows = _select_pending_rows(conn, specific_pixiv_id)
 
         total = len(rows)
         results = {

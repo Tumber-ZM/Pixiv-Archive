@@ -118,6 +118,22 @@ def _r18_where(alias, value):
     return None
 
 
+def _random_order_sql(seed: int) -> str:
+    """按 seed 确定的伪随机排序（不用 ORDER BY RANDOM()）。
+
+    同一 seed 下整个结果的顺序完全稳定，因此与 LIMIT/OFFSET 组合翻页不会重复或漏项。
+    实现要点：先把行相关的 pixiv_id 哈希降到 [0, 2147483647)，再用 seed 派生的奇数
+    乘子做二次混合。两处中间值都 < 2^31，乘积 < 2^62，不依赖 pixiv_id 的量级即可
+    避免 64 位溢出。注意 seed 必须乘在行相关项上——若只做 "hash + seed" 的常量偏移，
+    除极少数跨模回绕的行外整体顺序不变，换个 seed 等于没换。
+    """
+    mult = 2 * (seed % 1073741823) + 1
+    return (
+        "ORDER BY (((a.pixiv_id * 2654435761) % 2147483647) * "
+        f"{mult}) % 2147483647, a.id"
+    )
+
+
 @app.get("/api/artworks")
 def api_artworks(
     page: int = Query(1, ge=1),
@@ -129,6 +145,7 @@ def api_artworks(
     favorite_id: int = Query(0, ge=0),
     r18: str = Query(""),
     status: str = Query(""),
+    seed: int = Query(0),
 ):
     with get_db() as conn:
         where_clauses = []
@@ -165,7 +182,7 @@ def api_artworks(
 
         offset = (page - 1) * per_page
         if sort == "random":
-            order_sql = "ORDER BY RANDOM()"
+            order_sql = _random_order_sql(seed)
         else:
             sort_column = {
                 "id": "a.id", "pixiv_id": "a.pixiv_id",
@@ -359,12 +376,13 @@ def api_search(
     favorite_id: int = Query(0, ge=0),
     r18: str = Query(""),
     status: str = Query(""),
+    seed: int = Query(0),
 ):
     query = q.strip()
     if not query:
         return api_artworks(page=page, per_page=per_page, sort=sort, order=order,
                             author=author, tag=tag, favorite_id=favorite_id,
-                            r18=r18, status=status)
+                            r18=r18, status=status, seed=seed)
 
     tokens = [t for t in query.split() if t]
 
@@ -414,7 +432,7 @@ def api_search(
 
         offset = (page - 1) * per_page
         if sort == "random":
-            order_sql = "ORDER BY RANDOM()"
+            order_sql = _random_order_sql(seed)
         else:
             sort_column = {
                 "id": "a.id", "pixiv_id": "a.pixiv_id",
@@ -732,7 +750,7 @@ def _busy_error():
     )
 
 
-@app.get("/api/scan")
+@app.post("/api/scan")
 def api_scan():
     if jobs.is_busy():
         return _busy_error()
@@ -958,7 +976,7 @@ def api_delete_bookmark_sub(pixiv_user_id: int):
     return {"status": "ok"}
 
 
-@app.get("/api/bookmark-subs/check")
+@app.post("/api/bookmark-subs/check")
 def api_check_all_bookmark_subs():
     """一键检查全部启用中的收藏订阅并自动下载新收藏（完成后入库+缩略图+同步元数据）。"""
     source_dir, err = _bookmark_source_dir_check()
@@ -982,7 +1000,7 @@ def api_check_all_bookmark_subs():
     return {"job_id": job_id, "kind": "bookmark_check"}
 
 
-@app.get("/api/sync")
+@app.post("/api/sync")
 def api_sync(pixiv_id: int = Query(0)):
     if jobs.is_busy():
         return _busy_error()

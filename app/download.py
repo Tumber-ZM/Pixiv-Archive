@@ -5,6 +5,7 @@ import shutil
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from app import paths
+from app.scanner import IMAGE_EXTENSIONS
 from app.pixiv import (
     get_pixiv_client,
     _build_session_with_referer,
@@ -154,7 +155,7 @@ def download_single_illust(session, illust, author_root, author_name):
     urls = _extract_original_urls(illust)
     dest_dir, _prefix = _resolve_dest(author_root, author_name, pixiv_id, title, page_count)
 
-    if _work_exists(dest_dir, _prefix):
+    if _work_exists(dest_dir, _prefix, page_count):
         return "skipped", ""
 
     try:
@@ -214,14 +215,27 @@ def _url_ext(url):
     return os.path.splitext(path)[1].lower()
 
 
-def _work_exists(dest_dir, prefix):
-    """目录中已有文件名以 prefix 开头（任意扩展名）即视为已存在。"""
+def _work_exists(dest_dir, prefix, page_count):
+    """该作品是否已**完整**下载（精确文件名匹配，不做前缀匹配）。
+
+    - 单页（page_count <= 1）：存在 `prefix + 图片扩展名` 的完整文件即算完成。
+      不用 startswith，否则 `[作者] 123456` 会误命中另一作品 `[作者] 1234567.jpg`。
+    - 多页（page_count > 1）：prefix 已以 `_p` 结尾（见 _resolve_dest），
+      要求 `prefix + str(p) + 扩展名` 对 p = 0..page_count-1 全部存在，
+      只下到前几页时不会被误判为完成。
+    """
     if not os.path.isdir(dest_dir):
         return False
     try:
-        for name in os.listdir(dest_dir):
-            if name.startswith(prefix):
-                return True
-    except Exception:
+        names = set(os.listdir(dest_dir))
+    except OSError:
         return False
-    return False
+
+    if page_count <= 1:
+        return any(f"{prefix}{ext}" in names for ext in IMAGE_EXTENSIONS)
+
+    for p in range(page_count):
+        stem = f"{prefix}{p}"
+        if not any(f"{stem}{ext}" in names for ext in IMAGE_EXTENSIONS):
+            return False
+    return True

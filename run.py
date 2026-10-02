@@ -1,7 +1,7 @@
 """Pixiv Archive 本地服务入口。
 
 - 只绑定 127.0.0.1，不开放局域网访问（LAN 模式已移除）。
-- 单实例：同一时间只允许一个实例运行（Windows 命名互斥体），
+- 单实例：同一时间只允许一个实例运行（数据目录下的独占锁文件 + PID 存活检测），
   因此 Start.bat 重复双击不会起第二个服务、也不会抢端口。
 - --browser / PA_BROWSER=1：启动后自动用系统默认浏览器打开页面（exe 分发版用）。
 """
@@ -10,6 +10,7 @@ import asyncio
 import os
 import sys
 import threading
+import time
 import traceback
 import webbrowser
 from http import HTTPStatus
@@ -25,25 +26,100 @@ load_dotenv(paths.ENV_FILE)
 
 DEFAULT_PORT = 6814
 HOST = "127.0.0.1"
-MUTEX_NAME = "PixivArchive_SingleInstance"
+LOCK_FILE_NAME = ".instance.lock"
+# 创建锁文件与写入 PID 之间被强杀时可能留下空文件，超过这个秒数即视为陈旧
+LOCK_FILE_GRACE_SECONDS = 10
+
+
+def _pid_is_alive(pid):
+    """尽力判断 pid 是否仍存活（仅 Windows；判不出来时按「存活」保守处理）。"""
+    try:
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            # 打不开时区分两种情况：ERROR_INVALID_PARAMETER(87) 表示该 PID 不存在；
+            # 其它错误（如拒绝访问）说明进程还在只是查不了，按「存活」处理更安全，
+            # 否则会误抢一个正在运行实例的锁。
+            return ctypes.get_last_error() != 87
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return True
+
+
+def _lock_file_is_stale(lock_path):
+    """锁文件存在：判断持有者是否已经不在（陈旧锁可被接管）。"""
+    try:
+        with open(lock_path, "r", encoding="ascii", errors="ignore") as f:
+            raw = (f.read() or "").strip()
+    except OSError:
+        return False
+    if raw.isdigit() and int(raw) > 0:
+        return not _pid_is_alive(int(raw))
+    try:
+        return (time.time() - os.path.getmtime(lock_path)) > LOCK_FILE_GRACE_SECONDS
+    except OSError:
+        return False
 
 
 def acquire_single_instance():
     """获取单实例锁。
 
-    返回互斥体句柄（需在进程存活期间保持引用）；已有实例在运行时返回 None；
-    非 Windows 或调用失败时返回 True，表示不阻塞启动。
-    """
-    try:
-        import ctypes
+    返回锁文件路径（需在进程存活期间保持引用）；已有实例在运行时返回 None；
+    无法判定时返回 True，表示不阻塞启动。
 
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-            return None
-        return handle
+    这里用「独占锁文件 + PID 存活检测」，而不是 Windows 命名互斥体：实测某环境下
+    CreateMutexW("PixivArchive_SingleInstance") 会返回 NULL 且 GetLastError()=5
+    （ERROR_ACCESS_DENIED）——同名内核对象已存在却不属于当前安全上下文；而原来的
+    判断只认 ERROR_ALREADY_EXISTS(183)，于是「创建失败」被当成「拿到锁」，单实例
+    保护形同虚设，会同时跑起两个服务、并发写同一个 SQLite 库。
+    锁文件不依赖内核对象命名空间，且上次异常退出留下的陈旧锁能靠 PID 检测清掉。
+    """
+    lock_path = os.path.join(paths.DATA_DIR, LOCK_FILE_NAME)
+    try:
+        for attempt in (0, 1):
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                # 只在第一次尝试接管陈旧锁；第二次仍冲突说明确实有实例在跑
+                if attempt or not _lock_file_is_stale(lock_path):
+                    return None
+                try:
+                    os.remove(lock_path)
+                except OSError:
+                    return None
+                continue
+            except OSError:
+                return True  # 数据目录不可写等：不阻塞启动
+            try:
+                os.write(fd, str(os.getpid()).encode("ascii"))
+            finally:
+                os.close(fd)
+            return lock_path
+        return None
     except Exception:
         return True
+
+
+def release_single_instance(lock):
+    """退出时清理锁文件（仅当确实是自己创建的那个路径）。"""
+    if isinstance(lock, str):
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
 
 
 def _parse_server_args():
@@ -201,12 +277,15 @@ def main():
         print("如无响应，请先结束现有进程后重试。")
         return 1
 
-    server = ASGIHTTPServer(app, HOST, PORT)
     try:
-        asyncio.run(server.serve())
-    except KeyboardInterrupt:
-        print("Server stopped")
-    return 0
+        server = ASGIHTTPServer(app, HOST, PORT)
+        try:
+            asyncio.run(server.serve())
+        except KeyboardInterrupt:
+            print("Server stopped")
+        return 0
+    finally:
+        release_single_instance(lock)
 
 
 if __name__ == "__main__":

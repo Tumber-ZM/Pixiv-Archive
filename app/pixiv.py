@@ -73,10 +73,24 @@ _AUTH_MSG_HINTS = (
     "invalid_grant", "401", "expired", "有効期限", "セッション",
 )
 
+# “作品确实不存在/已删除”的典型文案（英文 + 日文）。只有命中这些才抛
+# PixivDeletedError；429/5xx 等其它错误一律按网络错误处理，避免被误标 deleted。
+_DELETED_MSG_HINTS = (
+    "not found", "does not exist", "doesn't exist", "not exist", "no such",
+    "deleted", "見つかりません", "削除", "存在しません",
+)
+
 
 def _looks_like_auth_error(msg):
     m = (msg or "").lower()
     return any(k in m for k in _AUTH_MSG_HINTS)
+
+
+def _looks_like_deleted(msg):
+    # 归一化分隔符：Pixiv 的 reason 字段可能是 not_found / not-found 这类形式，
+    # 直接子串匹配会漏掉，统一把 _ 和 - 换成空格再比对。
+    m = re.sub(r"[_\-]+", " ", (msg or "").lower())
+    return any(k in m for k in _DELETED_MSG_HINTS)
 
 
 def _fmt_error(err):
@@ -278,8 +292,12 @@ class PixivClient:
                     raise PixivAuthError(f"认证失效且重新认证失败：{e}")
                 if response.get("error"):
                     raise PixivAuthError(f"重新认证后仍返回错误：{_fmt_error(response.get('error'))}")
-            else:
+            elif _looks_like_deleted(msg):
                 raise PixivDeletedError(msg)
+            else:
+                # 429 / 5xx / 未知错误：不是“作品不存在”，按网络错误抛出，
+                # 由 sync.py 记 sync_error 并在下次同步重试（不改 deleted 状态）
+                raise PixivNetworkError(msg)
 
         illust = response.get("illust")
         if not illust:

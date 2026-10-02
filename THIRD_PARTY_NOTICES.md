@@ -14,14 +14,15 @@
 | 包 | 许可证 |
 |----|--------|
 | fastapi | MIT |
-| hypercorn | MIT |
+| pydantic | MIT |
+| requests | Apache-2.0 |
+| urllib3 | MIT |
 | pixivpy3 | Unlicense |
 | Pillow | MIT-CMU (HPND) |
 | Jinja2 | BSD-3-Clause |
 | python-dotenv | BSD-3-Clause |
-| aiofiles | Apache-2.0 |
 
-(上述包各自的传递依赖如 starlette、pydantic、requests、urllib3 等亦为 MIT / BSD / Apache / PSF / MPL 等宽松许可，详见各包随附的许可证文本。)
+(上述包各自的传递依赖如 starlette、anyio 等亦为 MIT / BSD / Apache / PSF / MPL 等宽松许可，详见各包随附的许可证文本。)
 
 ## Build time (requirements-build.txt)
 

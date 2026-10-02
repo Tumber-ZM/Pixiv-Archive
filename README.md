@@ -9,7 +9,7 @@
 
 - **移除局域网访问（LAN 模式）**：服务固定只绑定 `127.0.0.1`，不再开放到局域网，访问令牌体系整体删除（`--lan` / `Start-LAN.bat` / `PA_HOST` / `PA_ACCESS_TOKEN` / `?token=` / Cookie / `X-Access-Token` / 前端 `pa_token.js`）。缩略图可被局域网枚举、令牌经 URL 泄漏等隐患随之消失。
 - **移除桌面窗口模式**：不再内嵌 pywebview 原生窗口，`launcher.py` / `launcher.bat` 一并删除；启动方式统一为 `Start.bat`（源码）与 `PixivArchive.exe`（分发），都以系统默认浏览器呈现界面。
-- **单实例锁并入启动链路**：`run.py` 用 Windows 命名互斥体保证同一时间只运行一个实例，重复双击 `Start.bat` 不会起第二个服务。托盘与端口自动避让随窗口模式一并移除——端口被占用时直接启动失败，请改端口。
+- **单实例锁并入启动链路**：`run.py` 用数据目录下的独占锁文件（`.instance.lock`，含 PID 存活检测）保证同一时间只运行一个实例，重复双击 `Start.bat` 不会起第二个服务。原先的 Windows 命名互斥体在创建失败（同名内核对象属于别的安全上下文）时会静默放行，已据此替换。托盘与端口自动避让随窗口模式一并移除——端口被占用时直接启动失败，请改端口。
 - 依赖中去掉 `pywebview` 与 `pystray`。
 
 ---
@@ -87,7 +87,7 @@ requirements-build.txt  打包（PyInstaller）所需依赖
 - **Python**：3.10+（开发与验证环境为 3.11）
 - **网络**：同步元数据 / 刷新直连 IP 需要能访问 pixiv（必要时搭配代理）
 
-运行时依赖（`requirements.txt`）：`fastapi`、`hypercorn`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`、`aiofiles`。
+运行时依赖（`requirements.txt`）：`fastapi`、`pydantic`、`requests`、`urllib3`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`。
 构建依赖（`requirements-build.txt`）：`pyinstaller`。
 
 ### venv 里装的是什么？
@@ -168,6 +168,14 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 | `THUMBNAIL_DIR` / `METADATA_DIR` | 缩略图 / 元数据存放目录名 |
 | `PA_PORT` | 服务端口，默认 6814（固定绑定 `127.0.0.1`，不可改绑定地址） |
 | `PIXIV_IP_*` | 直连模式下的 pixiv 域名 → IP 覆盖（网页设置中可刷新） |
+
+### 直连模式的 TLS 校验：一个有意为之的取舍
+
+`PIXIV_MODE=direct`（以及默认的 `auto` 在回退到直连时）为了绕开针对 SNI 的阻断，采用「域名 → IP 覆盖 + 握手时不发送 SNI」的方式连接。这个方案**必须关闭 TLS 证书校验与主机名校验**：不发送 SNI 时服务端不会返回与目标域名匹配的证书，一旦开启校验会直接把连接判失败。
+
+代价需要说明白：此时 HTTPS 的信任根从「证书链 + 主机名」降级为「相信域名 → IP 的解析结果（DoH 应答）」。也就是说，**能篡改你 DoH 解析结果的中间人，可以把自己伪装成 pixiv**。这是为换取「在被 SNI 阻断的网络里仍然可用」而付出的代价，不是实现疏漏。
+
+作用范围仅限直连会话：`app/direct_connect.py` 中专为直连构造的 SSL context，以及 `app/pixiv.py` 里非代理分支的 `session.verify = False`。**`proxy` 模式不受影响**，走标准 SNI 与完整证书校验（经代理隧道时不发送 SNI 会被 Cloudflare 直接掐断，所以那里本就必须用标准握手）。如果你的网络不需要直连，用 `PIXIV_MODE=proxy` 可以保留完整校验。
 
 ---
 

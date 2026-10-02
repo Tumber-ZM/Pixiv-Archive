@@ -142,14 +142,14 @@ IMAGE_SOURCE_DIR → os.walk 收集图片 → 正则解析 PID(_pN) → 按 PID 
 
 | ID | 问题 | 位置 | 状态 |
 |----|------|------|------|
-| **M1** | **直连模式完全关闭 TLS 校验**：`check_hostname=False`、`verify_mode=CERT_NONE`、`server_hostname=None`，且 `urllib3.disable_warnings` 全局静音告警。动机是绕开 SNI 阻断，但这使 HTTPS 的信任根退化为"相信 DoH 应答与 DNS"。属于**设计取舍**，但建议在 README 的隐私/安全章节显式声明，让用户知情。 | [app/direct_connect.py:101-102](app/direct_connect.py#L101-L102)、[138-139](app/direct_connect.py#L138-L139)、[10](app/direct_connect.py#L10) | **读码确认 · 设计取舍** |
-| **M2** | **IP 可用性判定过宽**：`_validate_ip` 只要 `status_code < 500` 就算这个 IP 可用，因此 403 / 404（被墙返回的拒绝页）也会被采纳并写回 `.env`，把坏 IP 固化下来。 | [app/direct_connect.py:197](app/direct_connect.py#L197) | **读码确认** |
-| **M3** | **非认证类错误被误判为"作品已删除"**：`_detail_once` 在非认证分支直接 `raise PixivDeletedError(msg)`，于是 429/5xx/解析异常都可能把作品错标为 `deleted`，前端随即把它归入"已删除"筛选。 | [app/pixiv.py:282](app/pixiv.py#L282) | **读码确认** |
-| **M4** | **随机排序下分页必然重复与漏项**：`ORDER BY RANDOM()` 配 `LIMIT/OFFSET`，每页独立重排，翻页结果交叉重叠。 | [app/main.py:139](app/main.py#L139)、[394](app/main.py#L394) | **读码确认** |
-| **M5** | **已删除作品每轮同步都会被重新请求**：筛选条件无条件包含 `pixiv_status = 'deleted'`，而 Pixiv 端已删除的作品每轮都会再次失败/再次请求，随时间线性增加无效请求。 | [app/sync.py:38-39](app/sync.py#L38-L39) | **读码确认** |
-| **M6** | **多页作品按前缀判存在会误判**：`_work_exists` 用 `name.startswith(prefix)`，前缀 `..._123` 会命中 `..._1234`；多页作品只下到第 1 页也会被判为"已完成"。 | [app/download.py:217-223](app/download.py#L217-L223) | **读码确认** |
-| **M7** | **依赖声明错配**：`hypercorn`、`aiofiles` 在 [requirements.txt](requirements.txt) 中声明却**全项目零 import**（实测 grep 仅命中 `venv/`）；反过来 `requests`、`urllib3`（direct_connect）、`pydantic`（main.py 多处）被直接 import 却没声明，只靠 `pixivpy3`/`fastapi` 的传递依赖，上游一旦调整就会断。 | [requirements.txt:2](requirements.txt#L2)、[7](requirements.txt#L7) | **已实测** |
-| **M8** | **GET 触发写操作，缺少 CSRF 防护**：`/api/scan`、`/api/sync`、`/api/bookmark-subs/check` 用 GET 启动写任务，本机浏览器访问任意恶意页面即可用 `<img>`/`fetch` 触发。局域网模式移除后跨设备风险消失，但本机 CSRF 仍在。 | [app/main.py](app/main.py) 对应路由 | 读码确认 |
+| **M1** | **直连模式完全关闭 TLS 校验**：`check_hostname=False`、`verify_mode=CERT_NONE`、`server_hostname=None`，且 `urllib3.disable_warnings` 全局静音告警。动机是绕开 SNI 阻断，但这使 HTTPS 的信任根退化为"相信 DoH 应答与 DNS"。属于**设计取舍**，但建议在 README 的隐私/安全章节显式声明，让用户知情。 | [app/direct_connect.py:101-102](app/direct_connect.py#L101-L102)、[138-139](app/direct_connect.py#L138-L139)、[10](app/direct_connect.py#L10) | **读码确认 · 设计取舍 → 已处理** |
+| **M2** | **IP 可用性判定过宽**：`_validate_ip` 只要 `status_code < 500` 就算这个 IP 可用，因此 403 / 404（被墙返回的拒绝页）也会被采纳并写回 `.env`，把坏 IP 固化下来。 | [app/direct_connect.py:197](app/direct_connect.py#L197) | **读码确认 → 已修复** |
+| **M3** | **非认证类错误被误判为"作品已删除"**：`_detail_once` 在非认证分支直接 `raise PixivDeletedError(msg)`，于是 429/5xx/解析异常都可能把作品错标为 `deleted`，前端随即把它归入"已删除"筛选。 | [app/pixiv.py:282](app/pixiv.py#L282) | **读码确认 → 已修复** |
+| **M4** | **随机排序下分页必然重复与漏项**：`ORDER BY RANDOM()` 配 `LIMIT/OFFSET`，每页独立重排，翻页结果交叉重叠。 | [app/main.py:139](app/main.py#L139)、[394](app/main.py#L394) | **读码确认 → 已修复** |
+| **M5** | **已删除作品每轮同步都会被重新请求**：筛选条件无条件包含 `pixiv_status = 'deleted'`，而 Pixiv 端已删除的作品每轮都会再次失败/再次请求，随时间线性增加无效请求。 | [app/sync.py:38-39](app/sync.py#L38-L39) | **读码确认 → 已修复** |
+| **M6** | **多页作品按前缀判存在会误判**：`_work_exists` 用 `name.startswith(prefix)`，前缀 `..._123` 会命中 `..._1234`；多页作品只下到第 1 页也会被判为"已完成"。 | [app/download.py:217-223](app/download.py#L217-L223) | **读码确认 → 已修复** |
+| **M7** | **依赖声明错配**：`hypercorn`、`aiofiles` 在 [requirements.txt](requirements.txt) 中声明却**全项目零 import**（实测 grep 仅命中 `venv/`）；反过来 `requests`、`urllib3`（direct_connect）、`pydantic`（main.py 多处）被直接 import 却没声明，只靠 `pixivpy3`/`fastapi` 的传递依赖，上游一旦调整就会断。 | [requirements.txt:2](requirements.txt#L2)、[7](requirements.txt#L7) | **已实测 → 已修复** |
+| **M8** | **GET 触发写操作，缺少 CSRF 防护**：`/api/scan`、`/api/sync`、`/api/bookmark-subs/check` 用 GET 启动写任务，本机浏览器访问任意恶意页面即可用 `<img>`/`fetch` 触发。局域网模式移除后跨设备风险消失，但本机 CSRF 仍在。 | [app/main.py](app/main.py) 对应路由 | 读码确认 → **已修复** |
 
 ### 轻微
 
@@ -202,7 +202,9 @@ IMAGE_SOURCE_DIR → os.walk 收集图片 → 正则解析 PID(_pN) → 按 PID 
 
 **单实例锁并入启动链路（新增）**
 
-按你的要求，`launcher.py` 的 Windows 命名互斥体（`PixivArchive_SingleInstance`）迁移到 [run.py:30-47](run.py#L30-L47)，因此**重复双击 `Start.bat` 不会再起第二个服务**；非 Windows 或调用失败时返回放行值，不阻塞启动。同时新增 `--browser`（exe 通过 `PA_BROWSER=1` 默认开启）。
+按你的要求，`launcher.py` 的 Windows 命名互斥体（`PixivArchive_SingleInstance`）迁移到 [run.py](run.py)，因此**重复双击 `Start.bat` 不会再起第二个服务**；非 Windows 或调用失败时返回放行值，不阻塞启动。同时新增 `--browser`（exe 通过 `PA_BROWSER=1` 默认开启）。
+
+> **后续更正（见第十二节）**：迁移过来时保留的互斥体实现存在结构缺陷——它只处理 `ERROR_ALREADY_EXISTS(183)`，把「创建失败（句柄为 NULL）」也当成了「拿到锁」。该缺陷在重构前的 `launcher.py` 中**已经存在**（`git show a14344a:launcher.py` 可核对），不是重构引入的；本轮做最终验收时它实际暴露（两个实例同时跑起来），已改为「独占锁文件 + PID 存活检测」。
 
 ### 行为变化（需要注意）
 
@@ -384,4 +386,200 @@ Invoke-WebRequest http://127.0.0.1:6899/api/artworks -UseBasicParsing
 
 ### 未纳入本次修复
 
-M1–M8 与 L1–L11 维持报告中的原状。建议继续按第八节优先级处理，其中 M7（依赖声明错配）、M4（随机排序分页重复）、M2/M3（直连 IP 校验过宽、非认证错误误判为已删除）收益最高。
+L1–L11 维持报告中的原状。M1–M8 已全部处理完毕，见第十一节。
+
+---
+
+## 十一、中等（M 级）问题修复记录
+
+本节记录 M1–M8 的修复，代码状态基于提交 `3ef11c4`（高危问题修复后）。
+
+分工与写入范围（三个并行工作流 + Lead，文件互不重叠）：
+
+| 工作流 | 负责问题 | 写入范围 |
+|--------|----------|----------|
+| A | M1（代码侧）、M2、M3 | [app/direct_connect.py](app/direct_connect.py)、[app/pixiv.py](app/pixiv.py) |
+| B | M5、M6 | [app/sync.py](app/sync.py)、[app/download.py](app/download.py) |
+| C | M4、M8 | [app/main.py](app/main.py)、[app/templates/index.html](app/templates/index.html) |
+| D（Lead） | M1（文档侧）、M7 | [README.md](README.md)、[requirements.txt](requirements.txt)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+
+### M1 — 直连 TLS 取舍：收窄告警范围 + 显式声明
+
+- `urllib3.disable_warnings(...)` 原本在 **import 时**执行，是进程级全局副作用：只要 import 这个模块，其它模块真实的 TLS 告警也会被一起静音。现移入 `enable_direct()`，只有真正启用直连时才抑制。
+- `_make_ssl_context()` / `_doh_query()` 补注释，写明为何必须 `check_hostname=False` + `CERT_NONE`（不发 SNI 时服务端证书无法匹配目标域名，开启校验会直接握手失败）及其代价。
+- [README.md](README.md) 新增「直连模式的 TLS 校验：一个有意为之的取舍」小节：明确写出信任根退化为「相信 DoH 应答」，并说明该行为只作用于直连会话，`proxy` 模式仍走标准 SNI + 完整校验（[app/pixiv.py:112-121](app/pixiv.py#L112-L121)）。
+- **刻意没有改变直连的产品行为**：未开启 `CERT_REQUIRED`、未新增开关。这类改动在本机无法验证，贸然收紧可能直接让直连失效。
+
+### M2 — IP 可用性判定收窄
+
+把 `_validate_ip` 里的 `resp.status_code < 500` 抽成可单测的 `_response_is_usable(resp)`：
+
+| 响应 | 判定 |
+|------|------|
+| 451（法律封禁）、407（代理要求认证） | 不可用 |
+| 403 且 Content-Type 含 `text/html`（典型中间盒拦截页） | 不可用 |
+| 500 及以上 | 不可用 |
+| 其余 < 500（含 Pixiv 对无鉴权 `/` 返回的 404 JSON） | 仍可用 |
+
+**刻意没有收紧到 `< 400`**：Pixiv API 对无鉴权访问 `/` 返回 404 是正常现象，按 `< 400` 判定会把所有正常 IP 判死，直接让直连模式失效。验证 9/9 通过。
+
+### M3 — 错误分类修正
+
+`_detail_once` 原本在非认证分支**一律** `raise PixivDeletedError(msg)`。现在只有文案命中 `_DELETED_MSG_HINTS`（英文 not found / does not exist / deleted…，日文 見つかりません / 削除 / 存在しません）才判为已删除；其余错误改抛 `PixivNetworkError`，由 [app/sync.py](app/sync.py) 记入 `sync_error` 并在下轮重试（不再把作品错标 deleted）。
+
+Lead 复核时补了一处：Pixiv 的 `reason` 字段可能是 `not_found` 这类下划线形式，直接子串匹配会漏掉，已把 `_` / `-` 归一化为空格后再比对。
+
+验证 7/7：日文文案、英文 `Illust not found`、`reason=not_found` → `PixivDeletedError`；`rate limit`、`Internal Server Error` → `PixivNetworkError`；错误体为空但无 illust → `PixivDeletedError`；认证文案 + 重新认证失败 → `PixivAuthError`。
+
+**残留风险（未验证）**：未联网确认真实 Pixiv 对已删除作品返回的确切文案。若真实文案不含任何关键词，该作品会被记为 `sync_error` 并反复重试——方向是保守的（不会误删作品），但可能表现为「删不掉」。关键词表已覆盖中英日常见文案。
+
+### M4 — 随机排序分页稳定化
+
+两处 `ORDER BY RANDOM()` 改为按 seed 确定的伪随机序，`api_artworks` 与 `api_search` 均新增 `seed` 查询参数（空 `q` 委托给 `api_artworks` 的路径也透传 seed）。
+
+**一个重要更正**：本轮给执行方的初始公式是错的，被实测推翻——`((pixiv_id * 2654435761 + seed) % 2147483647)` 只是给每行加同一个常量，取模后绝大多数行的相对顺序不变；实测 seed=123 与 999 的第 1 页 **199/200 位完全相同**，等于 seed 没生效。最终实现把 seed 作为乘子混入行相关项：
+
+```sql
+ORDER BY (((a.pixiv_id * 2654435761) % 2147483647) * mult) % 2147483647, a.id
+-- mult = 2 * (seed % 1073741823) + 1
+```
+
+两个中间值都 < 2³¹、乘积 < 2⁶²，与 `pixiv_id` 量级无关地不溢出；末尾 `a.id` 作确定性 tie-break。非 random 分支一字未动。
+
+前端：新增全局 `_randomSeed`，**只有**用户重新选择「随机」时才换新种子；`_navCtx.seed` 随所有分页/筛选请求流转，由唯一的 URL 构造器 `buildGalleryUrl()` 统一追加（[index.html:624](app/templates/index.html#L624)），`/api/search` 与 `/api/artworks` 两个分支都经过它。
+
+验证（真实服务、1310 件作品）：
+
+| 检查 | 结果 |
+|------|------|
+| 固定 seed 全量翻页（per_page=100，14 页） | 1310 条、去重后仍 1310 → **零重复、零漏项** |
+| 与确定性排序的条数对比 | random=1310，sequential=1310 |
+| 同一 seed 同一页两次请求 | 完全一致 |
+| seed 123 vs 999、123 vs 7 | 200 位中 199 位不同 → seed 确实生效 |
+| 非 random 排序 | 不受 seed 影响 |
+| `/api/search` 独立分支（标签 `R-18`，514 条） | 跨页无重复 |
+
+### M5 — 已删除作品改为定期复查
+
+筛选逻辑抽成可单测的 `_select_pending_rows()`：
+
+```sql
+WHERE title IS NULL OR last_synced IS NULL
+   OR sync_error IS NOT NULL
+   OR (pixiv_status = 'deleted' AND last_synced < datetime('now', ?))
+-- 参数 '-30 days'；常量 _DELETED_RECHECK_DAYS = 30
+```
+
+未同步 / 缺标题 / 上次失败（仍每轮重试）的语义保持不变，`specific_pixiv_id` 分支无条件同步。已删除作品从「每轮都请求」变为「距上次确认超过 30 天才复查」，请求量不再随历史删除数线性增长。
+
+验证 9/9（临时库 + 7 条构造数据）：昨天的 deleted 不入选、60 天前的 deleted 入选、`title IS NULL` / `last_synced IS NULL` / `sync_error IS NOT NULL` / 从未同步的 deleted 均保持入选、正常 active 不入选。
+
+### M6 — 下载完成度精确判定
+
+`_work_exists(dest_dir, prefix)` → `_work_exists(dest_dir, prefix, page_count)`，去掉 `startswith` 前缀匹配：
+
+- 单页（`page_count <= 1`）：要求存在 `prefix + 扩展名` 的**精确**文件名
+- 多页：要求 `prefix + str(p) + 扩展名` 对 `p = 0..page_count-1` **全部**存在
+
+验证 8/8：单页精确命中判完成；单页仅因另一作品 ID 前缀相同（`123456` vs `1234567`）**不得**判完成；`.png` 也认；多页只有 p0 不得判完成；0..2 齐全判完成；缺中间一页不得判完成；缺页用别的扩展名补上也算完成；目录不存在返回 False。
+
+### M7 — 依赖声明纠正
+
+[requirements.txt](requirements.txt)：删掉 `hypercorn`、`aiofiles`（全项目零 import，HTTP 服务由 [run.py](run.py) 自带），补上被**直接 import 却未声明**的 `pydantic>=2.0.0`、`requests>=2.31.0`、`urllib3>=2.0.0`。同步更新 [README.md](README.md) 的运行依赖清单与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（后者原先也列着这两个已移除的包）。
+
+验证 8/8：逐条解析 `requirements.txt`，用 `importlib.metadata` 取已安装版本做区间比较并实际 import 对应模块——8 条全部「已装版本 ≥ 声明下限」且可导入；README 清单与 `requirements.txt` 的名称集合完全一致。
+
+### M8 — 写操作接口改 POST
+
+三个会改数据的接口改为 POST：`/api/scan`、`/api/sync`、`/api/bookmark-subs/check`；前端 `startJob()` 统一传 `'POST'`。只读的 `GET /api/bookmark-subs`（列表）与已是 POST 的 `/api/bookmark-subs/{id}/check` 未动。
+
+验证：三个接口 GET 一律 **405**，`/openapi.json` 中这三个路径只有 `post`；`/api/bookmark-subs`、`/api/artworks`、`/api/settings`、`/api/tags` 仍 200。全仓库 grep 确认没有其它以 GET 调用这三个 URL 的位置（无脚本/bat/文档调用）。
+
+**已知外观小瑕疵（未改）**：`GET /api/bookmark-subs/check` 的 405 响应带 `Allow: DELETE`——Starlette 用「第一个路径部分匹配」的路由填这个表头，而 `DELETE /api/bookmark-subs/{pixiv_user_id}` 注册在它之前。POST 仍会 FULL 匹配到正确路由，功能无影响；若要干净的 `Allow: POST`，把该 POST 路由移到 DELETE 之前即可。
+
+### 本轮验证总账
+
+| 验证脚本 | 覆盖 | 结果 |
+|----------|------|------|
+| 逻辑验证脚本（临时目录 + 临时库） | M2 9 项、M3 7 项、M5 9 项、M6 8 项 | **33/33 通过** |
+| HTTP 验证脚本（真实服务，端口 6906） | M8 11 项、M4 12 项 | **23/23 通过** |
+
+两个脚本均为一次性临时脚本，未纳入版本库（如需可整理成回归测试）。全部断言都在临时目录/临时库上执行：逻辑脚本通过改写 `app.database.DB_PATH` 隔离数据库，实测运行前后真实 `archive.db` 的大小与 mtime **完全未变**。
+
+真实库在本轮前后清点一致：1310 作品 / 1890 图片 / 555 作者 / 1 已删除 / 1310 元数据 JSON / 1310 缩略图，元数据与作品 1:1（孤儿 0、缺 JSON 0）。
+
+### 已知未处理项
+
+- L1–L11 维持报告中的原状。
+- M3 的真实删除文案未联网确认（见 M3 残留风险）。
+- M8 的 `Allow: DELETE` 表头不精确（纯外观，见 M8 一节）。
+
+---
+
+## 十二、额外发现并修复：单实例锁静默失效（严重度高于 M 级）
+
+这一项不在原报告的 H1–H3 / M1–M8 里，是**本轮做最终验收时意外发现的**。
+
+### 现象
+
+第十一节的 M 级修复完成后，最后一次复测单实例锁，结果与前一次相反：**两个实例同时跑起来了**——6907 与 6908 同时有 HTTP 响应，锁完全没有拦住。
+
+### 排查过程
+
+1. 先怀疑 `ctypes.windll` 读 `GetLastError` 的经典坑。受控实验：同进程内连续两次 `CreateMutexW`，两种写法都正确返回 0 / 183 → **排除**。
+2. 跨进程受控实验（holder 持锁 30 秒，另起两个进程探测）：子进程、孙进程都拿到 183 → **互斥体机制本身在该环境正常**。
+3. 直接探测 `run.acquire_single_instance()` 的真实返回值：**三个进程（含正在持锁的第一个）全部返回 `0`**，即 `CreateMutexW` 返回了 NULL。
+4. 换名字做对照，抓到真实错误码：
+
+| 调用 | 结果 |
+|------|------|
+| `CreateMutexW(None, False, "PixivArchive_SingleInstance")` | **NULL，`GetLastError()=5`（ERROR_ACCESS_DENIED）** |
+| `Local\PixivArchive_SingleInstance` | NULL，5 |
+| `PixivArchive_SingleInstance_x` / `PixivArchive_ProbeAlpha` | 句柄 392 / 388，错误 0 |
+| `Global\PixivArchive_SingleInstance` | 句柄 536，错误 0 |
+
+即：同名内核对象在该命名空间里已存在、却**不属于当前安全上下文**，于是 `CreateMutexW` 直接失败。
+
+### 根因
+
+```python
+handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+if kernel32.GetLastError() == 183:   # 只认「同名对象已存在」
+    return None
+return handle                        # ← 创建失败时 handle 是 NULL，却被当成「拿到锁」
+```
+
+判断只覆盖「对象已存在」，把**创建失败**当成了「成功获得锁」。于是单实例保护在最需要它的时候静默失效：重复双击 `Start.bat`、或快速连点两次，就可能同时跑起两个服务、并发写同一个 SQLite 库（WAL 模式下不必然立刻损坏，但这不是并发安全的用法；H1/H3 已修的删除路径还会连带操作同一批边车文件）。
+
+附带一点：原写法用的是 `ctypes.windll` 的默认返回类型 `c_int`，会把 64 位 HANDLE 截断——本例句柄恰好都很小所以没暴露，但同样不严谨。
+
+**归因**：该缺陷在重构前的 `launcher.py` 中已存在（`git show a14344a:launcher.py` 里是同一套判断），重构只是把它搬到了 `run.py`，不是重构引入的。
+
+### 修复
+
+把单实例保护从「Windows 命名互斥体」改为「**数据目录下的独占锁文件 + PID 存活检测**」（[run.py](run.py)）：
+
+- `os.open(..., O_CREAT | O_EXCL)` 原子创建 `.instance.lock` 并写入自己的 PID；创建成功即获得锁
+- 文件已存在时读出 PID，用 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `GetExitCodeProcess` 判断持有者是否还活着：活着 → 返回 None（提示「已在运行中」，退出码 1）；已死 → 视为陈旧锁，删除后重试一次
+- `OpenProcess` 打不开时区分错误：`ERROR_INVALID_PARAMETER(87)` 表示该 PID 不存在；其它错误（如拒绝访问）说明进程还在、只是查不了，按「存活」处理，**避免误抢运行中实例的锁**
+- 「创建锁文件」与「写入 PID」之间被强杀会留下空文件：内容非法时，文件超过 10 秒即视为陈旧（`LOCK_FILE_GRACE_SECONDS`）
+- 正常退出在 `finally` 里删除锁文件；被强杀留下的陈旧锁由 PID 检测自愈
+- 数据目录不可写等异常不阻塞启动（保留原先的宽容语义）
+- `.instance.lock` 已加入 [.gitignore](.gitignore)
+
+**为什么不用「改用 `Global\` 命名空间」**：`Global\` 只是这次恰好可用，同类问题（同名对象属于别的安全上下文）依旧可能发生，而且它会让不同 Windows 用户的实例互相挡住。锁文件不依赖内核对象命名空间，且陈旧锁能自愈。
+
+### 验证（端到端 30 项，全部通过）
+
+| 用例 | 结果 |
+|------|------|
+| `_pid_is_alive`：自身 / 存活子进程 / 不存在的 PID | True / True / False |
+| 第一实例启动后，锁文件里的 PID 真实存活 | 通过 |
+| 第二实例 15 秒内退出、退出码 1、打印「已在运行中」、**不占用端口** | 通过 |
+| 第二实例未改写锁文件，第一实例持续服务 | 通过 |
+| 硬杀第一实例 → 陈旧锁（PID 已死）→ 新实例接管并服务 | 通过 |
+| 锁文件指向存活 PID → 立即退出 1、不占用端口、不改写锁文件 | 通过 |
+| 空锁文件：刚创建（宽限期内）拒绝启动；1 小时前的可接管 | 通过 |
+| 正常退出路径（桩服务器）`main()` 返回 0 且锁文件被清理 | 通过 |
+
+两点测试环境说明：本环境里 `Start-Process -PassThru` 与 `subprocess.Popen` 返回的 PID **并非子进程真实 PID**（存在进程包装层），因此测试校验的是「锁文件里的 PID 真实存活 / 未被改写」这类不变量，而不是与返回的 PID 做相等比较；另外沙箱禁止发送 Ctrl+Break，正常退出改用桩服务器直接验证 `main()` 的 `finally` 路径。

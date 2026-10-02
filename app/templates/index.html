@@ -414,10 +414,16 @@ let currentSearch = '';
 let _searchTimer = null;
 let _sortKey = 'id';
 let _sortOrder = 'desc';
+// 随机排序的种子：同一 seed 下后端返回的伪随机顺序完全稳定，翻页/切换筛选时保持不变；
+// 只有用户重新选择「随机」时才重新生成（见 chooseSort）。
+let _randomSeed = 0;
+function newRandomSeed() {
+    return Math.floor(Math.random() * 2147483646) + 1;
+}
 let _viewer = { data: null, idx: 0 };
 let _navIds = [];
 let _navIndex = -1;
-let _navCtx = { type: 'all', q: '', tag: '', author: '', favoriteId: 0, sort: 'id', order: 'desc', page: 1 };
+let _navCtx = { type: 'all', q: '', tag: '', author: '', favoriteId: 0, sort: 'id', order: 'desc', page: 1, seed: 0 };
 let _authorWorksIds = {};
 let _favSelectArtworkIds = [];
 let _favSelectCurrentIds = new Set();
@@ -518,6 +524,9 @@ function chooseSort(key) {
     } else if (key !== 'random') {
         _sortOrder = _sortOrder === 'desc' ? 'asc' : 'desc';
     }
+    // 选中「随机」（首次选中或再次点击＝重新随机）时换一个新 seed；
+    // 翻页、切换筛选、相邻页预加载都不改 _randomSeed，保证同一 seed 下顺序稳定。
+    if (key === 'random') _randomSeed = newRandomSeed();
     updateSortBtn();
     if (currentView === 'gallery') loadGallery(1);
 }
@@ -568,7 +577,7 @@ async function loadGallery(page = 1) {
     const sort = _sortKey;
     const order = _sortOrder;
 
-    _navCtx = { type: 'all', q: currentSearch, tag: '', author: '', favoriteId: 0, sort, order, page };
+    _navCtx = { type: 'all', q: currentSearch, tag: '', author: '', favoriteId: 0, sort, order, page, seed: _randomSeed };
     if (currentFilter.type === 'tag') _navCtx.tag = currentFilter.value;
     else if (currentFilter.type === 'author') _navCtx.author = currentFilter.value;
     else if (currentFilter.type === 'favorite') _navCtx.favoriteId = currentFilter.value;
@@ -611,6 +620,8 @@ function buildGalleryUrl(page, ctx) {
     const r = r18Param();
     if (r) url += '&r18=' + r;
     if (deletedFilter) url += '&status=deleted';
+    // 随机排序必须带上固定 seed，否则后端每次重新排序，翻页会重复/漏项
+    if (ctx.sort === 'random') url += '&seed=' + (ctx.seed || 0);
     return url;
 }
 
@@ -1384,7 +1395,7 @@ function openViewerFromAuthor(authorId, workIndex) {
     if (!ids.length) return;
     _navIds = ids;
     _navIndex = workIndex;
-    _navCtx = { type: 'author', q: '', tag: '', author: '', sort: 'id', order: 'desc', page: 1 };
+    _navCtx = { type: 'author', q: '', tag: '', author: '', sort: 'id', order: 'desc', page: 1, seed: 0 };
     showViewer(ids[workIndex]);
 }
 
@@ -1545,7 +1556,7 @@ function startJob(kind) {
     if (kind === 'bookmark_check') {
         reqUrl = '/api/bookmark-subs/check';
     }
-    launchJob(reqUrl, kind);
+    launchJob(reqUrl, kind, 'POST');
 }
 
 // 通用任务启动：任意 URL/方法触发后台任务并接入进度窗轮询

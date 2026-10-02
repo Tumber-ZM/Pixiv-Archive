@@ -1,7 +1,19 @@
+# Web 框架（路由 / 模板 / 静态文件）
 fastapi>=0.110.0
-hypercorn>=0.17.0
+# 请求体模型基类：FastAPI 的传递依赖，但被 main.py 直接 import，故显式声明
+pydantic>=2.0.0
+# HTTP 客户端：Pixiv API 调用与图片下载
+requests>=2.31.0
+# 连接池 / SSL 适配与告警类型：direct_connect.py 直接使用 HTTPAdapter 与 urllib3.exceptions
+urllib3>=2.0.0
+# Pixiv AppAPI 客户端
 pixivpy3>=3.7.0
+# 缩略图生成
 Pillow>=10.0.0
+# 页面模板
 Jinja2>=3.1.0
+# 读取 .env
 python-dotenv>=1.0.0
-aiofiles>=24.0.0
+
+# 注：hypercorn 与 aiofiles 已移除——全项目零 import，HTTP 服务由 run.py 自带的
+# ASGI 服务器提供。若将来改用 hypercorn 部署，请把这两个依赖加回来。
