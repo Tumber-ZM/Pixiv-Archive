@@ -19,7 +19,6 @@
             } catch (e) {}
         })();
     </script>
-    <script src="/static/js/pa_token.js"></script>
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -137,7 +136,7 @@ async function loadDetail() {
     if (data.images.length > 0) {
         imagesHtml = `
         <div class="image-viewer">
-            <img id="mainImage" src="${paImg('/image/' + encodeURI(data.images[0].path))}" alt="${data.title}">
+            <img id="mainImage" src="/image/${encodeURI(data.images[0].path)}" alt="${data.title}">
         </div>`;
         if (data.images.length > 1) {
             imagesHtml += `
@@ -195,7 +194,7 @@ function nextImage() {
 function updateImage() {
     resetArtZoom();
     const img = window._imageList[window._currentIdx];
-    document.getElementById('mainImage').src = paImg('/image/' + encodeURI(img.path));
+    document.getElementById('mainImage').src = '/image/' + encodeURI(img.path);
     document.getElementById('pageIndicator').textContent = `${window._currentIdx + 1} / ${window._imageList.length}`;
 }
 

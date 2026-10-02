@@ -20,10 +20,8 @@
 | Jinja2 | BSD-3-Clause |
 | python-dotenv | BSD-3-Clause |
 | aiofiles | Apache-2.0 |
-| pywebview | BSD-3-Clause |
-| pystray | LGPL-3.0（仅作未修改依赖使用） |
 
-(上述包各自的传递依赖如 starlette、pydantic、requests、urllib3、pystray 等亦为 MIT / BSD / Apache / PSF / MPL 等宽松许可以及 LGPL-3.0，详见各包随附的许可证文本。)
+(上述包各自的传递依赖如 starlette、pydantic、requests、urllib3 等亦为 MIT / BSD / Apache / PSF / MPL 等宽松许可，详见各包随附的许可证文本。)
 
 ## Build time (requirements-build.txt)
 
@@ -34,5 +32,4 @@
 ## 再分发注意
 
 - MIT / BSD 系依赖要求再分发时保留其版权声明，请在随发布产物一起分发时保留相应包的 LICENSE/NOTICE（或在本仓库的依赖清单中注明）。
-- pystray（LGPL-3.0）仅以库形式动态引用、未做修改，允许在 GPL-3.0 项目中使用；若你修改了 pystray 本身，修改部分需按 LGPL 发布。
 - 图片内容版权归各 Pixiv 作者所有。

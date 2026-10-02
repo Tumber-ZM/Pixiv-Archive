@@ -53,9 +53,7 @@ if not exist "%BASE%.env" (
 
 echo.
 echo Setup complete. How to start:
-echo   Start.bat     - start the server (open in browser afterwards)
-echo   Start-LAN.bat - start the server in LAN mode
-echo   launcher.bat  - desktop window mode
+echo   Start.bat     - start the local server (single instance, 127.0.0.1 only)
 echo.
 pause
 endlocal

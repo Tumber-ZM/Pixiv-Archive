@@ -5,6 +5,15 @@
 
 ---
 
+## 本次变更：移除局域网模式与桌面窗口模式
+
+- **移除局域网访问（LAN 模式）**：服务固定只绑定 `127.0.0.1`，不再开放到局域网，访问令牌体系整体删除（`--lan` / `Start-LAN.bat` / `PA_HOST` / `PA_ACCESS_TOKEN` / `?token=` / Cookie / `X-Access-Token` / 前端 `pa_token.js`）。缩略图可被局域网枚举、令牌经 URL 泄漏等隐患随之消失。
+- **移除桌面窗口模式**：不再内嵌 pywebview 原生窗口，`launcher.py` / `launcher.bat` 一并删除；启动方式统一为 `Start.bat`（源码）与 `PixivArchive.exe`（分发），都以系统默认浏览器呈现界面。
+- **单实例锁并入启动链路**：`run.py` 用 Windows 命名互斥体保证同一时间只运行一个实例，重复双击 `Start.bat` 不会起第二个服务。托盘与端口自动避让随窗口模式一并移除——端口被占用时直接启动失败，请改端口。
+- 依赖中去掉 `pywebview` 与 `pystray`。
+
+---
+
 ## 版本 1.2.1 更新说明
 
 **1. 新功能：收藏订阅**
@@ -35,11 +44,10 @@
 - **收藏夹管理**：创建/删除收藏夹，将作品批量加入收藏夹。
 - **收藏订阅**：订阅 Pixiv 用户的公开收藏列表，按增量游标自动下载新收藏的作品，一键完成 下载 → 入库 → 缩略图 → 元数据同步 全流程（v1.2.1 新增）。
 - **元数据同步**：通过 Pixiv refresh token 联网同步作品的标题、标签、作者名、创建日期、尺寸等信息；作品已删除时自动标记（`deleted`）。
-- **局域网访问**：`--lan` 或 `Start-LAN.bat` 可开放局域网访问，通过访问令牌（`?token=...` / `X-Access-Token` 请求头 / Cookie）保护，防止未授权设备访问。
 - **直连 / 代理自适应**：`PIXIV_MODE` 支持 `direct`（直连 IP 免 SNI）、`proxy`（走 Clash 类代理）、`auto`（自动尝试并回退）。
 - **第三方图片镜像（可选）**：设置中可填写镜像域名，用第三方图站接管图片下载与头像获取（作品列表与认证仍走 Pixiv 官方 API）。
 - **一键启动 / 一键打包**：`.bat` 脚本自动查找 Python、创建 venv、安装依赖；`build-exe.bat` 可从源码直接编译出单文件 exe。
-- **桌面窗口模式**：`launcher.bat` 可选用 pywebview 原生窗口呈现，缺失时自动回退到浏览器。
+- **本地单实例服务**：固定绑定 `127.0.0.1`，仅本机可访问；同一时间只允许一个实例运行。
 
 ---
 
@@ -55,16 +63,13 @@ app/                 应用代码
   jobs.py             后台任务（扫描/同步）管理与进度
   thumbnails.py       缩略图生成
   templates/          页面模板（index.html、artwork.html、author.html、tag.html）
-  static/             前端资源（style.css、pa_token.js、favicon.png）
+  static/             前端资源（css/style.css、js/、favicon.png）
 assets/              图标（icon.png / icon.ico，由 scripts/make_icon.py 生成）
 scripts/             辅助脚本（make_icon.py 生成图标）
 Release/             产物目录（构建出的 PixivArchive.exe）
-run.py               启动本地 HTTP 服务（浏览器模式）
-launcher.py          桌面窗口 / 浏览器启动器（含托盘、端口避让、单实例锁）
-browser_entry.py     exe 分发专用入口（强制自动打开浏览器）
+run.py               启动本地 HTTP 服务（仅 127.0.0.1，含单实例锁）
+browser_entry.py     exe 分发专用入口（启动后自动打开浏览器）
 Start.bat            启动服务（浏览器模式）
-Start-LAN.bat        启动服务（局域网模式）
-launcher.bat         桌面窗口模式
 install.bat          一键初始化环境（创建 venv + 安装依赖 + 生成 .env）
 build-exe.bat        一键从源码编译单文件 exe
 build.ps1            PowerShell 构建脚本（等价于 build-exe.bat）
@@ -78,11 +83,11 @@ requirements-build.txt  打包（PyInstaller）所需依赖
 
 ## 环境要求
 
-- **操作系统**：Windows（桌面窗口模式依赖 WebView2 Runtime，缺失时自动回退浏览器）
+- **操作系统**：Windows
 - **Python**：3.10+（开发与验证环境为 3.11）
 - **网络**：同步元数据 / 刷新直连 IP 需要能访问 pixiv（必要时搭配代理）
 
-运行时依赖（`requirements.txt`）：`fastapi`、`hypercorn`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`、`aiofiles`、`pywebview`、`pystray`。
+运行时依赖（`requirements.txt`）：`fastapi`、`hypercorn`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`、`aiofiles`。
 构建依赖（`requirements-build.txt`）：`pyinstaller`。
 
 ### venv 里装的是什么？
@@ -118,9 +123,8 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 
 | 场景 | 操作 | 说明 |
 |------|------|------|
-| 本机使用 | 双击 `Start.bat` | 浏览器模式，随后访问 http://127.0.0.1:6814 |
-| 局域网使用 | 双击 `Start-LAN.bat` | 开放局域网，自动生成/使用访问令牌 |
-| 桌面窗口 | 双击 `launcher.bat` | pywebview 原生窗口，缺失时回退浏览器 |
+| 本机使用 | 双击 `Start.bat` | 启动本地服务（仅绑定 127.0.0.1），随后用浏览器访问 http://127.0.0.1:6814 |
+| 重复启动 | — | 已有实例运行时会提示并退出，不会起第二个服务 |
 
 启动脚本会优先使用 `venv\Scripts\python.exe`，其次回退到 PATH 中已装好依赖的 `python` / `py`；找不到合适的 Python 时会给出提示。
 
@@ -139,8 +143,8 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 - 无需安装 Python，双击即可运行；
 - 启动后**自动打开系统默认浏览器**访问 http://127.0.0.1:6814；
 - 首次运行会在 exe 同目录自动生成数据文件：`archive.db`、`thumbnails/`、`.env`、日志；
-- 托盘图标提供"显示窗口 / 退出"，退出后进程与端口会彻底释放；
-- 支持命令行参数：`--lan` 开启局域网模式、`--port 7130` 指定端口、`--check` 冒烟自检。
+- 仅绑定 `127.0.0.1`，同一时间只允许一个实例运行，重复启动会被拒绝；
+- 支持命令行参数：`--port 7130` 指定端口。
 
 ### 界面与常用操作
 
@@ -149,7 +153,6 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 - **搜索**：顶部搜索框按 标题/描述/作者/标签/Pixiv ID 全文检索；可按作者、标签、收藏夹组合筛选，支持多种排序。
 - **收藏夹**：在作品详情或列表页批量加入/移除收藏夹。
 - **作者 / 标签页**：`/author/<id>`、`/tag/<名称>` 页面聚合作者、标签下的全部作品。
-- **局域网访问**：非本机访问需携带令牌。启动时会打印访问地址，形如 `http://<局域网IP>:6814/?token=xxxx`；也可在设置中自定义 `PA_ACCESS_TOKEN`。
 - **R18 模式与已删除筛选**：顶栏「R18」循环切换 全部 / 隐藏R18 / 仅R18；「已删除」按钮快速只看被删作品。两者会同步作用于搜索、作者、标签、收藏夹与跨页浏览。
 - **在文件夹中打开**：查看器与作品详情页的「在文件夹中打开」按钮，可在资源管理器中定位并选中图片文件。
 
@@ -163,8 +166,7 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 | `PIXIV_PROXY` | 代理地址，如 `http://127.0.0.1:7890` |
 | `THUMBNAIL_SIZE` | 缩略图边长，默认 400 |
 | `THUMBNAIL_DIR` / `METADATA_DIR` | 缩略图 / 元数据存放目录名 |
-| `PA_PORT` / `PA_HOST` | 服务端口 / 绑定地址，默认 6814 / 127.0.0.1 |
-| `PA_ACCESS_TOKEN` | 局域网访问令牌（可自定义固定值；留空则自动生成） |
+| `PA_PORT` | 服务端口，默认 6814（固定绑定 `127.0.0.1`，不可改绑定地址） |
 | `PIXIV_IP_*` | 直连模式下的 pixiv 域名 → IP 覆盖（网页设置中可刷新） |
 
 ---
@@ -185,7 +187,7 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 - 独立运行，exe 自带全部依赖与页面资源，无需目标机器安装 Python；
 - 启动自动打开系统默认浏览器；
 - 首次运行在 exe 所在目录生成 `archive.db`、`thumbnails/`、`.env`；
-- 支持 `--lan` / `--port` 等命令行参数。
+- 支持 `--port` 等命令行参数。
 
 ### PowerShell 脚本：`build.ps1`
 
@@ -213,9 +215,9 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
 
 ### 打包配置说明（`PixivArchive.spec`）
 
-- 入口为 `browser_entry.py`：强制 `PA_BROWSER=1` 走 `launcher.main()`，因此 exe 启动即自动打开浏览器，而非桌面窗口；
+- 入口为 `browser_entry.py`：强制 `PA_BROWSER=1` 走 `run.main()`，因此 exe 启动即自动打开浏览器；
 - `console=False` 无控制台窗口；`onefile` 单文件输出；
-- 已精简打包范围：不收集 `webview` / `pythonnet` / `clr`（浏览器模式不需要），以减小体积；仍保留 `pixivpy3`、`Pillow`、`pydantic`、`pystray`；
+- 打包范围：`collect_all` 收集 `pixivpy3`、`Pillow`、`pydantic`；并把 `webview` / `clr` / `pythonnet` 列入 `excludes`，不再被 PyInstaller 静态分析带入，以减小体积；
 - `app/templates`、`app/static` 会随包内嵌（运行时解压到临时目录）。
 
 ---
@@ -228,7 +230,7 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
   - `thumbnails/`、`metadata/`：缩略图与元数据 JSON
   - `pixiv_archive.log`：运行日志
   - `.env`：你的配置（token 等，仅本机保存）
-- 局域网模式请务必妥善保管访问令牌；任何持有该地址与令牌的设备都能查看/管理你的图库。
+- 服务固定只绑定 `127.0.0.1`，局域网内其它设备无法访问本工具，也不再有访问令牌。
 
 ---
 
@@ -237,7 +239,8 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
 **启动时报 `ModuleNotFoundError`？**
 说明当前 Python 缺少依赖。运行 `install.bat` 创建 venv 后，用 `Start.bat` 重新启动；或改用 `Release\PixivArchive.exe`。
 
-**服务启动但浏览器打不开 / 页面 404？**\n确认访问地址端口与启动日志一致（默认 6814）。`launcher.bat` / exe 在端口被占用时会自动避让到 +1 端口（最多 20 次）；而 `Start.bat`（`run.py`）会直接绑定设定端口，被占用则启动失败——此时请关闭占用端口的程序或在 `.env` 设置 `PA_PORT`。
+**服务启动但浏览器打不开 / 页面 404？**
+确认访问地址端口与启动日志一致（默认 6814）。服务直接绑定设定端口，被占用即启动失败（不再自动避让）——请关闭占用端口的程序，或在设置 / `.env` 中改用其它 `PA_PORT`。
 
 **扫描后没有缩略图？**
 确认 `IMAGE_SOURCE_DIR` 目录存在且可读、文件名确实包含 Pixiv ID（7–10 位数字）、图片格式属于 jpg/jpeg/png/webp/gif/bmp。
@@ -246,10 +249,7 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
 确认 `.env` 中 `PIXIV_REFRESH_TOKEN` 有效未过期，且网络可访问 pixiv；可在设置中切换直连 / 代理模式（`PIXIV_MODE` / `PIXIV_PROXY`）。
 
 **局域网下其他设备无法访问？**
-确认使用 `Start-LAN.bat`（绑定了 0.0.0.0）、本机防火墙放行对应端口，并在访问 URL 末尾保留 `?token=...`。
-
-**托盘图标点"退出"后进程还在？**
-旧版本存在此问题（退出事件先在托盘回调里被阻塞）；当前版本已修复：退出事件先置位再停止托盘，并强制结束进程。请重新构建/获取最新 exe。
+这是预期行为：服务固定只绑定 `127.0.0.1`，局域网访问支持已移除，仅本机可用。
 
 **杀毒软件报毒？**
 PyInstaller 单文件 exe 偶见误报，属常见现象；可改用目录形态（onedir）打包以降低误报概率。
@@ -260,11 +260,8 @@ PyInstaller 单文件 exe 偶见误报，属常见现象；可改用目录形态
 
 | 参数 | 适用脚本 | 说明 |
 |------|----------|------|
-| `--lan` | `Start-LAN.bat` / exe / `run.py` | 开放局域网访问（绑定 0.0.0.0，自动生成令牌） |
-| `--port <端口>` | 任意启动方式 | 指定端口（默认 6814，被占自动避让+1） |
-| `--host <地址>` | `run.py` | 指定绑定地址 |
-| `--browser` | `launcher.bat` | 强制浏览器模式 |
-| `--check` | `launcher.py` | 冒烟自检后退出（写入 `pixiv_archive_check.txt`） |
+| `--port <端口>` | `run.py` / exe | 指定端口（默认 6814；被占用即启动失败） |
+| `--browser` | `run.py` / exe | 启动后用系统默认浏览器打开页面（exe 默认开启） |
 
 ---
 

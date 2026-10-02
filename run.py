@@ -1,40 +1,67 @@
+"""Pixiv Archive 本地服务入口。
+
+- 只绑定 127.0.0.1，不开放局域网访问（LAN 模式已移除）。
+- 单实例：同一时间只允许一个实例运行（Windows 命名互斥体），
+  因此 Start.bat 重复双击不会起第二个服务、也不会抢端口。
+- --browser / PA_BROWSER=1：启动后自动用系统默认浏览器打开页面（exe 分发版用）。
+"""
 import argparse
+import asyncio
 import os
 import sys
-import asyncio
+import threading
 import traceback
-from urllib.parse import urlparse, parse_qs
+import webbrowser
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import paths  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
-# 先加载 .env，使设置里保存的 PA_PORT / PA_HOST / PA_ACCESS_TOKEN 生效
+# 先加载 .env，使设置里保存的 PA_PORT 生效
 load_dotenv(paths.ENV_FILE)
 
 DEFAULT_PORT = 6814
+HOST = "127.0.0.1"
+MUTEX_NAME = "PixivArchive_SingleInstance"
+
+
+def acquire_single_instance():
+    """获取单实例锁。
+
+    返回互斥体句柄（需在进程存活期间保持引用）；已有实例在运行时返回 None；
+    非 Windows 或调用失败时返回 True，表示不阻塞启动。
+    """
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            return None
+        return handle
+    except Exception:
+        return True
 
 
 def _parse_server_args():
     p = argparse.ArgumentParser(description="Pixiv Archive 本地服务")
-    p.add_argument("--host", default="", help="绑定地址（默认 127.0.0.1）")
-    p.add_argument("--lan", action="store_true", help="开放局域网访问（绑定 0.0.0.0，自动生成访问令牌）")
-    p.add_argument("--port", type=int, default=0, help=f"端口（默认 {DEFAULT_PORT}，也可用设置/环境变量 PA_PORT）")
+    p.add_argument("--port", type=int, default=0,
+                   help=f"端口（默认 {DEFAULT_PORT}，也可用设置/环境变量 PA_PORT）")
+    p.add_argument("--browser", action="store_true",
+                   help="启动后用系统默认浏览器打开页面")
     a, _ = p.parse_known_args()
-    host = a.host or ("0.0.0.0" if a.lan else os.getenv("PA_HOST", "127.0.0.1"))
-    if host in ("0.0.0.0", "::", "::0", "*"):
-        host = "0.0.0.0"
     port_str = (os.getenv("PA_PORT", "") or "").strip()
     port = a.port if a.port else (int(port_str) if port_str.isdigit() else DEFAULT_PORT)
-    os.environ["PA_HOST"] = host
     os.environ["PA_PORT"] = str(port)
-    return host, port
+    open_browser = a.browser or os.environ.get("PA_BROWSER") == "1"
+    return port, open_browser
 
 
-HOST, PORT = _parse_server_args()
+PORT, OPEN_BROWSER = _parse_server_args()
 
-from app.main import app, LAN_MODE, lan_access_url  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 class ASGIHTTPServer:
@@ -130,27 +157,28 @@ class ASGIHTTPServer:
     async def serve(self):
         server = await asyncio.start_server(self.handle, self.host, self.port)
         addr = server.sockets[0].getsockname()
-        print(f"Pixiv Archive running at http://{addr[0]}:{addr[1]}")
-        if LAN_MODE:
-            print()
-            print("=" * 52)
-            print("局域网访问已开启（LAN mode）")
-            print(f"  访问地址: {lan_access_url()}")
-            print("  访问令牌请在 URL 末尾保留 ?token= 参数（可在设置中自定义令牌）")
-            print("  警告: 局域网内任何持有令牌的设备都能查看/管理图库！")
-            print("=" * 52)
-            print()
+        url = f"http://{addr[0]}:{addr[1]}/"
+        print(f"Pixiv Archive running at {url}")
+        if OPEN_BROWSER:
+            threading.Timer(1.0, webbrowser.open, args=[url]).start()
         async with server:
             await server.serve_forever()
 
 
 def main():
+    lock = acquire_single_instance()
+    if lock is None:
+        print("Pixiv Archive 已在运行中，请勿重复启动。")
+        print("如无响应，请先结束现有进程后重试。")
+        return 1
+
     server = ASGIHTTPServer(app, HOST, PORT)
     try:
         asyncio.run(server.serve())
     except KeyboardInterrupt:
         print("Server stopped")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

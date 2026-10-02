@@ -5,5 +5,3 @@ Pillow>=10.0.0
 Jinja2>=3.1.0
 python-dotenv>=1.0.0
 aiofiles>=24.0.0
-pywebview>=5.0
-pystray>=0.19.4

@@ -19,7 +19,6 @@
             } catch (e) {}
         })();
     </script>
-    <script src="/static/js/pa_token.js"></script>
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -342,24 +341,13 @@
                 <span class="field-hint" id="portHint"></span>
             </div>
             <div class="settings-field">
-                <label for="settingAccessToken">访问令牌（局域网）</label>
-                <input type="text" id="settingAccessToken" placeholder="留空则自动生成">
-                <span class="field-hint" id="tokenHint2"></span>
-            </div>
-            <div class="settings-field">
                 <label class="fav-check">
                     <input type="checkbox" id="settingSafeMode" onchange="setSafeMode(this.checked)">
                     安全模式（模糊所有图片）
                 </label>
                 <span class="field-hint">开启后所有图片将模糊显示，适合演示 / 屏幕共享时保护内容。</span>
             </div>
-            <div class="settings-field" id="openExternalField" style="display:none;">
-                <button class="btn-folder-ghost" onclick="openExternalBrowser()">
-                    <svg class="icon"><use href="#i-external"/></svg>在外部浏览器中打开
-                </button>
-                <span class="field-hint">在系统浏览器中打开当前应用（桌面窗口模式下可用）。</span>
             </div>
-        </div>
         <div class="settings-section" id="secNetwork" style="display:none;">
             <div class="settings-field">
                 <label for="settingMode">连接方式</label>
@@ -1368,7 +1356,7 @@ function renderViewerImage() {
     resetViewerZoom();
     const img = _viewer.data.images[_viewer.idx];
     if (!img) { $('vMainImage').style.display = 'none'; return; }
-    $('vMainImage').src = paImg('/image/' + encodeURI(img.path));
+    $('vMainImage').src = '/image/' + encodeURI(img.path);
     $('vMainImage').style.display = 'block';
 
     const total = _viewer.data.images.length;
@@ -1836,16 +1824,6 @@ function updateSafeBadge() {
     if (badge) badge.style.display = on ? 'inline-flex' : 'none';
 }
 
-function openExternalBrowser() {
-    if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.open_external(window.location.origin).then(function () {
-            showToast('已用外部浏览器打开');
-        });
-    } else {
-        window.open(window.location.origin, '_blank');
-    }
-}
-
 // ===== Settings =====
 async function openSettings() {
     $('settingsOverlay').classList.remove('hidden');
@@ -1859,7 +1837,6 @@ async function openSettings() {
         $('proxyHint').textContent = data.proxy ? `当前: ${data.proxy}` : '未设置';
         $('modeHint').textContent = data.connection_mode === 'direct' ? '直连模式：无需代理' : (data.connection_mode === 'proxy' ? '代理模式：使用下方代理地址' : '自动模式：直连失败自动回退代理');
         $('portHint').textContent = data.server_port ? `当前端口: ${data.server_port}（修改后需重启服务生效，默认 6814）` : '当前端口: 6814（修改后需重启服务生效）';
-        $('tokenHint2').textContent = data.access_token_auto ? '局域网模式下自动生成，无固定令牌' : (data.access_token ? '当前使用固定令牌' : '未设置（非局域网模式无需令牌）');
         $('syncDelayHint').textContent = data.sync_delay_ms != null ? `当前: ${data.sync_delay_ms} ms（0=不限速）` : '当前: 800 ms（0=不限速）';
         const mirror = data.image_mirror || '';
         $('settingMirrorToggle').checked = !!mirror;
@@ -1874,7 +1851,6 @@ async function openSettings() {
         $('settingSyncDelay').value = data.sync_delay_ms != null ? data.sync_delay_ms : '';
         $('settingMode').value = data.connection_mode || 'auto';
         $('settingPort').value = data.server_port || '';
-        $('settingAccessToken').value = data.access_token_auto ? '' : (data.access_token || '');
     } catch (e) {
         $('tokenHint').textContent = '无法加载';
     }
@@ -1913,7 +1889,6 @@ async function saveSettings() {
     const proxy = $('settingProxy').value.trim();
     const mode = $('settingMode').value;
     const port = $('settingPort').value.trim();
-    const accessToken = $('settingAccessToken').value.trim();
     const syncDelay = $('settingSyncDelay').value.trim();
     const imageMirror = $('settingMirrorToggle').checked ? $('settingImageMirror').value.trim() : '';
     const msg = $('settingsMsg');
@@ -1927,9 +1902,8 @@ async function saveSettings() {
         image_mirror: imageMirror
     };
     if (port) payload.server_port = port;
-    payload.access_token = accessToken;
 
-    if (!token && !dir && !proxy && !port && !accessToken && !syncDelay && !imageMirror) {
+    if (!token && !dir && !proxy && !port && !syncDelay && !imageMirror) {
         msg.style.display = 'block';
         msg.textContent = '请至少填写一项';
         msg.style.color = '#e94560';
@@ -2165,10 +2139,6 @@ updateSidebarToggle();
 updateSafeBadge();
 initR18();
 updateSortBtn();
-if (window.pywebview && window.pywebview.api) {
-    const f = $('openExternalField');
-    if (f) f.style.display = 'block';
-}
 loadGallery(1);
 </script>
 </body>

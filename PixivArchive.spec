@@ -13,8 +13,7 @@ datas = [
 hiddenimports = []
 
 # 需要收集运行时数据 / 动态导入的包。
-# 注意：浏览器分发版不使用 pywebview / pythonnet，故意不收集以缩小体积。
-for pkg in ("pixivpy3", "PIL", "pydantic", "pystray"):
+for pkg in ("pixivpy3", "PIL", "pydantic"):
     d, h = _collect(pkg)
     datas += d
     hiddenimports += h
@@ -31,7 +30,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["webview", "clr", "pythonnet"],
     noarchive=False,
     optimize=0,
 )

@@ -1,11 +1,9 @@
 import json
 import os
 import re
-import secrets
-import socket
 import subprocess
 import sys
-from urllib.parse import unquote, parse_qs
+from urllib.parse import unquote
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,8 +22,6 @@ from app.pixiv import reset_pixiv_client, fetch_profile_image, get_pixiv_client
 
 load_dotenv(paths.ENV_FILE)
 
-# ---- 局域网访问控制 ----
-# PA_HOST 由 run.py / launcher.py 在导入本模块前写入环境。
 DEFAULT_PORT = 6814
 _SYNC_DELAY_DEFAULT = 800
 _SYNC_DELAY_MAX = 10000
@@ -39,128 +35,9 @@ def _parse_sync_delay(raw):
         v = int(s)
         return v if v <= _SYNC_DELAY_MAX else _SYNC_DELAY_MAX
     return _SYNC_DELAY_DEFAULT
-HOST = os.getenv("PA_HOST", "127.0.0.1").strip() or "127.0.0.1"
-LAN_MODE = HOST not in ("127.0.0.1", "localhost", "::1")
-ACCESS_TOKEN = os.getenv("PA_ACCESS_TOKEN", "").strip()
-if LAN_MODE and not ACCESS_TOKEN:
-    ACCESS_TOKEN = secrets.token_urlsafe(12)
-
-_PUBLIC_PREFIXES = ("/static/", "/thumbnails/")
-_LOCAL_CLIENTS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
-
-
-def is_local_client(host):
-    return host in _LOCAL_CLIENTS
-
-
-def get_lan_ip():
-    """尽力获取本机局域网 IP（用于打印访问地址）。"""
-    if not LAN_MODE:
-        return "127.0.0.1"
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-        finally:
-            s.close()
-    except Exception:
-        return "127.0.0.1"
-
-
-def lan_access_url():
-    token_part = f"?token={ACCESS_TOKEN}" if LAN_MODE else ""
-    return f"http://{get_lan_ip()}:{os.getenv('PA_PORT') or DEFAULT_PORT}/{token_part}"
-
-
-class LANGuardMiddleware:
-    """LAN 模式下，非本机请求必须携带访问令牌（?token= 或 X-Access-Token）。
-
-    静态资源与缩略图放行（避免 img 标签无法带 header），
-    页面 / API / 原图接口一律校验。
-    """
-
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or not LAN_MODE:
-            await self.app(scope, receive, send)
-            return
-
-        path = scope.get("path", "")
-        if path.startswith(_PUBLIC_PREFIXES):
-            await self.app(scope, receive, send)
-            return
-
-        client = (scope.get("client") or ("", 0))[0]
-        if is_local_client(client):
-            await self.app(scope, receive, send)
-            return
-
-        ok = False
-        try:
-            qs = parse_qs(scope.get("query_string", b"").decode("utf-8", "ignore"))
-            ok = qs.get("token", [""])[0] == ACCESS_TOKEN
-        except Exception:
-            ok = False
-        if not ok:
-            for k, v in scope.get("headers", []):
-                if k.lower() == b"x-access-token" and v.decode("utf-8", "ignore") == ACCESS_TOKEN:
-                    ok = True
-                    break
-        if not ok:
-            # 允许页面导航时经 Cookie 携带令牌（前端 pa_token.js 写入）
-            for k, v in scope.get("headers", []):
-                if k.lower() != b"cookie":
-                    continue
-                for part in v.decode("utf-8", "ignore").split(";"):
-                    kv = part.strip().split("=", 1)
-                    if len(kv) == 2 and kv[0] == "pa_lan_token" and unquote(kv[1]) == ACCESS_TOKEN:
-                        ok = True
-                        break
-                if ok:
-                    break
-
-        if ok:
-            await self.app(scope, receive, send)
-            return
-
-        accept = b""
-        for k, v in scope.get("headers", []):
-            if k.lower() == b"accept":
-                accept = v
-                break
-        if b"text/html" in accept:
-            body = (
-                "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
-                "<title>需要访问令牌</title></head><body style='font-family:sans-serif;"
-                "background:#101218;color:#e9eaf0;padding:40px;'>"
-                "<h2>需要访问令牌</h2>"
-                "<p>此服务已开启局域网访问保护。请在浏览器地址栏末尾追加："
-                "<code>?token=你的令牌</code></p></body></html>"
-            ).encode("utf-8")
-        else:
-            body = json.dumps({
-                "error": {
-                    "code": "FORBIDDEN",
-                    "message": "需要访问令牌",
-                    "hint": "请在 URL 后附加 ?token=... 或携带 X-Access-Token 请求头",
-                }
-            }).encode("utf-8")
-        await send({
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [
-                (b"content-type", (b"text/html; charset=utf-8" if b"text/html" in accept else b"application/json")),
-                (b"content-length", str(len(body)).encode()),
-            ],
-        })
-        await send({"type": "http.response.body", "body": body})
 
 
 app = FastAPI(title="Pixiv Archive")
-app.add_middleware(LANGuardMiddleware)
 
 THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "thumbnails")
 THUMBNAIL_PATH = os.path.join(paths.DATA_DIR, THUMBNAIL_DIR)
@@ -1150,7 +1027,6 @@ def api_get_settings():
     settings = _read_env_file()
     token = settings.get("PIXIV_REFRESH_TOKEN", "")
     port_str = (settings.get("PA_PORT", "") or "").strip()
-    access_token_auto = LAN_MODE and not (settings.get("PA_ACCESS_TOKEN", "") or "").strip()
     return {
         "has_token": bool(token),
         "token_preview": token[:8] + "..." if len(token) > 8 else token,
@@ -1159,8 +1035,6 @@ def api_get_settings():
         "connection_mode": settings.get("PIXIV_MODE", "auto"),
         "image_mirror": settings.get("PIXIV_IMAGE_MIRROR", ""),
         "server_port": int(port_str) if port_str.isdigit() else DEFAULT_PORT,
-        "access_token": ACCESS_TOKEN,
-        "access_token_auto": access_token_auto,
         "sync_delay_ms": _parse_sync_delay(settings.get("SYNC_DELAY_MS", "")),
     }
 
@@ -1175,7 +1049,6 @@ async def api_update_settings(request: Request):
         proxy: str = ""
         connection_mode: str = ""
         server_port: str = ""
-        access_token: str = ""
         sync_delay_ms: str = ""
         image_mirror: str = ""
 
@@ -1205,17 +1078,6 @@ async def api_update_settings(request: Request):
             else:
                 return _error_response("INVALID_PORT", "端口需为 1-65535 的整数",
                                        "请检查端口填写是否正确")
-    if "access_token" in body:
-        token_str = (data.access_token or "").strip()
-        updates["PA_ACCESS_TOKEN"] = token_str
-        os.environ["PA_ACCESS_TOKEN"] = token_str
-        # 立即生效：留空 + 局域网模式则自动生成新令牌
-        if token_str:
-            globals()["ACCESS_TOKEN"] = token_str
-        elif LAN_MODE:
-            globals()["ACCESS_TOKEN"] = secrets.token_urlsafe(12)
-        else:
-            globals()["ACCESS_TOKEN"] = ""
     if "sync_delay_ms" in body:
         delay_str = (data.sync_delay_ms or "").strip()
         if delay_str:
@@ -1248,7 +1110,7 @@ def api_refresh_ips():
 @app.get("/image/{filepath:path}")
 def serve_image(filepath: str):
     decoded = unquote(filepath)
-    # 只允许读取已登记在库的作品图片，防止局域网模式下被利用读取任意本地文件
+    # 只允许读取已登记在库的作品图片，防止被利用读取任意本地文件
     if not _is_registered_image(decoded):
         return JSONResponse({"error": "Not found"}, status_code=404)
     return FileResponse(decoded)
