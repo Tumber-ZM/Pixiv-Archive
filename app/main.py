@@ -968,14 +968,12 @@ def api_toggle_bookmark_sub(pixiv_user_id: int):
     return {"status": "ok", "auto_download": bool(row["auto_download"])}
 
 
-@app.delete("/api/bookmark-subs/{pixiv_user_id}")
-def api_delete_bookmark_sub(pixiv_user_id: int):
-    with get_db() as conn:
-        conn.execute("DELETE FROM bookmark_subs WHERE pixiv_user_id = ?",
-                     (pixiv_user_id,))
-    return {"status": "ok"}
-
-
+# 注意：这两条路由的先后顺序有意义，不要随意调换。
+# Starlette 在没有 FULL 匹配时，用「第一个路径部分匹配」的路由生成 405 的 Allow 头
+# （starlette/routing.py 的 partial.methods）。POST /api/bookmark-subs/check 与
+# DELETE /api/bookmark-subs/{pixiv_user_id} 的路径形状相同，若 DELETE 在前，GET
+# 本路径会得到与事实不符的 "Allow: DELETE"；POST 始终是 FULL 匹配到正确路由，
+# 所以这只是响应头不准确的外观问题。
 @app.post("/api/bookmark-subs/check")
 def api_check_all_bookmark_subs():
     """一键检查全部启用中的收藏订阅并自动下载新收藏（完成后入库+缩略图+同步元数据）。"""
@@ -998,6 +996,14 @@ def api_check_all_bookmark_subs():
     if error:
         return _busy_error()
     return {"job_id": job_id, "kind": "bookmark_check"}
+
+
+@app.delete("/api/bookmark-subs/{pixiv_user_id}")
+def api_delete_bookmark_sub(pixiv_user_id: int):
+    with get_db() as conn:
+        conn.execute("DELETE FROM bookmark_subs WHERE pixiv_user_id = ?",
+                     (pixiv_user_id,))
+    return {"status": "ok"}
 
 
 @app.post("/api/sync")

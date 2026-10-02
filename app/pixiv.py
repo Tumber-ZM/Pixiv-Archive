@@ -73,12 +73,16 @@ _AUTH_MSG_HINTS = (
     "invalid_grant", "401", "expired", "有効期限", "セッション",
 )
 
-# “作品确实不存在/已删除”的典型文案（英文 + 日文）。只有命中这些才抛
+# “作品确实不存在/已删除”的典型文案（英文 + 日文 + 中文）。只有命中这些才抛
 # PixivDeletedError；429/5xx 等其它错误一律按网络错误处理，避免被误标 deleted。
+# 这只是兜底手段：首选判定信号是 HTTP 状态码（见 _missing_illust）。
 _DELETED_MSG_HINTS = (
     "not found", "does not exist", "doesn't exist", "not exist", "no such",
-    "deleted", "見つかりません", "削除", "存在しません",
+    "deleted", "見つかりません", "削除", "存在しません", "不存在",
 )
+
+# Pixiv 错误对象里可能承载说明文字的字段（含 *_lang 本地化变体）
+_ERROR_MSG_KEYS = ("message", "user_message", "reason", "message_lang", "user_message_lang")
 
 
 def _looks_like_auth_error(msg):
@@ -95,12 +99,40 @@ def _looks_like_deleted(msg):
 
 def _fmt_error(err):
     if isinstance(err, dict):
-        parts = [
-            v for v in (err.get("message"), err.get("user_message"), err.get("reason"))
-            if v
-        ]
+        parts = [v for v in (err.get(k) for k in _ERROR_MSG_KEYS) if v]
         return " / ".join(parts) or str(err)
     return str(err)
+
+
+def _error_is_empty(err):
+    """error 对象存在但没有任何说明文字。
+
+    Pixiv 对「不存在的作品」会返回字段全空的 error 对象，此时 _fmt_error 只能
+    给出 dict 字面量，任何关键词表都必然漏掉这种形态。
+    """
+    if not isinstance(err, dict):
+        return not str(err or "").strip()
+    return not any(str(err.get(k) or "").strip() for k in _ERROR_MSG_KEYS)
+
+
+def _missing_illust(status, err, msg):
+    """判断这个错误是否表示「作品在 Pixiv 上不存在」。
+
+    首选信号是 HTTP 状态码：GET /v1/illust/detail 返回 404 就是权威答案，完全
+    不依赖文案。其次看错误文案关键词。最后兜底处理「空的 error 对象」这一形态。
+
+    明确的临时故障（429 / 5xx）与认证、风控类（401 / 403）绝不判为不存在——
+    宁可重试，也不能把还在的作品标成已删除。
+    """
+    if status in (401, 403):
+        return False
+    if status is not None and (status >= 500 or status == 429):
+        return False
+    if status == 404:
+        return True
+    if _looks_like_deleted(msg):
+        return True
+    return _error_is_empty(err)
 
 
 def _build_session():
@@ -273,31 +305,70 @@ class PixivClient:
         except Exception as e:
             raise PixivNetworkError(f"刷新直连 IP 后仍失败：{e}")
 
-    def _detail_once(self, illust_id):
-        try:
-            response = self.api.illust_detail(illust_id)
-        except Exception as e:
-            raise PixivNetworkError(f"请求作品详情失败：{e}")
+    def _detail_request(self, illust_id):
+        """请求作品详情，返回 (解析后的响应, HTTP 状态码或 None)。
 
-        if response.get("error"):
+        这里没有直接调用 api.illust_detail()：pixivpy3 3.7.5 的 illust_detail()
+        完全不检查 HTTP 状态码（aapi.py 里就是发请求后 parse_json），404 的 JSON
+        错误体会原样返回，状态码就此丢失；而「404 = 作品不存在」是判定已删除最
+        可靠、且不依赖任何文案的信号。若 pixivpy3 内部结构变化导致拿不到
+        Response，则回退到公开方法（此时状态码为 None，由文案判断兜底）。
+        """
+        try:
+            res = self.api.no_auth_requests_call(
+                "GET",
+                "%s/v1/illust/detail" % self.api.hosts,
+                params={"illust_id": illust_id},
+                req_auth=True,
+            )
+        except Exception:
+            res = None
+        if res is None:
+            try:
+                return self.api.illust_detail(illust_id), None
+            except Exception as e:
+                raise PixivNetworkError(f"请求作品详情失败：{e}")
+        status = getattr(res, "status_code", None)
+        try:
+            return self.api.parse_result(res), status
+        except Exception as e:
+            # 响应体不是 JSON（常见于 5xx / 中间盒页面）：没有可靠信号，按网络错误重试
+            raise PixivNetworkError(f"作品详情响应无法解析（HTTP {status}）：{e}")
+
+    def _detail_once(self, illust_id):
+        response, status = self._detail_request(illust_id)
+        err = response.get("error")
+        msg = _fmt_error(err) if err else ""
+
+        if err and _looks_like_auth_error(msg):
+            # 疑似 token 过期等认证问题：重新认证一次再试
+            self._last_auth = 0
+            try:
+                self.api.auth(refresh_token=os.getenv("PIXIV_REFRESH_TOKEN", ""))
+            except Exception as e:
+                raise PixivAuthError(f"认证失效且重新认证失败：{e}")
+            response, status = self._detail_request(illust_id)
             err = response.get("error")
-            msg = _fmt_error(err)
-            if _looks_like_auth_error(msg):
-                # 疑似 token 过期等认证问题：重新认证一次再试
-                try:
-                    self._last_auth = 0
-                    self.api.auth(refresh_token=os.getenv("PIXIV_REFRESH_TOKEN", ""))
-                    response = self.api.illust_detail(illust_id)
-                except Exception as e:
-                    raise PixivAuthError(f"认证失效且重新认证失败：{e}")
-                if response.get("error"):
-                    raise PixivAuthError(f"重新认证后仍返回错误：{_fmt_error(response.get('error'))}")
-            elif _looks_like_deleted(msg):
-                raise PixivDeletedError(msg)
-            else:
-                # 429 / 5xx / 未知错误：不是“作品不存在”，按网络错误抛出，
-                # 由 sync.py 记 sync_error 并在下次同步重试（不改 deleted 状态）
+            msg = _fmt_error(err) if err else ""
+            if err and _looks_like_auth_error(msg):
+                # 刚认证过仍是认证类错误：判定为认证问题，由 sync.py 中断整批
+                raise PixivAuthError(f"重新认证后仍返回认证错误：{msg}")
+
+        if err:
+            empty = _error_is_empty(err)
+            if _missing_illust(status, err, msg):
+                if not empty:
+                    raise PixivDeletedError(msg)
+                raise PixivDeletedError(
+                    f"Pixiv 返回 HTTP {status}，作品不存在" if status is not None
+                    else "Pixiv 未返回作品数据，且未给出错误说明")
+            # 429 / 5xx / 未知错误：不是“作品不存在”，按网络错误抛出，
+            # 由 sync.py 记 sync_error 并在下次同步重试（不改 deleted 状态）
+            if not empty:
                 raise PixivNetworkError(msg)
+            raise PixivNetworkError(
+                f"Pixiv 返回 HTTP {status}" if status is not None
+                else "Pixiv 请求失败，且未给出错误说明")
 
         illust = response.get("illust")
         if not illust:

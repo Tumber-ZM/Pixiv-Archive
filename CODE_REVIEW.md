@@ -431,7 +431,7 @@ Lead 复核时补了一处：Pixiv 的 `reason` 字段可能是 `not_found` 这�
 
 验证 7/7：日文文案、英文 `Illust not found`、`reason=not_found` → `PixivDeletedError`；`rate limit`、`Internal Server Error` → `PixivNetworkError`；错误体为空但无 illust → `PixivDeletedError`；认证文案 + 重新认证失败 → `PixivAuthError`。
 
-**残留风险（未验证）**：未联网确认真实 Pixiv 对已删除作品返回的确切文案。若真实文案不含任何关键词，该作品会被记为 `sync_error` 并反复重试——方向是保守的（不会误删作品），但可能表现为「删不掉」。关键词表已覆盖中英日常见文案。
+**残留风险（已在第十三节收尾）**：未联网确认真实 Pixiv 对已删除作品返回的确切文案。若真实文案不含任何关键词，该作品会被记为 `sync_error` 并反复重试。第十三节把判定信号从「文案」换成「HTTP 状态码优先」，该风险已大幅收窄。
 
 ### M4 — 随机排序分页稳定化
 
@@ -495,7 +495,7 @@ WHERE title IS NULL OR last_synced IS NULL
 
 验证：三个接口 GET 一律 **405**，`/openapi.json` 中这三个路径只有 `post`；`/api/bookmark-subs`、`/api/artworks`、`/api/settings`、`/api/tags` 仍 200。全仓库 grep 确认没有其它以 GET 调用这三个 URL 的位置（无脚本/bat/文档调用）。
 
-**已知外观小瑕疵（未改）**：`GET /api/bookmark-subs/check` 的 405 响应带 `Allow: DELETE`——Starlette 用「第一个路径部分匹配」的路由填这个表头，而 `DELETE /api/bookmark-subs/{pixiv_user_id}` 注册在它之前。POST 仍会 FULL 匹配到正确路由，功能无影响；若要干净的 `Allow: POST`，把该 POST 路由移到 DELETE 之前即可。
+**已知外观小瑕疵（已在第十三节修复）**：`GET /api/bookmark-subs/check` 的 405 响应带 `Allow: DELETE`——Starlette 用「第一个路径部分匹配」的路由填这个表头，而 `DELETE /api/bookmark-subs/{pixiv_user_id}` 注册在它之前。POST 仍会 FULL 匹配到正确路由，功能无影响。
 
 ### 本轮验证总账
 
@@ -511,8 +511,76 @@ WHERE title IS NULL OR last_synced IS NULL
 ### 已知未处理项
 
 - L1–L11 维持报告中的原状。
-- M3 的真实删除文案未联网确认（见 M3 残留风险）。
-- M8 的 `Allow: DELETE` 表头不精确（纯外观，见 M8 一节）。
+- M3 的残留风险与 M8 的 `Allow` 表头瑕疵已在**第十三节**收尾修复。
+
+---
+
+## 十三、M3 与 M8 遗留项收尾
+
+第十一节给 M3 留了「真实删除文案未确认」的风险，给 M8 留了一个 `Allow` 表头的外观瑕疵。本节把它们收掉。
+
+### M3 — 判定信号从「文案」改为「状态码优先」
+
+原判定链条是：错误文案命中 `_DELETED_MSG_HINTS` → 已删除，否则网络错误。这在两个方向上都不可靠：
+
+- 真实文案若不含任何关键词，作品会**永远卡在 `sync_error`** 反复重试；
+- `_fmt_error` 在 `message` / `user_message` / `reason` 全为空时只能返回 **dict 字面量**，任何关键词表都必然漏掉这种形态。
+
+**先确认库的真实行为**（读本地源码，不联网）：pixivpy3 3.7.5 的 `illust_detail()` **完全不检查 HTTP 状态码**——`aapi.py:263-269` 只是发请求后 `parse_json()`，所以 404 的 JSON 错误体会被原样返回（`response.get("error")` 分支确实是活路径），但**状态码信息就此丢失**。
+
+于是改成两层判定（[app/pixiv.py](app/pixiv.py)）：
+
+1. **首选 HTTP 状态码**：新增 `_detail_request()`，自己发 `GET /v1/illust/detail` 拿到 `Response`，再用 `self.api.parse_result(res)` 解析，从而保住状态码。`404` 就是「作品不存在」的权威答案，不依赖任何文案。
+2. **文案与空错误对象兜底**：新增 `_missing_illust()`，仅在拿不到状态码时（回退路径）才依赖关键词表，并额外把「error 对象存在但没有任何说明文字」判为不存在。
+
+`_ERROR_MSG_KEYS` 同时纳入 `message_lang` / `user_message_lang`——原来只读 `message` / `user_message` / `reason`，若 Pixiv 把文案放在本地化字段里同样会漏。
+
+| 场景 | 判定 |
+|------|------|
+| HTTP 404（含空 error 对象） | `PixivDeletedError` |
+| 错误文案命中关键词（中 / 英 / 日） | `PixivDeletedError` |
+| error 对象存在但全空，且状态码不是 429/5xx/401/403 | `PixivDeletedError` |
+| 429 / 5xx（含空错误体） | `PixivNetworkError` → 记 `sync_error` 重试 |
+| 401 / 403（含空错误体） | `PixivNetworkError` |
+| 响应体不是 JSON（如 5xx 的 HTML 页） | `PixivNetworkError` |
+| 200 但没有 illust | `PixivDeletedError` |
+
+**绝不错标删除的红线**：429、5xx、401、403 无论错误体是否为空，一律判为可重试的网络错误，绝不标 deleted。
+
+认证链路顺带修正：重新认证后**仍是认证类错误**才抛 `PixivAuthError`（由 sync 中断整批）；若变成 404 就按已删除处理。原实现是「重新认证后只要还有错误就抛 AuthError」，会把已删除的作品报成认证问题。
+
+回退安全：若 pixivpy3 内部结构变化导致拿不到 `Response`（例如 `no_auth_requests_call` 不存在），自动退回公开的 `illust_detail()`，此时状态码为 `None`，由文案兜底——最坏情况只是丢掉状态码信号，功能不受影响；测试里专门覆盖了这条回退路径。
+
+验证（离线假 API 对象，不联网、不碰真实库）**38/38 通过**，覆盖上表每一行、认证链路四条分支、回退路径，以及调用契约（方法、地址、参数与 pixivpy3 的 `illust_detail` 逐项一致，防止两边实现漂移）。
+
+残余风险（已大幅收窄，如实记录）：若 Pixiv 对不存在的作品返回的状态码既不是 404、错误体又是不含关键词的文案，仍会落进重试分支。方向保守、不会误删，且即使误判，M5 的 30 天复查也会在作品其实仍在时把它同步回 active。
+
+### M8 — 405 的 Allow 头改为 POST
+
+根因定位到 Starlette：`Router` 在没有 FULL 匹配时，用**第一个路径部分匹配**的路由处理请求（`starlette/routing.py` 中 `partial = route`），而 `Route.handle` 用该路由的 `self.methods` 组装 405 的 `Allow` 头（同文件第 275 行）。`DELETE /api/bookmark-subs/{pixiv_user_id}` 与 `POST /api/bookmark-subs/check` 路径形状相同，DELETE 注册在前，于是 `GET /api/bookmark-subs/check` 拿到了 `Allow: DELETE`。
+
+修复：把 `POST /api/bookmark-subs/check` 移到 DELETE 路由之前，并在 [app/main.py](app/main.py) 留注释说明这个顺序有意义、不要调换。POST 本来就是 FULL 匹配到正确路由，因此这只影响响应头，不改变任何接口行为。
+
+验证（真实服务）**17/17 通过**：
+
+- `GET /api/bookmark-subs/check` → 405 且 `Allow: POST`（修复点）
+- `GET /api/bookmark-subs/12345` → 405 且 `Allow: DELETE`（原有行为未被破坏）
+- `/openapi.json`：check 路径只有 `post`，`{pixiv_user_id}` 路径只有 `delete`
+- 只读接口（列表 / artworks / settings）仍 200
+- 真实 POST 一次确认能 FULL 匹配到处理器：返回前置校验错误 `NO_SUBS`、响应里没有 `job_id`。**带护栏**：仅当订阅数为 0 时才发这一次 POST，绝不触发联网任务
+- 源码层面确认 `@app.post("/api/bookmark-subs/check")` 的行号在 `@app.delete(...)` 之前
+
+### 本轮验证总账
+
+| 脚本 | 覆盖 | 结果 |
+|------|------|------|
+| M3 离线套件 | 辅助函数 10、状态码判定 3、临时故障 7、兜底 4、成功与契约 2、回退路径 3、传输异常 2、认证链路 4、sync 契约 2（另含 1 项独立断言） | **38/38** |
+| M8 套件（真实服务） | 路由顺序 3、405/Allow 5、只读回归 3、openapi 2、POST 可达性 3（另含就绪 1） | **17/17** |
+| 综合最终验收 | M2 9、M5 6、M6 7、M4 10、端点冒烟 13、H1 回归 4、单实例锁 5 | **54/54** |
+
+合计 **109 项全部通过**。单实例锁一并回归：第二个实例退出码 1、不占用端口、打印「已在运行中」，第一个实例持续服务；M4 在真实库上仍是全量 1310 件随机翻页零重复零漏项，seed 123 vs 999 第 1 页 100 位全不同。
+
+三个脚本均为一次性临时脚本，未纳入版本库（如需可整理成回归测试）。
 
 ---
 
