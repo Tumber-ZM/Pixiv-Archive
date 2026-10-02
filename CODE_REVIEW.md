@@ -853,7 +853,7 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 | 属性 / 创建时间 | Archive / 相同 | Archive / 相同 |
 | 与另一份的内容差异 | — | **只差 15.2 里加的 11 字节（`hypercorn, `）与随之变化的修改时间** |
 
-系统侧没有任何记录可查：`Microsoft-Windows-SmartScreen/Debug`、`Microsoft-Windows-SmartAppControl/Operational`、`Microsoft-Windows-AppLocker/EXE and DLL`、`Microsoft-Windows-AppLocker/MSI and Script` 都没有匹配事件，Defender 日志也是空的。也就是说这不是 Windows 的 SmartScreen / 智能应用控制拦截，而是本机第三方安全软件对「被改动过的脚本」的判定——同一内容、未改动的副本放行，改过的就提示。
+系统侧没有任何记录可查：`Microsoft-Windows-SmartScreen/Debug`、`Microsoft-Windows-SmartAppControl/Operational`、`Microsoft-Windows-AppLocker/EXE and DLL`、`Microsoft-Windows-AppLocker/MSI and Script` 都没有匹配事件，Defender 日志也是空的。基于当时的信息，推断是「本机第三方安全软件对改动过的脚本的判定」——**这个推断是错的，真因见 15.8**（当时没往「文件完整性标签」上查，而它才是唯一真正有差异的元数据）。
 
 处理方式（按「最小惊讶」）：
 
@@ -862,3 +862,47 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 - 代价是 `hypercorn` 探测被去掉。这个探测只影响「venv 不存在、PATH 解释器缺 hypercorn」这一种情况：真选错了，`run.py` 同样会抛 ImportError，`Start.bat` 也会打印「dependencies missing → run install.bat」。**若仍想要更清楚的提示，正确位置是 `run.py` 顶部对 hypercorn 的 import 做 try/except 给出可读信息，而不是改启动器**——启动器以后不再由我改动，确需改动会先征询。
 
 用户留存的 `Start1.bat` 在版本库里是未跟踪文件（`git status` 为 `?? Start1.bat`），保留还是删除由用户决定，本轮没有动它。
+
+### 15.8 真因：沙箱给工作区根目录打了可继承的「低完整性」标签
+
+15.7 的还原**没有解决问题**：用户反馈提示依旧，并且**新建一个空的 `.bat` 双击也弹**——这就把「内容 / 修改时间 / 网络标记」全部排除了。进一步实测：
+
+| 猜测 | 实测结果 |
+|------|----------|
+| 「来自网络」标记（MOTW / `Zone.Identifier`） | `dir /r` 与 `Get-Content -Stream Zone.Identifier` 都查不到该数据流 |
+| 智能应用控制 / SmartScreen / AppLocker / WDAC | `VerifiedAndReputablePolicyState = 0`（关闭）；无 AppLocker 策略键；无 `SiPolicy.p7b`；相关日志无记录 |
+| 第三方安全软件 | 运行进程里没有 360 / 火绒 / Sandboxie 之类；Defender 日志为空 |
+| 文件内容或修改时间 | 还原后 `Start.bat` 与 `Start1.bat` **字节相同、修改时间相同、ACL 相同**，提示依旧 |
+| `.bat` 关联被改 | `assoc .bat` = `batfile`、`ftype batfile` = `"%1" %*`，无 `UserChoice`，未被劫持 |
+
+真正有差异的是**强制完整性标签（mandatory integrity label）**：
+
+```
+D:\Little Tool\Pixiv-Archive                              Low Mandatory Level:(OI)(CI)(NW)   ← 可继承，沙箱设的
+install.bat / Start.bat / run.py / README.md / tests/*     Low Mandatory Level:(I)(NW)        ← 沙箱进程新建或重写过的文件
+Start1.bat / app\main.py（沙箱介入之前就存在的文件）        无标签 = Medium                   ← 因此不弹提示
+当前沙箱进程                                               S-1-16-4096 = Low；icacls /setintegritylevel 被拒（Access denied）
+```
+
+结论：**DSH 的 workspace-write 沙箱把工作区根目录设成了可继承的低完整性（Low IL + No-Write-Up），沙箱进程本身也跑在 Low**；凡它新建或重写的文件都继承这个「不可信」标签。Windows 对低完整性的可执行/脚本文件在双击时会给「无法验证发行者」类警告（[联想知识库](https://m.lenovo.com.cn/wiki/article-141784.html)、[Microsoft Q&A](https://learn.microsoft.com/en-us/answers/questions/4164309/windows-11-the-publisher-could-not-be-verified-are)），它与文件内容无关——所以空文件也弹、`Start1.bat`（从外部目录复制进来，带的是 Medium）不弹。`app/`、`venv/` 之所以没标签，是因为它们早于这次标注就存在，继承只对之后新建的对象生效。
+
+修复（提升完整性级别需要 `SeRelabelPrivilege`，**要用管理员 PowerShell**）：
+
+```powershell
+# 推荐：只把启动器改回 Medium。改完沙箱就不能再写这两个文件——正好符合「启动器不再改动」的约定
+icacls "D:\Little Tool\Pixiv-Archive\Start.bat"   /setintegritylevel Medium
+icacls "D:\Little Tool\Pixiv-Archive\install.bat" /setintegritylevel Medium
+```
+
+```powershell
+# 可选：整个项目改回 Medium。注意这会一并取消沙箱对该目录的写入能力（当初为绕开写入拒绝做过 ACL 修复），
+# 之后助手可能又写不进这个目录
+icacls "D:\Little Tool\Pixiv-Archive"   /setintegritylevel (OI)(CI)Medium
+icacls "D:\Little Tool\Pixiv-Archive\*" /setintegritylevel Medium /T
+```
+
+不需要管理员的办法：把启动器放到项目目录之外（例如桌面），在那个位置新建的 `.bat` 是 Medium，不会弹。
+
+顺带记录两条：`_probe_sandbox_written.bat` 是我为这组对照实验放进去的低完整性探针（内容无害，用完可删，未纳入版本库）；`Start1.bat` 仍是未跟踪文件，去留由用户决定。
+
+给 DSH 的反馈（项目之外的观察）：workspace-write 沙箱给工作区根目录打可继承的低完整性标签，会让**助手新建/重写的 `.bat`、`.cmd`、`.exe` 在用户双击时被 Windows 当作不可信**。如果这是有意设计，建议在文档里写明；或改为「只给沙箱 SID 写权限、不降目录完整性」来限制写入。
