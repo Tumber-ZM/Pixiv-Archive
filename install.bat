@@ -43,13 +43,37 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%BASE%.env" (
-    copy /y "%BASE%.env.template" "%BASE%.env" >nul
-    echo [3/3] Created .env from .env.template.
-    echo       Edit .env to set PIXIV_REFRESH_TOKEN and IMAGE_SOURCE_DIR.
-) else (
-    echo [3/3] .env already exists, left unchanged.
-)
+rem NOTE: this block deliberately uses goto + labels instead of nested if blocks.
+rem Measured: exit /b 1 inside a doubly nested if block makes cmd return 0,
+rem so a genuine failure would be reported as success.
+if exist "%BASE%.env" goto :env_exists
+
+if not exist "%BASE%.env.template" goto :env_no_template
+
+copy /y "%BASE%.env.template" "%BASE%.env" >nul
+if errorlevel 1 goto :env_copy_failed
+if not exist "%BASE%.env" goto :env_copy_failed
+
+echo [3/3] Created .env from .env.template.
+echo       Edit .env to set PIXIV_REFRESH_TOKEN and IMAGE_SOURCE_DIR.
+goto :env_done
+
+:env_exists
+echo [3/3] .env already exists, left unchanged.
+goto :env_done
+
+:env_no_template
+echo [ERROR] .env.template is missing, cannot create .env.
+echo         Re-download the project, or create .env manually.
+pause
+exit /b 1
+
+:env_copy_failed
+echo [ERROR] Failed to create .env from .env.template.
+pause
+exit /b 1
+
+:env_done
 
 echo.
 echo Setup complete. How to start:

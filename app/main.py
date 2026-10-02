@@ -4,10 +4,12 @@ import re
 import subprocess
 import sys
 from urllib.parse import unquote
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,10 +39,37 @@ def _parse_sync_delay(raw):
     return _SYNC_DELAY_DEFAULT
 
 
+async def _json_body(request: Request):
+    """解析 JSON 请求体，非法输入返回 400 而不是抛异常。
+
+    自研 ASGI 服务器在未处理异常时无法把响应发回客户端（连接被直接关闭），
+    因此所有手写解析 JSON 的接口都走这里，把错误变成正常的 400 响应。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法的 JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    return body
+
+
 app = FastAPI(title="Pixiv Archive")
 
-THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "thumbnails")
-THUMBNAIL_PATH = os.path.join(paths.DATA_DIR, THUMBNAIL_DIR)
+
+@app.exception_handler(ValidationError)
+async def _validation_error_handler(request: Request, exc: ValidationError):
+    """接口内部手工构造 pydantic 模型时的校验失败，统一返回 422。
+
+    FastAPI 只会把请求参数校验错误转成 422；形如 `Model(**body)` 抛出的
+    ValidationError 属于未处理异常，默认会被包装成 500（客户端错误被报成服务端错误）。
+    """
+    return JSONResponse(
+        {"detail": jsonable_encoder(exc.errors())}, status_code=422
+    )
+
+
+THUMBNAIL_PATH = os.path.join(paths.DATA_DIR, paths.THUMBNAIL_DIR)
 
 # 自定义 ASGI 服务器不会触发 FastAPI 的 lifespan/startup 事件，
 # 这里在模块加载时显式建库建表，确保全新环境可直接使用。
@@ -257,11 +286,9 @@ def api_delete_artwork(artwork_id: int, delete_files: bool = Query(False)):
                     os.remove(img["path"])
                 except Exception:
                     pass
-            thumb_path = os.path.join(THUMBNAIL_PATH, f"{pixiv_id['pixiv_id']}.jpg")
-            try:
-                os.remove(thumb_path)
-            except Exception:
-                pass
+        # 缩略图与元数据 JSON 是库内作品的派生物。作品记录删除后它们即失去引用，
+        # 与扫描时的缺失清理保持一致一并删除，避免残留孤儿文件。
+        paths.remove_side_files(pixiv_id["pixiv_id"])
 
         return {"status": "deleted", "artwork_id": artwork_id, "files_deleted": delete_files}
 
@@ -274,7 +301,7 @@ async def api_batch_delete_artworks(request: Request):
         artwork_ids: list[int]
         delete_files: bool = False
 
-    body = await request.json()
+    body = await _json_body(request)
     data = BatchDelete(**body)
     deleted = 0
     with get_db() as conn:
@@ -296,11 +323,7 @@ async def api_batch_delete_artworks(request: Request):
                         os.remove(img["path"])
                     except Exception:
                         pass
-                thumb_path = os.path.join(THUMBNAIL_PATH, f"{pixiv_id['pixiv_id']}.jpg")
-                try:
-                    os.remove(thumb_path)
-                except Exception:
-                    pass
+            paths.remove_side_files(pixiv_id["pixiv_id"])
             deleted += 1
     return {"status": "ok", "deleted": deleted, "files_deleted": data.delete_files}
 
@@ -312,7 +335,7 @@ async def api_batch_favorites_clear(request: Request):
     class BatchClear(BaseModel):
         artwork_ids: list[int]
 
-    body = await request.json()
+    body = await _json_body(request)
     data = BatchClear(**body)
     with get_db() as conn:
         if data.artwork_ids:
@@ -504,7 +527,7 @@ async def api_create_favorite(request: Request):
     class FavoriteCreate(BaseModel):
         name: str
 
-    body = await request.json()
+    body = await _json_body(request)
     data = FavoriteCreate(**body)
     name = data.name.strip()
     if not name:
@@ -535,7 +558,7 @@ async def api_add_favorite_artworks(favorite_id: int, request: Request):
     class FavoriteAdd(BaseModel):
         artwork_ids: list[int]
 
-    body = await request.json()
+    body = await _json_body(request)
     data = FavoriteAdd(**body)
     with get_db() as conn:
         fav = conn.execute(
@@ -571,7 +594,7 @@ async def api_batch_remove_favorite_artworks(favorite_id: int, request: Request)
     class BatchRemove(BaseModel):
         artwork_ids: list[int]
 
-    body = await request.json()
+    body = await _json_body(request)
     data = BatchRemove(**body)
     with get_db() as conn:
         if data.artwork_ids:
@@ -676,7 +699,7 @@ async def api_open_folder(request: Request):
     class OpenFolder(BaseModel):
         image_id: int
 
-    body = await request.json()
+    body = await _json_body(request)
     data = OpenFolder(**body)
     with get_db() as conn:
         row = conn.execute(
@@ -848,7 +871,7 @@ def api_list_bookmark_subs():
 
 @app.post("/api/bookmark-subs")
 async def api_add_bookmark_sub(request: Request):
-    body = await request.json()
+    body = await _json_body(request)
     uid = str(body.get("user_id", "")).strip()
     if not uid.isdigit() or int(uid) <= 0:
         return _error_response("INVALID_UID", "用户 ID 无效",
@@ -1052,7 +1075,7 @@ async def api_update_settings(request: Request):
         sync_delay_ms: str = ""
         image_mirror: str = ""
 
-    body = await request.json()
+    body = await _json_body(request)
     data = SettingsUpdate(**body)
     updates = {}
     if data.refresh_token:

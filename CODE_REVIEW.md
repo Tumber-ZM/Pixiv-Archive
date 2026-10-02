@@ -18,7 +18,7 @@
 ## 一、结论摘要
 
 1. **完成度较高的小工具**：模块职责分明（扫描 / 同步 / 下载 / 后台任务 / 缩略图各自独立），前端零依赖零构建，实机全部端点可用，图片接口的路径穿越防护经 6 种变形探测均有效拦截。
-2. **最该修的三个问题都不是风格问题，而是会直接伤到用户的缺陷**：坏请求体会打掉整条连接（H1）、首次安装的 `.env` 生成路径是断的（H2）、删除作品会残留元数据文件（H3）。
+2. **最该修的三个问题都不是风格问题，而是会直接伤到用户的缺陷**：坏请求体会打掉整条连接（H1）、首次安装的 `.env` 生成路径是断的（H2）、删除作品会残留元数据文件（H3）。**三者均已修复并通过实测**，见第十节。
 3. **直连模块是有意的安全取舍，但代价要说清楚**：为免 SNI 而同时关闭了证书校验与主机名校验（M1），整条 HTTPS 链路的信任根退化为"相信 DNS/DoH 的应答"。这对一个只读自己图库的工具是可接受的取舍，但必须在文档里明确告知，而不是只在代码注释里。
 4. 本次已按要求移除**局域网模式**与**桌面窗口模式**，并把单实例锁并入启动链路：删除 4 个文件、净减 634 行（+98 / −732），重构后服务实跑与全部端点回归通过。
 
@@ -134,9 +134,9 @@ IMAGE_SOURCE_DIR → os.walk 收集图片 → 正则解析 PID(_pN) → 按 PID 
 
 | ID | 问题 | 位置 | 状态 |
 |----|------|------|------|
-| **H1** | **坏请求体会打掉整条 TCP 连接，且不返回任何错误响应**。`await request.json()` 未包 try，非法 JSON 抛 `JSONDecodeError`；而 [run.py:152-153](run.py#L152-L153) 的自研 ASGI 服务器在异常时只打印 traceback 并 `writer.close()`，不发 500。浏览器侧表现为"连接被意外关闭"而非可读提示。pydantic 校验失败（如缺字段）走同一条路径。 | [app/main.py:277](app/main.py#L277)、[315](app/main.py#L315)、[507](app/main.py#L507)、[538](app/main.py#L538)、[574](app/main.py#L574)、[679](app/main.py#L679)、[851](app/main.py#L851)、[1055](app/main.py#L1055)；[run.py:152-153](run.py#L152-L153) | **已复现** |
-| **H2** | **首次安装路径是断的**。[install.bat:47](install.bat#L47) 要复制 `.env.template`，但**仓库中不存在该文件**（全库 `*.template` 零命中），而 [README.md](README.md) 仍把它列为存在文件。更糟的是第 47 行用 `>nul` 吞掉了 copy 的报错、第 48 行无条件打印"Created .env"，新用户会拿到一个不存在的 `.env` 却被告知已创建，随后启动必然失败。 | [install.bat:46-52](install.bat#L46-L52) | **已实测**（文件不存在） |
-| **H3** | **删除作品会残留元数据文件**。删除处理只删图片与 `thumbnails/{pid}.jpg`，**从不删 `metadata/{pid}.json`**。实测已积累 63 个孤儿 JSON（1373 个 metadata 对应 1310 个作品）。这些文件虽不影响功能，但会随使用持续增长。 | [app/main.py:260](app/main.py#L260)、[299](app/main.py#L299) | **已实测** |
+| **H1** | **坏请求体会打掉整条 TCP 连接，且不返回任何错误响应**。`await request.json()` 未包 try，非法 JSON 抛 `JSONDecodeError`；而 [run.py:152-153](run.py#L152-L153) 的自研 ASGI 服务器在异常时只打印 traceback 并 `writer.close()`，不发 500。浏览器侧表现为"连接被意外关闭"而非可读提示。pydantic 校验失败（如缺字段）走同一条路径。 | [app/main.py:277](app/main.py#L277)、[315](app/main.py#L315)、[507](app/main.py#L507)、[538](app/main.py#L538)、[574](app/main.py#L574)、[679](app/main.py#L679)、[851](app/main.py#L851)、[1055](app/main.py#L1055)；[run.py:152-153](run.py#L152-L153) | **已复现 → 已修复** |
+| **H2** | **首次安装路径是断的**。[install.bat:47](install.bat#L47) 要复制 `.env.template`，但**仓库中不存在该文件**（全库 `*.template` 零命中），而 [README.md](README.md) 仍把它列为存在文件。更糟的是第 47 行用 `>nul` 吞掉了 copy 的报错、第 48 行无条件打印"Created .env"，新用户会拿到一个不存在的 `.env` 却被告知已创建，随后启动必然失败。 | [install.bat:46-52](install.bat#L46-L52) | **已实测**（文件不存在）→ **已修复** |
+| **H3** | **删除作品会残留元数据文件**。删除处理只删图片与 `thumbnails/{pid}.jpg`，**从不删 `metadata/{pid}.json`**。实测已积累 63 个孤儿 JSON（1373 个 metadata 对应 1310 个作品）。这些文件虽不影响功能，但会随使用持续增长。 | [app/main.py:260](app/main.py#L260)、[299](app/main.py#L299) | **已实测 → 已修复** |
 
 ### 中等
 
@@ -259,11 +259,11 @@ pwsh -NoProfile -File 'D:\Little Tool\acl-recovery\acl-backup-de9778b822fc4b6890
 
 ## 八、后续建议（按优先级）
 
-**P0 — 修三个高危缺陷**
+**P0 — 修三个高危缺陷（✅ 已全部完成，见第十节）**
 
-1. 给 `await request.json()` 统一加保护并注册 FastAPI 异常处理器，让坏请求返回 400；同时在 [run.py](run.py) 的 `handle()` 里捕获 ASGI 异常后**返回一个 500 响应**再关连接，而不是静默丢连接（H1）。
-2. 补一个 `.env.template`（或改 `install.bat` 直接写默认内容），并给 `copy` 加 errorlevel 检查，失败就报错退出（H2）。
-3. 删除作品时一并清理 `metadata/{pixiv_id}.json`；顺手清掉现存 63 个孤儿 JSON（H3）。
+1. ✅ 给 `await request.json()` 统一加保护并注册 FastAPI 异常处理器，让坏请求返回 400；同时在 [run.py](run.py) 的 `handle()` 里捕获 ASGI 异常后**返回一个 500 响应**再关连接，而不是静默丢连接（H1）。
+2. ✅ 补上 `.env.template`，并给 `install.bat` 加"模板缺失 / 复制失败"检查，失败即报错退出（H2）。
+3. ✅ 删除作品时一并清理 `metadata/{pixiv_id}.json`；已清掉现存 63 个孤儿 JSON（H3）。
 
 **P1 — 正确性与知情权**
 
@@ -317,3 +317,71 @@ Invoke-WebRequest http://127.0.0.1:6899/api/artworks -UseBasicParsing
 - 打包（PyInstaller）链路未实际执行，`build-exe.bat` / `build.ps1` 的问题均为读码确认。
 - `PixivArchive.spec` 加入 `excludes` 后的实际产物体积未验证（需真实构建一次）。
 - 联网相关行为（元数据同步、收藏订阅下载、DoH 刷新 IP）未实测，避免消耗你的 Pixiv 配额与触发风控；相关结论均为读码确认。
+
+---
+
+## 十、高危问题修复记录
+
+本节记录报告出具后的修复，代码状态基于提交 `ca82b1a`（功能移除后）。
+
+### H1：坏请求不再打掉连接
+
+| 改动 | 位置 |
+|------|------|
+| 新增 `_json_body()`：统一解析请求体，非法 JSON / 非对象一律返回 400 | [app/main.py:40-52](app/main.py#L40-L52) |
+| 8 处 `await request.json()` 全部改走 `_json_body()` | [app/main.py](app/main.py) 各接口 |
+| 新增 `ValidationError` 异常处理器：手工 `Model(**body)` 校验失败返回 422（原先属未处理异常 → 500） | [app/main.py:55-66](app/main.py#L55-L66) |
+| `handle()` 在应用层抛异常时仍写出响应：已生成响应就发回（去掉旧 content-length 重算），否则补最小 500；不再静默 `writer.close()` | [run.py](run.py) |
+
+修复后实测：
+
+| 场景 | 结果 |
+|------|------|
+| 非法 JSON（`{bad json`、`not json at all`、空体） | **400** `{"detail":"请求体不是合法的 JSON"}`（修复前：连接被直接关闭，无任何响应） |
+| 字段缺失 `{}` | **422** `{"detail":[{"type":"missing","loc":["artwork_ids"],...}]}` |
+| 字段类型错 `{"artwork_ids":"abc"}` | **422** `list_type` |
+| FastAPI 自身参数校验（`/api/artworks?page=0`） | 仍是 **422**，未被自定义处理器顶掉 |
+| 连续触发上述错误后 | 服务仍正常响应全部端点 |
+
+修复过程中的坑：用 `replace_all` 批量替换 `await request.json()` 时，把新增助手函数**自身**那一行也替换掉了，导致 `_json_body` 无限递归。该问题由单元测试当场捕获（否则会变成一个比原缺陷更严重的故障）。
+
+### H2：首次安装不再"假成功"
+
+- 新增 [.env.template](.env.template)：覆盖代码实际读取的全部环境变量，值为占位符、不含任何机密
+- [install.bat](install.bat) 的 `.env` 段落改为 `goto` + 标签结构，并对"模板缺失 / 复制失败 / 复制后仍不存在"三种情况报错并 `exit /b 1`
+
+实测（在临时目录中直接运行 install.bat 的真实段落）：
+
+| 场景 | 结果 |
+|------|------|
+| 有模板、无 `.env` | 创建成功，退出码 **0**，内容含 `IMAGE_SOURCE_DIR` |
+| `.env` 已存在 | 跳过且不覆盖（MARKER 保留），退出码 **0** |
+| 模板也缺失 | 打印 `[ERROR]`，**退出码 1**，`.env` 未被创建 |
+
+修复过程中的两个坑：
+
+1. 最初写的是多层嵌套 `if` + `exit /b 1`。实测 cmd 在**双层嵌套 if** 内执行 `exit /b 1` 会返回 **0**，失败仍被当作成功——等于没修。改用 `goto` + 标签后正确返回 1。
+2. 我一度在 `.bat` 里写了中文 `rem` 注释。install.bat 现为**纯 ASCII**（非 ASCII 字节数实测 = 0）：在 ANSI 代码页下读 UTF-8 中文注释可能吞掉换行，把后续命令并进注释行，使该行整条失效。
+
+### H3：删除作品不再残留元数据
+
+| 改动 | 位置 |
+|------|------|
+| 新增 `thumbnail_path()` / `metadata_path()` / `remove_side_files()`，作为"作品派生文件"的唯一实现 | [app/paths.py](app/paths.py) |
+| 原先的私有 `_remove_side_files` 改为调用同一实现（消除重复） | [app/scanner.py](app/scanner.py) |
+| 两个删除接口（单个 / 批量）都改调 `paths.remove_side_files()`：**缩略图与元数据 JSON 随作品记录一并清理**；原图仍只在 `delete_files=true` 时删除 | [app/main.py](app/main.py) |
+
+行为变化：此前 `delete_files=false`（仅从库中移除、保留磁盘图片）时不删缩略图，会残留无用缩略图；现在与扫描时的缺失清理保持一致，边车文件一律清理。
+
+实测（全部使用临时数据目录 / 临时数据库，未触碰真实图库）：
+
+| 测试 | 结果 |
+|------|------|
+| `remove_side_files` 单元测试：两者都在 / 只存在一个 / 都不存在 / 无关文件 | **4/4 通过** |
+| `scanner._prune_missing` 集成测试（临时库） | **7/7 通过**：作品行、图片行、缩略图、元数据 JSON 全删，无关 JSON 保留 |
+| 两个删除接口（临时库） | **13/13 通过**：`delete_files=false` 边车删原图留；`true` 时原图也删；批量同样清理 |
+| 遗留数据清理 | 删除 **63 个孤儿 JSON（63.1 KB）**；`metadata/` 现有 1310 个 JSON 与 1310 个作品一一对应，孤儿 0、缺失 0，作品总数不变 |
+
+### 未纳入本次修复
+
+M1–M8 与 L1–L11 维持报告中的原状。建议继续按第八节优先级处理，其中 M7（依赖声明错配）、M4（随机排序分页重复）、M2/M3（直连 IP 校验过宽、非认证错误误判为已删除）收益最高。

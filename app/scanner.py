@@ -8,9 +8,6 @@ from app.database import get_db, init_db
 
 load_dotenv(paths.ENV_FILE)
 
-METADATA_DIR = os.getenv("METADATA_DIR", "metadata")
-THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "thumbnails")
-
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 PIXIV_ID_MULTI_PATTERN = re.compile(r"(\d{7,10})_p(\d+)", re.IGNORECASE)
 PIXIV_ID_MULTI_NO_UNDERSCORE_PATTERN = re.compile(r"(\d{7,10})p(\d+)", re.IGNORECASE)
@@ -199,7 +196,7 @@ def _prune_missing(conn, source_dir, found_paths):
     for art in empty_artworks:
         conn.execute("DELETE FROM artwork_tags WHERE artwork_id = ?", (art["id"],))
         conn.execute("DELETE FROM artworks WHERE id = ?", (art["id"],))
-        _remove_side_files(art["pixiv_id"])
+        paths.remove_side_files(art["pixiv_id"])
         pruned_artworks += 1
 
     for art in artworks:
@@ -211,17 +208,6 @@ def _prune_missing(conn, source_dir, found_paths):
         )
 
     return {"pruned_images": pruned_images, "pruned_artworks": pruned_artworks}
-
-
-def _remove_side_files(pixiv_id):
-    thumb_path = os.path.join(paths.DATA_DIR, THUMBNAIL_DIR, f"{pixiv_id}.jpg")
-    meta_path = os.path.join(paths.DATA_DIR, METADATA_DIR, f"{pixiv_id}.json")
-    for p in (thumb_path, meta_path):
-        try:
-            if os.path.exists(p):
-                os.remove(p)
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

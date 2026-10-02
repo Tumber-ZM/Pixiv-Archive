@@ -12,6 +12,7 @@ import sys
 import threading
 import traceback
 import webbrowser
+from http import HTTPStatus
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -64,11 +65,32 @@ PORT, OPEN_BROWSER = _parse_server_args()
 from app.main import app  # noqa: E402
 
 
+def _status_text(code):
+    try:
+        return HTTPStatus(code).phrase
+    except ValueError:
+        return "Unknown"
+
+
 class ASGIHTTPServer:
     def __init__(self, asgi_app, host="127.0.0.1", port=8000):
         self.asgi_app = asgi_app
         self.host = host
         self.port = port
+
+    @staticmethod
+    async def _write_response(writer, status, headers, body):
+        """按 HTTP/1.1 写出响应，缺 Content-Length 时补上。"""
+        has_length = any(key.lower() == b"content-length" for key, _ in headers)
+        head = [f"HTTP/1.1 {status} {_status_text(status)}\r\n".encode()]
+        for key, value in headers:
+            head.append(key + b": " + value + b"\r\n")
+        if not has_length:
+            head.append(b"Content-Length: " + str(len(body)).encode() + b"\r\n")
+        head.append(b"\r\n")
+        writer.write(b"".join(head))
+        writer.write(bytes(body))
+        await writer.drain()
 
     async def handle(self, reader, writer):
         try:
@@ -119,6 +141,7 @@ class ASGIHTTPServer:
             response_status = 500
             response_headers = []
             response_body = bytearray()
+            response_started = False
 
             async def receive():
                 nonlocal body
@@ -129,26 +152,32 @@ class ASGIHTTPServer:
                 return {"type": "http.request", "body": b"", "more_body": False}
 
             async def send(event):
-                nonlocal response_status, response_headers, response_body
+                nonlocal response_status, response_headers, response_body, response_started
                 if event["type"] == "http.response.start":
                     response_status = event["status"]
                     response_headers = event.get("headers", [])
+                    response_started = True
                 elif event["type"] == "http.response.body":
                     response_body.extend(event.get("body", b""))
 
-            await self.asgi_app(scope, receive, send)
+            try:
+                await self.asgi_app(scope, receive, send)
+            except Exception:
+                # 应用层仍有未处理异常时也必须回一个响应，绝不静默断开连接：
+                # FastAPI 的 500 处理器会先生成响应再把异常抛出来，那种情况下把
+                # 已生成的响应发回；否则补一个最小 500。
+                traceback.print_exc()
+                if response_started:
+                    response_headers = [
+                        (k, v) for (k, v) in response_headers
+                        if k.lower() != b"content-length"
+                    ]
+                else:
+                    response_status = 500
+                    response_headers = [(b"content-type", b"text/plain; charset=utf-8")]
+                    response_body = bytearray(b"Internal Server Error")
 
-            status_text = {200: "OK", 404: "Not Found", 500: "Internal Server Error"}.get(
-                response_status, "Unknown"
-            )
-            resp_line = f"HTTP/1.1 {response_status} {status_text}\r\n"
-            writer.write(resp_line.encode())
-
-            for key, value in response_headers:
-                writer.write(key + b": " + value + b"\r\n")
-            writer.write(b"\r\n")
-            writer.write(bytes(response_body))
-            await writer.drain()
+            await self._write_response(writer, response_status, response_headers, response_body)
         except Exception:
             traceback.print_exc()
         finally:
