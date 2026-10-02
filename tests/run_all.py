@@ -78,8 +78,9 @@ def run_js_tests():
                     report.check(line[4:].strip(), True)
                 elif line.startswith("[FAIL]"):
                     report.check(line[6:].strip(), False)
-                elif line:
-                    report.skip(line)
+                # 其余行是测试自己的汇总输出（如 ALL_PASSED），不算用例、也不算跳过
+            if not report.rows:
+                report.check("node 至少输出一项断言", False, "输出=%r" % out[-200:])
             if proc.returncode != 0 and not report.failed:
                 report.check("node 退出码为 0", False,
                              proc.stderr.decode("utf-8", "replace")[-300:])

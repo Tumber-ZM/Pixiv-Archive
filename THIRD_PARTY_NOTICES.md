@@ -24,12 +24,6 @@
 
 (上述包各自的传递依赖如 starlette、anyio 等亦为 MIT / BSD / Apache / PSF / MPL 等宽松许可，详见各包随附的许可证文本。)
 
-## Build time (requirements-build.txt)
-
-| 包 | 许可证 |
-|----|--------|
-| PyInstaller | GPL-2.0-or-later，**含特殊例外**，允许使用其构建的产品按任何许可证分发 |
-
 ## 再分发注意
 
 - MIT / BSD 系依赖要求再分发时保留其版权声明，请在随发布产物一起分发时保留相应包的 LICENSE/NOTICE（或在本仓库的依赖清单中注明）。

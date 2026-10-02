@@ -317,7 +317,7 @@ Invoke-WebRequest http://127.0.0.1:6899/api/artworks -UseBasicParsing
 
 - `build.ps1` 含中文字面量，其解码取决于文件 BOM 与 PowerShell 版本——**已在第十四节末实测并修复**：原文件无 BOM，Windows PowerShell 5.1 按 ANSI 代码页解码后**脚本直接解析失败**，现已存为 UTF-8 with BOM。
 - 打包（PyInstaller）链路未实际执行，`build-exe.bat` / `build.ps1` 的问题均为读码确认（`build.ps1` 已额外通过 PS 5.1 解析器校验，见第十四节末）。
-- `PixivArchive.spec` 加入 `excludes` 后的实际产物体积未验证（需真实构建一次）。
+- `PixivArchive.spec` 加入 `excludes` 后的实际产物体积未验证（需真实构建一次）。**后续：用户决定不再打包 exe，整条打包链路已在第十五节删除，本条不再适用。**
 - 联网相关行为（元数据同步、收藏订阅下载、DoH 刷新 IP）未实测，避免消耗你的 Pixiv 配额与触发风控；相关结论均为读码确认。
 
 ---
@@ -724,7 +724,7 @@ return handle                        # ← 创建失败时 handle 是 NULL，却
 
 ### L8：常量收敛了，虚拟滚动没做
 
-`per_page=100` 在 `buildGalleryUrl()` 里出现两次，现在收敛为一个带说明的 `PAGE_SIZE` 常量（[index.html:465](app/templates/index.html#L465)）。**虚拟滚动没有实现**：它是独立的功能改造（需要重写网格渲染与滚动监听），本轮不夹带；当前状态是「每页 100 个瓦片 + 缩略图 `loading="lazy"`」，图库上万后翻页仍有压力。这一条按「部分完成」记录。
+`per_page=100` 在 `buildGalleryUrl()` 里出现两次，现在收敛为一个带说明的 `PAGE_SIZE` 常量（[index.html:465](app/templates/index.html#L465)）。**虚拟滚动没有实现**：它是独立的功能改造（需要重写网格渲染与滚动监听），本轮不夹带；当前状态是「每页 100 个瓦片 + 缩略图 `loading="lazy"`」，图库上万后翻页仍有压力。这一条按「部分完成」记录。**后续见第十五节 15.3：改用浏览器原生 `content-visibility` 拿到等效收益，并说明了为什么不手写窗口化。**
 
 ### L9 / L10 / L11
 
@@ -761,10 +761,80 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 
 修复：`build.ps1` 改存为 **UTF-8 with BOM**，正文一字未改（改写前后对 UTF-8 正文算 SHA256 完全一致），随后 PS 5.1 的 `ParseFile` **错误数 3 → 0**，`Get-Content` 读出的中文文案也恢复正常。仓库里其余脚本（`install.bat` / `Start.bat` / `build-exe.bat`）非 ASCII 字节数均为 0，不存在同类问题。
 
-仍需如实说明：**打包链路本身依旧没有真正执行过**（PyInstaller 构建要跑几分钟并写 `dist/`），L10 与这次编码修复都属于「读码 + 解析器验证」，不等于端到端构建验证。
+仍需如实说明：**打包链路本身依旧没有真正执行过**（PyInstaller 构建要跑几分钟并写 `dist/`），L10 与这次编码修复都属于「读码 + 解析器验证」，不等于端到端构建验证。**后续见第十五节 15.5：这一轮真跑了一次打包（退出码 0），随后按用户要求把打包链路整体删除。**
 
 ### 测试环境说明（如实记录）
 
 - 页面里的 JavaScript **没有在浏览器里真正执行过**：L6 的重构、L7 的 `fetchJson`、L5 的转义，验证手段是「服务端渲染结果逐行对照 + 静态断言」，不是运行时行为测试。要覆盖运行时行为需要引入 headless 浏览器，本轮没有做。
 - 本机环境下从 Python 再启动子进程会被明显拖慢（空闲子进程实测 40–53 秒），一度表现为「第二个实例迟迟不退出」。改用 PowerShell 端到端 + 函数级断言（`acquire_single_instance()` 在真实实例持锁时返回 `None`）来验证，结论是锁本身工作正常。
-- 验证脚本均为一次性脚本，未纳入版本库；如需要可以整理成常驻回归测试。
+- 验证脚本均为一次性脚本，未纳入版本库；如需要可以整理成常驻回归测试。**后续见第十五节 15.1：已整理为常驻套件 `tests/`。**
+
+---
+
+## 十五、收尾：常驻回归测试、换用 hypercorn、L8 现状，以及移除打包链路
+
+本节记录这次收尾的四项工作，以及其中最后一项的范围变更（用户决定不再需要 exe）。
+
+### 15.1 常驻回归测试套件（`tests/`）
+
+把之前用过就丢的一次性验证脚本整理成可重复运行的套件。**不引入 pytest**（项目 venv 里没有、也不新增依赖）：
+
+- 跑法：`venv\Scripts\python.exe tests\run_all.py`；另有 `--offline`（只跑离线用例）、`--only <关键字>`（只跑匹配模块）、`--port`（换端口）、`--no-js`。
+- 结构：[harness.py](tests/harness.py)（断言计数、真实服务进程管理、HTTP 小工具）、[run_all.py](tests/run_all.py)（汇总 / 起停服务 / 调用 node）、各 `test_*.py`。
+- 规模：**256 项检查，全部通过、0 跳过**（含真实服务用例）。
+- 覆盖：`.env` 就地更新（注释 / 顺序 / CRLF / 原子写）、单实例锁（函数级 + 端到端双进程）、hypercorn 配置与端口占用提示、M2 IP 判定、M3 错误分类、M5 已删除复查、M6 下载完成度、L4 标签原名与译名匹配（隔离临时库）、L9/L10/L11 与模板一致性、L5/L6/L7/L8 的静态与渲染落地、HTTP 冒烟与错误响应。
+- 安全边界：在线用例只发只读请求；写操作只用到 `POST /api/artworks/batch-delete` 的空数组与错误类型请求体，不触碰真实库数据。
+- 前端：[tests/js/common_js.test.js](tests/js/common_js.test.js) 用 node 的 `vm` 直接加载 [partials/common_js.html](app/templates/partials/common_js.html) 里的真实代码，测 `escapeHtml` / `escapeAttr` / `r18Param` / `showLoadError` / `fetchJson` 共 25 项（其中 `escapeAttr` 必须比 `escapeHtml` 多转义引号，是 L5 防属性闭合的关键）。
+
+### 15.2 `run.py` 的自研 ASGI 服务器换成 hypercorn
+
+删掉手写的 `ASGIHTTPServer`（约 120 行：手动 HTTP 解析、状态文案、keep-alive），改用 `hypercorn.asyncio.serve` + `hypercorn.config.Config`：
+
+- 行为保持不变：只绑定 `127.0.0.1`、端口来自 [app/config.py](app/config.py) 的 `DEFAULT_PORT`、单实例锁、启动横幅、`--browser` / `PA_BROWSER`。
+- 端口被占用时打印 `启动失败：无法监听 127.0.0.1:<port> —— …` 并返回 1（不再抛 traceback）。
+- `Config` 关掉 access log（保持原先安静的日志）、`graceful_timeout = 5s`。
+- [requirements.txt](requirements.txt) 加回 `hypercorn>=0.17.0`；0.18 的运行时依赖只有 `h11` / `h2` / `priority` / `wsproto`，**不需要 `aiofiles`**。
+- 顺带修一处一致性问题：[Start.bat](Start.bat) 探测 PATH 回退解释器时只 import 了 `fastapi/pixivpy3/dotenv/PIL`，现补上 `hypercorn`，否则可能选中一个缺 hypercorn 的解释器而启动失败。
+
+验证：套件全绿，其中在线用例是**真实起停 hypercorn 服务**（第二实例持锁被拒、坏请求后服务存活、10 个端点冒烟、页面渲染）。
+
+### 15.3 L8 的结论：不手写虚拟滚动，改用浏览器原生机制
+
+- 图库 `.wall` 是 **CSS 多列瀑布流**（`columns` + `break-inside: avoid`），瓦片高度随图片比例变化，**行高不固定**；手写窗口化（spacer 行 / 绝对定位换算行号）在这种布局下必然错位，而本环境**没有可用的浏览器**（见 15.4），无法验证视觉结果。
+- 每页本身就是 `PAGE_SIZE = 100`，DOM 节点数已有上限；虚拟滚动的主要收益其实是「屏外瓦片不参与布局与绘制」——这正是 `content-visibility: auto` 的语义。
+- 因此改 [style.css](app/static/css/style.css)：`.tile` 加 `content-visibility: auto; contain-intrinsic-size: auto 320px;`（`auto` 记住上次渲染高度，避免滚动条跳动；不支持该属性的浏览器直接忽略，行为与改动前一致）。静态断言已纳入 `tests/test_static_assets.py`。
+- 真要做 DOM 窗口化，得先把瀑布流改成等高网格（视觉会变）并在浏览器里逐项核对，属于独立改造，本轮不做。
+
+### 15.4 前端运行时验证（如实记录）
+
+- 本轮尝试用浏览器工具做真实 UI 验证，**失败**：browser 插件依赖的后端 CLI（`bsk`）未安装，工具直接返回 `the bsk CLI ("bsk") was not found`。因此**前端代码依旧没有在浏览器里真正跑过**——L6 重构、L7 `fetchJson`、L5 转义、L8 的 `content-visibility` 都只有服务端渲染断言、静态断言与 node 单测支撑。
+- 要补上这一环，需要安装 BrowserSkill（`bsk`）或引入 headless 浏览器。
+
+### 15.5 移除 exe 打包链路（用户决定不再打包）
+
+用户明确要求「不需要打包了」，以下内容整体删除，不再维护：
+
+| 删除项 | 原用途 |
+|--------|--------|
+| `build-exe.bat` / `build.ps1` | 一键打包（venv 引导、图标生成、产物校验） |
+| `PixivArchive.spec` | PyInstaller onefile / 无控制台配置 |
+| `requirements-build.txt` | 打包依赖（`pyinstaller`） |
+| `browser_entry.py` | exe 专用入口（强制 `PA_BROWSER=1`） |
+| `scripts/make_icon.py`、`assets/icon.ico`、`assets/icon.png` | 打包用图标（网页 favicon 是 `app/static/favicon.png`，不受影响） |
+| `Release/`、`build/` | 产物与 PyInstaller 缓存（已构建出的 exe 一并删除） |
+
+同步清理的引用：
+
+- [README.md](README.md)：删掉「方式二：直接使用 exe」「构建方式」（一键脚本 / PowerShell 脚本 / 手动步骤 / spec 说明）两节、目录结构里的打包条目、`requirements-build.txt` 依赖说明、杀毒软件报毒 FAQ、命令行参数表里的 exe 列；依赖清单补上此前漏写的 `hypercorn`；新增「回归测试」一节。
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)：删掉 Build time（PyInstaller）一节。
+- [.gitignore](.gitignore)：删掉 `Release/` / `dist/` / `build/` 三条构建产物忽略规则。
+- [tests/test_static_assets.py](tests/test_static_assets.py)：原 L10 断言（校验 `build.ps1` / spec）改为**反向断言**——打包文件必须不存在、文档（去掉「本次变更」小节后）不得再出现 `PyInstaller` / `Release\PixivArchive.exe` / 已删文件名，并检查 `Start.bat` 的依赖探测含 `hypercorn`。
+
+保留未动的一处：`app/paths.py` 里 `getattr(sys, "frozen", False)` 的「冻结时用 exe 同级目录」分支。它是几行运行时路径决策，源码运行走的是同一个 `else` 分支——删掉对现状零影响、留着对将来零成本，所以按「运行时代码」而非「打包工具」处理。（若希望连它一起删，说一声即可。）
+
+也要如实说明一件事：本轮**确实真实跑了一次打包**（`powershell -ExecutionPolicy Bypass -File .\build.ps1`，退出码 0，产出 `Release\PixivArchive.exe`，21.95 MB；包内 `app/templates`、`app/static/css/style.css` 等资源齐全；`--help` 退出码 0），但**把 exe 跑起来提供服务没有成功**：无控制台 exe 下 `sys.stdout` 是 `None`，[run.py](run.py) 打印启动横幅时会抛 `AttributeError`，服务起不来（这个缺陷在重构前的老代码里同样存在，只是从前没真跑过）。随后按你的要求把打包链路整体删掉，该缺陷随之不再有影响；如果将来重新引入 exe，第一件事就是给 `run.py` 加 `if sys.stdout is None: sys.stdout = open(os.devnull, "w")`。
+
+### 15.6 相关提交
+
+- `2135323` 新增常驻回归测试套件（235 项）＋ `run.py` 换 hypercorn ＋ `build.ps1` 产物路径修正。
+- 本节改动（L8 ＋ 前端单测 ＋ 移除打包链路 ＋ 文档同步）见随后提交。

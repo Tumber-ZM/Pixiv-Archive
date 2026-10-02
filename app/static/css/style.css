@@ -646,6 +646,12 @@ html.sb-collapsed .safe-badge {
     cursor: pointer;
     animation: tileIn 0.24s ease backwards;
     transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    /* 屏外卡片不必参与布局与绘制：这是浏览器原生的「窗口化」，比手写虚拟滚动更适合
+       本图库的 CSS 多列瀑布流（列布局下卡片高度随图片比例变化，手写窗口化会错位）。
+       contain-intrinsic-size 的 auto 会记住上次渲染出的高度，避免滚动条跳动；
+       不支持这两个属性的浏览器直接忽略，行为与改动前一致。 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px;
 }
 
 .tile:hover {

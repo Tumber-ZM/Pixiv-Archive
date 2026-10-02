@@ -11,7 +11,7 @@ if exist "%BASE%venv\Scripts\python.exe" (
 ) else (
     for %%P in (python py) do (
         if not defined PYTHON (
-            %%P -c "import fastapi, pixivpy3, dotenv, PIL" >nul 2>&1
+            %%P -c "import fastapi, hypercorn, pixivpy3, dotenv, PIL" >nul 2>&1
             if not errorlevel 1 set "PYTHON=%%P"
         )
     )

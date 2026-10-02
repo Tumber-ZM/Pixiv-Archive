@@ -5,12 +5,13 @@
 
 ---
 
-## 本次变更：移除局域网模式与桌面窗口模式
+## 本次变更：移除局域网模式、桌面窗口模式与 exe 打包链路
 
 - **移除局域网访问（LAN 模式）**：服务固定只绑定 `127.0.0.1`，不再开放到局域网，访问令牌体系整体删除（`--lan` / `Start-LAN.bat` / `PA_HOST` / `PA_ACCESS_TOKEN` / `?token=` / Cookie / `X-Access-Token` / 前端 `pa_token.js`）。缩略图可被局域网枚举、令牌经 URL 泄漏等隐患随之消失。
-- **移除桌面窗口模式**：不再内嵌 pywebview 原生窗口，`launcher.py` / `launcher.bat` 一并删除；启动方式统一为 `Start.bat`（源码）与 `PixivArchive.exe`（分发），都以系统默认浏览器呈现界面。
+- **移除桌面窗口模式**：不再内嵌 pywebview 原生窗口，`launcher.py` / `launcher.bat` 一并删除；启动方式统一为 `Start.bat`，用系统默认浏览器呈现界面。
 - **单实例锁并入启动链路**：`run.py` 用数据目录下的独占锁文件（`.instance.lock`，含 PID 存活检测）保证同一时间只运行一个实例，重复双击 `Start.bat` 不会起第二个服务。原先的 Windows 命名互斥体在创建失败（同名内核对象属于别的安全上下文）时会静默放行，已据此替换。托盘与端口自动避让随窗口模式一并移除——端口被占用时直接启动失败，请改端口。
 - 依赖中去掉 `pywebview` 与 `pystray`。
+- **移除 exe 打包链路**：`build-exe.bat`、`build.ps1`、`PixivArchive.spec`、`requirements-build.txt`、`browser_entry.py`、`scripts/make_icon.py` 与 `assets/` 图标全部删除，`Release/`、`build/` 产物目录一并清掉。本工具**只从源码运行**（`install.bat` 初始化 + `Start.bat` 启动），不再提供单文件 exe。
 
 ---
 
@@ -46,7 +47,7 @@
 - **元数据同步**：通过 Pixiv refresh token 联网同步作品的标题、标签、作者名、创建日期、尺寸等信息；作品已删除时自动标记（`deleted`）。
 - **直连 / 代理自适应**：`PIXIV_MODE` 支持 `direct`（直连 IP 免 SNI）、`proxy`（走 Clash 类代理）、`auto`（自动尝试并回退）。
 - **第三方图片镜像（可选）**：设置中可填写镜像域名，用第三方图站接管图片下载与头像获取（作品列表与认证仍走 Pixiv 官方 API）。
-- **一键启动 / 一键打包**：`.bat` 脚本自动查找 Python、创建 venv、安装依赖；`build-exe.bat` 可从源码直接编译出单文件 exe。
+- **一键启动**：`.bat` 脚本自动查找 Python、创建 venv、安装依赖，`Start.bat` 直接启动本地服务。
 - **本地单实例服务**：固定绑定 `127.0.0.1`，仅本机可访问；同一时间只允许一个实例运行。
 
 ---
@@ -64,18 +65,11 @@ app/                 应用代码
   thumbnails.py       缩略图生成
   templates/          页面模板（index.html、artwork.html、author.html、tag.html）
   static/             前端资源（css/style.css、js/、favicon.png）
-assets/              图标（icon.png / icon.ico，由 scripts/make_icon.py 生成）
-scripts/             辅助脚本（make_icon.py 生成图标）
-Release/             产物目录（构建出的 PixivArchive.exe）
 run.py               启动本地 HTTP 服务（仅 127.0.0.1，含单实例锁）
-browser_entry.py     exe 分发专用入口（启动后自动打开浏览器）
 Start.bat            启动服务（浏览器模式）
 install.bat          一键初始化环境（创建 venv + 安装依赖 + 生成 .env）
-build-exe.bat        一键从源码编译单文件 exe
-build.ps1            PowerShell 构建脚本（等价于 build-exe.bat）
-PixivArchive.spec    PyInstaller 打包配置（onefile / 无控制台 / 自动开浏览器）
-requirements.txt     运行时依赖清单
-requirements-build.txt  打包（PyInstaller）所需依赖
+tests/               回归测试套件（venv\Scripts\python.exe tests\run_all.py）
+requirements.txt     依赖清单
 .env.template        环境变量模板（复制为 .env 后填写）
 ```
 
@@ -87,18 +81,17 @@ requirements-build.txt  打包（PyInstaller）所需依赖
 - **Python**：3.10+（开发与验证环境为 3.11）
 - **网络**：同步元数据 / 刷新直连 IP 需要能访问 pixiv（必要时搭配代理）
 
-运行时依赖（`requirements.txt`）：`fastapi`、`pydantic`、`requests`、`urllib3`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`。
-构建依赖（`requirements-build.txt`）：`pyinstaller`。
+依赖（`requirements.txt`）：`fastapi`、`pydantic`、`requests`、`urllib3`、`pixivpy3`、`Pillow`、`Jinja2`、`python-dotenv`、`hypercorn`。
 
 ### venv 里装的是什么？
 
-`venv/` 只是普通 Python 虚拟环境（`python -m venv venv` 创建，再用 `venv\Scripts\python.exe -m pip install -r requirements.txt` 安装依赖）。里面没有任何个人数据，分发时不需要也不应该打包它——接收方运行 `install.bat` 即可自行创建。
+`venv/` 只是普通 Python 虚拟环境（`python -m venv venv` 创建，再用 `venv\Scripts\python.exe -m pip install -r requirements.txt` 安装依赖）。里面没有任何个人数据，也不进版本库（`.gitignore` 已排除）；换台机器运行 `install.bat` 即可自行创建。
 
 ---
 
 ## 使用教程
 
-### 方式一：从源码运行
+### 运行步骤
 
 **第 1 步：初始化环境（仅首次）**
 
@@ -136,16 +129,6 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 
 在 **设置** 填入 `PIXIV_REFRESH_TOKEN` 后点击 **同步**，为库内作品联网拉取标题、标签、作者等信息。
 
-### 方式二：直接使用 exe
-
-直接分发/使用 `Release\PixivArchive.exe`（或自己按"[构建方式](#构建方式)"一节编译）：
-
-- 无需安装 Python，双击即可运行；
-- 启动后**自动打开系统默认浏览器**访问 http://127.0.0.1:6814；
-- 首次运行会在 exe 同目录自动生成数据文件：`archive.db`、`thumbnails/`、`.env`、日志；
-- 仅绑定 `127.0.0.1`，同一时间只允许一个实例运行，重复启动会被拒绝；
-- 支持命令行参数：`--port 7130` 指定端口。
-
 ### 界面与常用操作
 
 - **扫描**：把本地图片目录中识别出的作品加入库并生成缩略图（可设置取消/重置）。
@@ -179,61 +162,24 @@ IMAGE_SOURCE_DIR=D:\Pixiv
 
 ---
 
-## 构建方式
+## 回归测试
 
-### 一键脚本：`build-exe.bat`（推荐）
-
-双击 `build-exe.bat`，脚本会自动：
-1. 查找 Python 并创建 `venv/`（如不存在）；
-2. 安装运行时依赖 `requirements.txt` + 构建依赖 `requirements-build.txt`（PyInstaller）；
-3. 运行 `scripts/make_icon.py` 重新生成图标；
-4. 执行 PyInstaller（`--clean --noconfirm`）输出到 `Release\`。
-
-产物：**`Release\PixivArchive.exe`**（单文件、无控制台窗口）。
-
-特点：
-- 独立运行，exe 自带全部依赖与页面资源，无需目标机器安装 Python；
-- 启动自动打开系统默认浏览器；
-- 首次运行在 exe 所在目录生成 `archive.db`、`thumbnails/`、`.env`；
-- 支持 `--port` 等命令行参数。
-
-### PowerShell 脚本：`build.ps1`
-
-与 `build-exe.bat` 等价，适合命令行环境：
-
-```
-powershell -ExecutionPolicy Bypass -File build.ps1
-```
-
-（旧版脚本，产物同样输出到 `Release\`。）
-
-### 手动构建步骤（等价命令）
+改动后建议跑一遍测试套件（不需要 pytest，直接用项目 venv）：
 
 ```bat
-:: 1. 准备环境
-python -m venv venv
-venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
-
-:: 2. 生成图标
-venv\Scripts\python.exe scripts\make_icon.py
-
-:: 3. PyInstaller 打包（onefile，输出到 Release）
-venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --workpath build PixivArchive.spec
+venv\Scripts\python.exe tests\run_all.py             :: 全部：离线用例 + 真实服务用例
+venv\Scripts\python.exe tests\run_all.py --offline   :: 只跑不需要起服务的用例
+venv\Scripts\python.exe tests\run_all.py --only lock :: 只跑名字匹配的模块
 ```
 
-### 打包配置说明（`PixivArchive.spec`）
-
-- 入口为 `browser_entry.py`：强制 `PA_BROWSER=1` 走 `run.main()`，因此 exe 启动即自动打开浏览器；
-- `console=False` 无控制台窗口；`onefile` 单文件输出；
-- 打包范围：`collect_all` 收集 `pixivpy3`、`Pillow`、`pydantic`；并把 `webview` / `clr` / `pythonnet` 列入 `excludes`，不再被 PyInstaller 静态分析带入，以减小体积；
-- `app/templates`、`app/static` 会随包内嵌（运行时解压到临时目录）。
+用例会真实启动服务（默认端口 7801，可用 `--port` 改），只发只读请求；覆盖 `.env` 就地更新、单实例锁、扫描/同步的阶段性逻辑、删除失败上报、标签原名与译名匹配、页面片段完整性、HTTP 端点冒烟与错误响应、模板与资源一致性等。本机有 Node 时会顺带跑 `tests/js/` 下的前端单测。
 
 ---
 
 ## 数据与隐私
 
 - 本仓库/产物**不包含任何个人数据**：不含 `.env`（token）、`archive.db`（作品记录）、图片、缩略图、元数据或日志。
-- 运行后仅在你的机器上生成以下本地数据（源码运行于项目根目录，exe 运行于 exe 同目录）：
+- 运行后仅在你的机器上生成以下本地数据（都在项目根目录）：
   - `archive.db`：作品索引（SQLite）
   - `thumbnails/`、`metadata/`：缩略图与元数据 JSON
   - `pixiv_archive.log`：运行日志
@@ -245,7 +191,7 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
 ## 常见问题（FAQ）
 
 **启动时报 `ModuleNotFoundError`？**
-说明当前 Python 缺少依赖。运行 `install.bat` 创建 venv 后，用 `Start.bat` 重新启动；或改用 `Release\PixivArchive.exe`。
+说明当前 Python 缺少依赖。运行 `install.bat` 创建 venv 后，用 `Start.bat` 重新启动。
 
 **服务启动但浏览器打不开 / 页面 404？**
 确认访问地址端口与启动日志一致（默认 6814）。服务直接绑定设定端口，被占用即启动失败（不再自动避让）——请关闭占用端口的程序，或在设置 / `.env` 中改用其它 `PA_PORT`。
@@ -259,17 +205,14 @@ venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --distpath Release --
 **局域网下其他设备无法访问？**
 这是预期行为：服务固定只绑定 `127.0.0.1`，局域网访问支持已移除，仅本机可用。
 
-**杀毒软件报毒？**
-PyInstaller 单文件 exe 偶见误报，属常见现象；可改用目录形态（onedir）打包以降低误报概率。
-
 ---
 
 ## 命令行参数速查
 
 | 参数 | 适用脚本 | 说明 |
 |------|----------|------|
-| `--port <端口>` | `run.py` / exe | 指定端口（默认 6814；被占用即启动失败） |
-| `--browser` | `run.py` / exe | 启动后用系统默认浏览器打开页面（exe 默认开启） |
+| `--port <端口>` | `run.py` / `Start.bat` | 指定端口（默认 6814；被占用即启动失败） |
+| `--browser` | `run.py` | 启动后用系统默认浏览器自动打开页面（默认不自动打开，`Start.bat` 也不带） |
 
 ---
 

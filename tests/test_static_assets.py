@@ -45,28 +45,30 @@ def run(t):
     t.equal("L9 其它源文件不再硬编码 6814", offenders, [])
     t.check("L9 run.py 导入 DEFAULT_PORT", "from app.config import DEFAULT_PORT" in run_py)
 
-    # ---------------- L10：打包脚本 ----------------
-    build = _read(h.ROOT, "build.ps1")
-    t.check("L10 缺 venv 时自动创建", "venv" in build and "pip install" in build)
-    t.check("L10 同时尝试 python 与 py 启动器", "python" in build and "py" in build)
-    t.check("L10 校验图标与产物存在",
-            "icon.ico" in build and "PixivArchive.exe" in build and "Test-Path" in build)
-    t.check("L10 打印 onefile 真实路径", "Release\\PixivArchive.exe" in build)
-    t.check("L10 显式指定产物目录，不依赖 PyInstaller 默认值", "--distpath Release" in build)
-    bat = _read(h.ROOT, "build-exe.bat")
-    t.check("L10 build.ps1 与 build-exe.bat 产物目录一致（Release）",
-            "--distpath" in bat and "Release" in bat and "dist\\PixivArchive" not in build)
-    t.check("L10 build.ps1 顶部写明执行策略用法", "-ExecutionPolicy Bypass" in build)
-    with open(os.path.join(h.ROOT, "build.ps1"), "rb") as handle:
-        raw = handle.read()
-    t.check("L10 build.ps1 含中文时必须是 UTF-8 with BOM（PS 5.1 才解析得了）",
-            raw[:3] == b"\xef\xbb\xbf")
-    t.check("L10 build.ps1 以换行结尾", raw.endswith(b"\n"))
-    spec = _read(h.ROOT, "PixivArchive.spec")
-    t.check("L10 spec 引用图标与入口脚本", "icon.ico" in spec and "browser_entry.py" in spec)
-    t.check("L10 spec 打包模板与静态目录", "app/templates" in spec and "app/static" in spec)
-    t.check("L10 spec 排除已移除的 pywebview 依赖",
-            "excludes" in spec and '"webview"' in spec and "run.py" not in spec)
+    # ---------------- L10：打包链路已按要求整体移除 ----------------
+    # 用户决定不再打包 exe：相关脚本 / spec / 入口 / 图标 / 构建文档都必须消失，
+    # 否则会留下指向不存在文件的说明（文档与现实不一致本身就是缺陷）。
+    removed = ["build.ps1", "build-exe.bat", "PixivArchive.spec", "requirements-build.txt",
+               "browser_entry.py", "scripts/make_icon.py", "assets/icon.ico", "assets/icon.png"]
+    still_there = [rel for rel in removed if os.path.exists(os.path.join(h.ROOT, rel))]
+    t.equal("L10 打包相关文件已全部删除", still_there, [])
+
+    def _strip_changelog(text):
+        """去掉「本次变更」小节：那里本来就要写明删掉了哪些文件。"""
+        head, sep, rest = text.partition("## 本次变更")
+        if not sep:
+            return text
+        return head + rest.partition("\n---")[2]
+
+    docs = _strip_changelog(_read(h.ROOT, "README.md")) + _read(h.ROOT, "THIRD_PARTY_NOTICES.md")
+    stale = [rel for rel in removed if rel in docs or rel.replace("\\", "/") in docs]
+    t.equal("L10 文档不再把已删除的打包文件当成可用的东西", stale, [])
+    t.check("L10 文档不再提 PyInstaller / Release 产物",
+            "PyInstaller" not in docs and "Release\\PixivArchive.exe" not in docs)
+    start_bat = _read(h.ROOT, "Start.bat")
+    t.check("L10 Start.bat 的依赖探测覆盖 hypercorn（换服务器后新增的运行时依赖）",
+            "hypercorn" in start_bat)
+    t.check("L10 hypercorn 仍在依赖清单里", "hypercorn" in _read(h.ROOT, "requirements.txt"))
 
     # ---------------- L11：删掉无引用的图标 symbol ----------------
     icons = _read(TEMPLATES, "icons.html")
@@ -115,6 +117,14 @@ def run(t):
     # ---------------- L8（常量部分）：分页大小 ----------------
     t.check("L8 index.html 定义 PAGE_SIZE", "const PAGE_SIZE" in index)
     t.equal("L8 两个分页 URL 都使用 PAGE_SIZE", index.count("per_page=${PAGE_SIZE}"), 2)
+    # 屏外卡片跳过布局与绘制（浏览器原生窗口化）；图库是 CSS 多列瀑布流，
+    # 手写虚拟滚动在这种布局下会错位，因此用这项机制拿到等效收益
+    css = _read(APP, "static", "css", "style.css")
+    t.check("L8 .tile 启用 content-visibility: auto", "content-visibility: auto" in css)
+    t.check("L8 .tile 带 contain-intrinsic-size（避免滚动条跳动）",
+            "contain-intrinsic-size: auto" in css)
+    t.check("L8 图库仍是分页加载（每页上限受 PAGE_SIZE 约束，DOM 不会无限增长）",
+            "per_page" in index and "PAGE_SIZE = 100" in index)
     t.check("L3 缩略图始终重编码为 JPEG（回归护栏）",
             "convert(\"RGB\")" in _read(APP, "thumbnails.py") and "JPEG" in _read(APP, "thumbnails.py"))
 

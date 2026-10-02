@@ -19,11 +19,6 @@ pixiv_archive_check.txt
 # ---- 用户配置（含 refresh token 等机密，切勿提交）----
 .env
 
-# ---- 构建产物 ----
-Release/
-dist/
-build/
-
 # ---- 编辑器 / 系统 ----
 .vscode/
 .idea/
