@@ -315,8 +315,8 @@ Invoke-WebRequest http://127.0.0.1:6899/api/artworks -UseBasicParsing
 
 ### 未验证/存疑事项
 
-- `build.ps1` 含中文字面量，其解码取决于文件 BOM 与 PowerShell 版本，本次未验证 BOM。
-- 打包（PyInstaller）链路未实际执行，`build-exe.bat` / `build.ps1` 的问题均为读码确认。
+- `build.ps1` 含中文字面量，其解码取决于文件 BOM 与 PowerShell 版本——**已在第十四节末实测并修复**：原文件无 BOM，Windows PowerShell 5.1 按 ANSI 代码页解码后**脚本直接解析失败**，现已存为 UTF-8 with BOM。
+- 打包（PyInstaller）链路未实际执行，`build-exe.bat` / `build.ps1` 的问题均为读码确认（`build.ps1` 已额外通过 PS 5.1 解析器校验，见第十四节末）。
 - `PixivArchive.spec` 加入 `excludes` 后的实际产物体积未验证（需真实构建一次）。
 - 联网相关行为（元数据同步、收藏订阅下载、DoH 刷新 IP）未实测，避免消耗你的 Pixiv 配额与触发风控；相关结论均为读码确认。
 
@@ -750,6 +750,18 @@ return handle                        # ← 创建失败时 handle 是 NULL，却
 
 1. **`.env` 换行风格被破坏**：`update_env()` 最初用普通文本模式读文件，Python 的通用换行模式把 CRLF 归一成 LF，于是「保留原样」的行也被改成 LF 写回——用户 .env 的换行风格会被静默改掉，diff 里一片红。验证脚本里的 CRLF 断言当场把它抓出来，改为 `newline=""` 读写。
 2. **L4 的修复没有落到 tag 筛选上**：第一轮改动加在了 `api_search` 的既有代码上（那里本来就已经匹配译名），而真正需要改的 `api_artworks` 标签筛选仍是 `t.name LIKE ?`。隔离库用例（用译名筛选返回 0 条）把它暴露出来，才补上正确的两处。
+
+### 顺带发现：`build.ps1` 在 Windows PowerShell 5.1 下根本加载不了（已修）
+
+L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 个语法错误（含「字符串缺少终止符」）。原因不是语法写错，而是**文件编码**：
+
+- `build.ps1` 里有 537 个非 ASCII 字节（中文 `Write-Host` 文案），但文件**没有 BOM**；
+- Windows PowerShell 5.1 读取无 BOM 的 `.ps1` 时按系统 ANSI 代码页（本机 GBK）解码，UTF-8 的中文字节被拆成乱码，其中一段恰好"吃掉"了双引号字符串，整个脚本因此解析失败；
+- **这不是本轮引入的**：把提交 `91a3ad6` 的旧版 `build.ps1` 原样导出成无 BOM 再解析，同样报「字符串缺少终止符」。也就是说 `build.ps1` 在本机默认代码页下一直是坏的，只是从没被真正跑过——而 Windows 上默认的 PowerShell 恰恰就是 5.1。
+
+修复：`build.ps1` 改存为 **UTF-8 with BOM**，正文一字未改（改写前后对 UTF-8 正文算 SHA256 完全一致），随后 PS 5.1 的 `ParseFile` **错误数 3 → 0**，`Get-Content` 读出的中文文案也恢复正常。仓库里其余脚本（`install.bat` / `Start.bat` / `build-exe.bat`）非 ASCII 字节数均为 0，不存在同类问题。
+
+仍需如实说明：**打包链路本身依旧没有真正执行过**（PyInstaller 构建要跑几分钟并写 `dist/`），L10 与这次编码修复都属于「读码 + 解析器验证」，不等于端到端构建验证。
 
 ### 测试环境说明（如实记录）
 

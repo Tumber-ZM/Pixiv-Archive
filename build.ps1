@@ -1,4 +1,4 @@
-# Pixiv Archive 一键打包脚本（Windows / PowerShell）
+﻿# Pixiv Archive 一键打包脚本（Windows / PowerShell）
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
