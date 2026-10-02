@@ -808,7 +808,11 @@ L10 改完后用 PS 5.1 自带的解析器核对脚本，`ParseFile` 报出 3 �
 ### 15.4 前端运行时验证（如实记录）
 
 - 本轮尝试用浏览器工具做真实 UI 验证，**失败**：browser 插件依赖的后端 CLI（`bsk`）未安装，工具直接返回 `the bsk CLI ("bsk") was not found`。因此**前端代码依旧没有在浏览器里真正跑过**——L6 重构、L7 `fetchJson`、L5 转义、L8 的 `content-visibility` 都只有服务端渲染断言、静态断言与 node 单测支撑。
-- 要补上这一环，需要安装 BrowserSkill（`bsk`）或引入 headless 浏览器。
+- 后续再查了一次（技能目录里 BrowserSkill 已出现，工具仍不可用），把原因定位清楚：
+  - 插件 `@wxg-prc-cpg/browser-skill-dsh-plugin`（v0.3.2）每个工具都是 `spawn(bskPath, ["<cmd>", "--json"])`，即完全依赖外部 `bsk` CLI；
+  - 本机 `bsk` 不在 PATH，且 `~\.dsh`、`%LOCALAPPDATA%`、`%ProgramFiles%`、`D:\DeepSeek Harness` 全树搜索都没有 `bsk` 可执行文件；`cargo` / `rustc` 同样不存在，所以连 `cargo install` 这条路也走不通；
+  - `~\.bsk\dsh-starts\…\requests.json` 说明历史上这里确实跑起过一次，但现在缺可执行文件。
+- 结论：这一环**不是项目代码能修的**，需要环境侧安装 `bsk`（官方安装脚本下预编译二进制，或先装 Rust 再 `cargo install`）并放进 PATH；装好后重跑 `browser_session` 即可继续。在此之前，前端验证只能维持现状（node + DOM 垫片单测 25 项、页面结构断言 43 项、HTTP 冒烟 51 项）。
 
 ### 15.5 移除 exe 打包链路（用户决定不再打包）
 
