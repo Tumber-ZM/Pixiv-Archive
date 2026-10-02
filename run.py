@@ -1,6 +1,9 @@
 """Pixiv Archive 本地服务入口。
 
 - 只绑定 127.0.0.1，不开放局域网访问（LAN 模式已移除）。
+- HTTP 服务交给 hypercorn（ASGI 服务器），不再自带手写实现：keep-alive、流式响应
+  与连接错误都由它负责处理。应用层仍未处理的异常由 Starlette 的 500 中间件兜底成
+  一个响应再抛出，因此不会出现「静默断开连接」。
 - 单实例：同一时间只允许一个实例运行（数据目录下的独占锁文件 + PID 存活检测），
   因此 Start.bat 重复双击不会起第二个服务、也不会抢端口。
 - --browser / PA_BROWSER=1：启动后自动用系统默认浏览器打开页面（exe 分发版用）。
@@ -11,10 +14,7 @@ import os
 import sys
 import threading
 import time
-import traceback
 import webbrowser
-from http import HTTPStatus
-from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -139,135 +139,30 @@ def _parse_server_args():
 PORT, OPEN_BROWSER = _parse_server_args()
 
 from app.main import app  # noqa: E402
+from hypercorn.asyncio import serve  # noqa: E402
+from hypercorn.config import Config  # noqa: E402
 
 
-def _status_text(code):
-    try:
-        return HTTPStatus(code).phrase
-    except ValueError:
-        return "Unknown"
+def server_url(host=HOST, port=None):
+    """本机访问地址；port 省略时用本次启动解析出的端口。"""
+    return "http://%s:%d/" % (host, PORT if port is None else port)
 
 
-class ASGIHTTPServer:
-    def __init__(self, asgi_app, host="127.0.0.1", port=8000):
-        self.asgi_app = asgi_app
-        self.host = host
-        self.port = port
+def build_config(host=HOST, port=None):
+    """hypercorn 配置：只监听本机地址，默认不输出请求日志（保持控制台干净）。"""
+    config = Config()
+    config.bind = ["%s:%d" % (host, PORT if port is None else port)]
+    config.accesslog = None
+    config.graceful_timeout = 5.0
+    return config
 
-    @staticmethod
-    async def _write_response(writer, status, headers, body):
-        """按 HTTP/1.1 写出响应，缺 Content-Length 时补上。"""
-        has_length = any(key.lower() == b"content-length" for key, _ in headers)
-        head = [f"HTTP/1.1 {status} {_status_text(status)}\r\n".encode()]
-        for key, value in headers:
-            head.append(key + b": " + value + b"\r\n")
-        if not has_length:
-            head.append(b"Content-Length: " + str(len(body)).encode() + b"\r\n")
-        head.append(b"\r\n")
-        writer.write(b"".join(head))
-        writer.write(bytes(body))
-        await writer.drain()
 
-    async def handle(self, reader, writer):
-        try:
-            request_data = await reader.readuntil(b"\r\n\r\n")
-            request_text = request_data.decode("utf-8", errors="replace")
-            lines = request_text.split("\r\n")
-            request_line = lines[0].split(" ")
-
-            if len(request_line) < 2:
-                writer.close()
-                return
-
-            method = request_line[0].upper()
-            path = request_line[1]
-            parsed = urlparse(path)
-            path_only = parsed.path
-            query_string = parsed.query.encode()
-
-            headers = []
-            content_length = 0
-            for line in lines[1:]:
-                if ":" in line:
-                    key, value = line.split(":", 1)
-                    key = key.strip().lower()
-                    value = value.strip()
-                    headers.append((key.encode(), value.encode()))
-                    if key == "content-length":
-                        content_length = int(value)
-
-            body = b""
-            if content_length > 0:
-                body = await reader.readexactly(content_length)
-
-            scope = {
-                "type": "http",
-                "asgi": {"version": "3.0", "spec_version": "2.1"},
-                "http_version": "1.1",
-                "method": method,
-                "scheme": "http",
-                "path": path_only,
-                "raw_path": path_only.encode(),
-                "query_string": query_string,
-                "headers": headers,
-                "client": writer.get_extra_info("peername") or ("127.0.0.1", 0),
-                "server": (self.host, self.port),
-            }
-
-            response_status = 500
-            response_headers = []
-            response_body = bytearray()
-            response_started = False
-
-            async def receive():
-                nonlocal body
-                if body:
-                    b = body
-                    body = b""
-                    return {"type": "http.request", "body": b, "more_body": False}
-                return {"type": "http.request", "body": b"", "more_body": False}
-
-            async def send(event):
-                nonlocal response_status, response_headers, response_body, response_started
-                if event["type"] == "http.response.start":
-                    response_status = event["status"]
-                    response_headers = event.get("headers", [])
-                    response_started = True
-                elif event["type"] == "http.response.body":
-                    response_body.extend(event.get("body", b""))
-
-            try:
-                await self.asgi_app(scope, receive, send)
-            except Exception:
-                # 应用层仍有未处理异常时也必须回一个响应，绝不静默断开连接：
-                # FastAPI 的 500 处理器会先生成响应再把异常抛出来，那种情况下把
-                # 已生成的响应发回；否则补一个最小 500。
-                traceback.print_exc()
-                if response_started:
-                    response_headers = [
-                        (k, v) for (k, v) in response_headers
-                        if k.lower() != b"content-length"
-                    ]
-                else:
-                    response_status = 500
-                    response_headers = [(b"content-type", b"text/plain; charset=utf-8")]
-                    response_body = bytearray(b"Internal Server Error")
-
-            await self._write_response(writer, response_status, response_headers, response_body)
-        except Exception:
-            traceback.print_exc()
-        finally:
-            writer.close()
-
-    async def serve(self):
-        server = await asyncio.start_server(self.handle, self.host, self.port)
-        addr = server.sockets[0].getsockname()
-        url = f"http://{addr[0]}:{addr[1]}/"
-        print(f"Pixiv Archive running at {url}")
-        if OPEN_BROWSER:
-            threading.Timer(1.0, webbrowser.open, args=[url]).start()
-        async with server:
-            await server.serve_forever()
+async def _serve(host=HOST, port=None):
+    url = server_url(host, port)
+    print("Pixiv Archive running at " + url, flush=True)
+    if OPEN_BROWSER:
+        threading.Timer(1.0, webbrowser.open, args=[url]).start()
+    await serve(app, build_config(host, port))
 
 
 def main():
@@ -278,11 +173,15 @@ def main():
         return 1
 
     try:
-        server = ASGIHTTPServer(app, HOST, PORT)
         try:
-            asyncio.run(server.serve())
+            asyncio.run(_serve())
         except KeyboardInterrupt:
             print("Server stopped")
+        except OSError as exc:
+            # 端口被占用等：给一句可读的提示，而不是抛一串 traceback
+            print("启动失败：无法监听 %s:%d —— %s" % (HOST, PORT, exc))
+            print("端口可能已被占用：可用 --port 指定其它端口，或在设置里改 PA_PORT。")
+            return 1
         return 0
     finally:
         release_single_instance(lock)

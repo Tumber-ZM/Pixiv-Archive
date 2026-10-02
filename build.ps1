@@ -1,4 +1,6 @@
 ﻿# Pixiv Archive 一键打包脚本（Windows / PowerShell）
+# 用法：powershell -ExecutionPolicy Bypass -File build.ps1
+# （未签名脚本在默认执行策略下无法直接运行；产物与 build-exe.bat、README 一致：Release\PixivArchive.exe）
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
@@ -34,14 +36,15 @@ $iconPath = Join-Path $root "assets\icon.ico"
 if (-not (Test-Path $iconPath)) { throw "图标生成失败：找不到 $iconPath" }
 
 Write-Host "==> PyInstaller 打包..."
-& $venvPy -m PyInstaller --clean --noconfirm PixivArchive.spec
+# 产物目录必须与 build-exe.bat / README 保持一致（Release），不要用 PyInstaller 的默认 dist
+& $venvPy -m PyInstaller --clean --noconfirm --distpath Release --workpath build PixivArchive.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller 打包失败" }
 
-# PixivArchive.spec 是 onefile 配置：产物就是 dist 下的单个 exe，
-# 不是 dist\PixivArchive\ 目录（原脚本打印的路径与实际产物不符）。
-$artifact = Join-Path $root "dist\PixivArchive.exe"
+# PixivArchive.spec 是 onefile 配置：产物是 Release 下的单个 exe，
+# 不是 Release\PixivArchive\ 目录（此前脚本打印的正是那个并不存在的子目录路径）。
+$artifact = Join-Path $root "Release\PixivArchive.exe"
 if (-not (Test-Path $artifact)) { throw "打包结束但找不到产物：$artifact" }
 
 Write-Host ""
-Write-Host "打包完成: dist\PixivArchive.exe"
+Write-Host "打包完成: Release\PixivArchive.exe"
 Write-Host "提示: 把 archive.db / metadata / thumbnails / .env 复制到 exe 同目录即可直接使用已有数据。"

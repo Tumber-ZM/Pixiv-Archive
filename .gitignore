@@ -32,3 +32,6 @@ desktop.ini
 
 # ---- 本仓库自用：审查/临时产物 ----
 .removed-backup/
+
+# ---- 测试运行产物（tests/run_all.py 的输出日志；*.log 已覆盖，这里再明确一次）----
+tests/_*.log

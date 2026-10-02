@@ -14,6 +14,6 @@ Pillow>=10.0.0
 Jinja2>=3.1.0
 # 读取 .env
 python-dotenv>=1.0.0
-
-# 注：hypercorn 与 aiofiles 已移除——全项目零 import，HTTP 服务由 run.py 自带的
-# ASGI 服务器提供。若将来改用 hypercorn 部署，请把这两个依赖加回来。
+# ASGI 服务器：run.py 用 hypercorn.asyncio.serve 提供 HTTP 服务
+# （不引入 aiofiles：hypercorn 0.18 的依赖只有 h11 / h2 / priority / wsproto）
+hypercorn>=0.17.0
