@@ -3,13 +3,14 @@ import os
 import re
 import subprocess
 import sys
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,6 +57,55 @@ async def _json_body(request: Request):
 
 
 app = FastAPI(title="Pixiv Archive")
+
+
+# ---- 本机访问守卫 ----
+# 服务只绑定 127.0.0.1，但「只能本机访问」并不等于「只有本机页面能访问」：
+#   1) DNS rebinding：恶意域名先解析到攻击者服务器、再改解析到 127.0.0.1，
+#      浏览器随即把它当成同源，于是可以读接口响应（整个图库）也能改数据。
+#      浏览器无法伪造 Host 头，因此校验 Host 就能挡住这一类。
+#   2) 本机 CSRF：无请求体的 POST 属于 CORS「简单请求」，跨站 <form>/fetch 不会
+#      触发预检，副作用照样执行。校验 Origin（无则回退 Referer）即可挡住。
+# 两个校验都只在 Host/Origin 明确指向非本机时拒绝，避免误伤正常本机使用。
+_LOCAL_HOSTNAMES = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _hostname_of(value):
+    """取主机名：去掉端口，兼容 [::1]:port；取不到时返回空串。"""
+    value = (value or "").strip().lower()
+    if not value:
+        return ""
+    if value.startswith("["):
+        end = value.find("]")
+        return value[:end + 1] if end != -1 else value
+    return value.rsplit(":", 1)[0] if ":" in value else value
+
+
+def _origin_hostname(value):
+    """取 Origin/Referer 的主机名；解析失败返回空串（随后会被判为非本机）。"""
+    try:
+        return (urlsplit(value).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+@app.middleware("http")
+async def _local_access_guard(request: Request, call_next):
+    # Host 为空时不拦（HTTP/1.0 客户端可能不带；rebinding 必须带 Host 才成立）
+    host = _hostname_of(request.headers.get("host", ""))
+    if host and host not in _LOCAL_HOSTNAMES:
+        return JSONResponse({"detail": "仅允许通过本机地址访问"}, status_code=403)
+    if request.method in _UNSAFE_METHODS:
+        origin = request.headers.get("origin")
+        if origin is not None:
+            if _origin_hostname(origin) not in _LOCAL_HOSTNAMES:
+                return JSONResponse({"detail": "已拒绝跨站请求"}, status_code=403)
+        else:
+            referer = request.headers.get("referer")
+            if referer and _origin_hostname(referer) not in _LOCAL_HOSTNAMES:
+                return JSONResponse({"detail": "已拒绝跨站请求"}, status_code=403)
+    return await call_next(request)
 
 
 @app.exception_handler(ValidationError)
@@ -932,7 +982,9 @@ async def api_add_bookmark_sub(request: Request):
     uid = int(uid)
     name = (body.get("name") or "").strip()
     if not name:
-        name = get_pixiv_client().get_user_display_name(uid)
+        # 取用户名是同步阻塞的 HTTP 调用（最长 REQUEST_TIMEOUT 秒）。本端点是 async def，
+        # 直接在事件循环里调用会卡住整个服务（期间所有请求无响应），故丢到线程池执行。
+        name = await run_in_threadpool(get_pixiv_client().get_user_display_name, uid)
     with get_db() as conn:
         cur = conn.execute(
             "INSERT OR IGNORE INTO bookmark_subs (pixiv_user_id, name) VALUES (?, ?)",

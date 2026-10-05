@@ -662,8 +662,8 @@ function renderGallery(data) {
             <div class="tile-badges">${badges}</div>
             <div class="tile-title">${escapeHtml(title)}</div>
             <div class="tile-actions">
-                <button class="tile-action-btn${favCls}" onclick="event.stopPropagation();event.preventDefault();openFavSelect(${a.id})" title="${a.is_favorited ? '已收藏（点击管理）' : '收藏'}"><svg class="icon"><use href="#i-${a.is_favorited ? 'star' : 'star-o'}"/></svg></button>
-                <button class="tile-action-btn del" onclick="event.stopPropagation();event.preventDefault();deleteArtworkFromTile(${a.id}, '${escapeAttr(title)}')" title="删除"><svg class="icon"><use href="#i-trash"/></svg></button>
+                <button class="tile-action-btn${favCls}" data-act="tile-fav" data-id="${a.id}" title="${a.is_favorited ? '已收藏（点击管理）' : '收藏'}"><svg class="icon"><use href="#i-${a.is_favorited ? 'star' : 'star-o'}"/></svg></button>
+                <button class="tile-action-btn del" data-act="tile-delete" data-id="${a.id}" data-title="${escapeAttr(title)}" title="删除"><svg class="icon"><use href="#i-trash"/></svg></button>
             </div>`;
 
         frag.appendChild(tile);
@@ -862,7 +862,7 @@ async function loadAuthorsView() {
                 <div class="author-row-head">
                     <img class="author-avatar" src="/api/authors/${a.id}/avatar" alt="" loading="lazy"
                          onerror="this.style.display='none'">
-                    <span class="author-name" onclick="filterByAuthor('${escapeAttr(a.name)}')">${escapeHtml(a.name)}</span>
+                    <span class="author-name" data-act="filter-author" data-name="${escapeAttr(a.name)}">${escapeHtml(a.name)}</span>
                     <span class="author-id">ID：${a.pixiv_user_id}</span>
                     <span class="author-meta">作品：${a.artwork_count}</span>
                 </div>
@@ -947,12 +947,12 @@ async function loadFavoritesView() {
                 thumbs += `<img src="${src}" alt="" loading="lazy">`;
             });
             card.innerHTML = `
-                <div class="folder-thumbs" onclick="filterByFavorite(${f.id}, '${escapeAttr(f.name)}')">${thumbs || '<div class="folder-empty">空</div>'}</div>
-                <div class="folder-info" onclick="filterByFavorite(${f.id}, '${escapeAttr(f.name)}')">
+                <div class="folder-thumbs" data-act="filter-fav" data-id="${f.id}" data-name="${escapeAttr(f.name)}">${thumbs || '<div class="folder-empty">空</div>'}</div>
+                <div class="folder-info" data-act="filter-fav" data-id="${f.id}" data-name="${escapeAttr(f.name)}">
                     <div class="folder-name"><svg class="icon"><use href="#i-folder"/></svg><span>${escapeHtml(f.name)}</span></div>
                     <div class="folder-meta">${f.artwork_count} 个作品</div>
                 </div>
-                <button class="folder-delete" onclick="deleteFavorite(${f.id}, '${escapeAttr(f.name)}')" title="删除收藏夹">×</button>`;
+                <button class="folder-delete" data-act="fav-delete" data-id="${f.id}" data-name="${escapeAttr(f.name)}" title="删除收藏夹">×</button>`;
             frag.appendChild(card);
         });
         grid.appendChild(frag);
@@ -1062,7 +1062,7 @@ async function loadBookmarkSubsView() {
                         自动下载
                     </label>
                     <button class="batch-btn" onclick="checkOneBookmarkSub(${s.pixiv_user_id})">检查</button>
-                    <button class="batch-btn danger" onclick="deleteBookmarkSub(${s.pixiv_user_id}, '${escapeAttr(s.name || '')}')">退订</button>
+                    <button class="batch-btn danger" data-act="sub-delete" data-uid="${s.pixiv_user_id}" data-name="${escapeAttr(s.name || '')}">退订</button>
                 </div>`;
             frag.appendChild(card);
         });
@@ -1279,7 +1279,7 @@ async function showViewer(artworkId) {
         $('vLoading').style.display = 'none';
 
         $('vTitle').textContent = data.title;
-        $('vAuthor').innerHTML = data.author_id ? `作者：<a onclick="closeViewerToAuthor('${escapeAttr(data.author_name || '')}', ${data.author_id})">${escapeHtml(data.author_name)}</a>` : '作者：未知';
+        $('vAuthor').innerHTML = data.author_id ? `作者：<a data-act="viewer-author" data-id="${data.author_id}" data-name="${escapeAttr(data.author_name || '')}">${escapeHtml(data.author_name)}</a>` : '作者：未知';
         $('vMeta').innerHTML = `
             <div>Pixiv ID：<span>${data.pixiv_id}</span></div>
             <div>页数：<span>${data.page_count}</span></div>
@@ -1292,13 +1292,13 @@ async function showViewer(artworkId) {
 
         let tagsHtml = '';
         (data.tags || []).forEach(t => {
-            tagsHtml += `<a onclick="closeViewerToTag('${escapeAttr(t.name)}')">#${escapeHtml(t.name)}</a>`;
+            tagsHtml += `<a data-act="viewer-tag" data-name="${escapeAttr(t.name)}">#${escapeHtml(t.name)}</a>`;
         });
         $('vTags').innerHTML = tagsHtml;
 
         let favTagsHtml = '';
         (data.favorites || []).forEach(f => {
-            favTagsHtml += `<a onclick="closeViewerToFavorite(${f.id}, '${escapeAttr(f.name)}')">${escapeHtml(f.name)}</a>`;
+            favTagsHtml += `<a data-act="viewer-fav" data-id="${f.id}" data-name="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a>`;
         });
         if (favTagsHtml) {
             $('vFav').style.display = 'flex';
@@ -1980,6 +1980,39 @@ function sanitizeHtml(html) {
     }
     return template.innerHTML;
 }
+
+// ===== 事件委托（data-act）=====
+// 动态渲染的元素一律用 data-* 携带参数、委托到 document 统一处理，不再拼内联 onclick。
+// 原因：escapeAttr 输出的是 HTML 实体（' → &#39;），而内联事件处理器属性会先做实体解码、
+// 再编译成 JS —— &#39; 会被还原成 '，字符串闭合被击穿。于是用户可控的作品标题 / 作者名 /
+// 标签名 / 收藏夹名就能注入任意脚本（存储型 XSS）。改用 data-* 后数据只停留在属性上下文
+// （escapeAttr 在该上下文才是正确防护），永不进入 JS 代码。
+// 用捕获阶段：命中后阻止继续传播，避免同时触发瓦片自身的「打开查看器」逻辑。
+const _ACTIONS = {
+    'tile-fav': el => openFavSelect(Number(el.dataset.id)),
+    'tile-delete': el => deleteArtworkFromTile(Number(el.dataset.id), el.dataset.title || ''),
+    'filter-author': el => filterByAuthor(el.dataset.name || ''),
+    'filter-fav': el => filterByFavorite(Number(el.dataset.id), el.dataset.name || ''),
+    'fav-delete': el => deleteFavorite(Number(el.dataset.id), el.dataset.name || ''),
+    'sub-delete': el => deleteBookmarkSub(Number(el.dataset.uid), el.dataset.name || ''),
+    'viewer-author': el => closeViewerToAuthor(el.dataset.name || '', Number(el.dataset.id)),
+    'viewer-tag': el => closeViewerToTag(el.dataset.name || ''),
+    'viewer-fav': el => closeViewerToFavorite(Number(el.dataset.id), el.dataset.name || ''),
+};
+
+document.addEventListener('click', function (e) {
+    const el = (e.target && e.target.closest) ? e.target.closest('[data-act]') : null;
+    if (!el) return;
+    const handler = _ACTIONS[el.dataset.act];
+    if (!handler) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // 传播被截断，document 上的冒泡监听不会执行，这里补上它原本负责的两件事
+    hideCtxMenu();
+    const sm = $('sortMenu');
+    if (sm) sm.classList.add('hidden');
+    handler(el);
+}, true);
 
 // ===== 自定义右键菜单 =====
 function showCtxMenu(x, y, items) {

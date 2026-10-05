@@ -117,6 +117,29 @@ def run(t):
     t.check("L7 图库加载失败会显示原因（不再停在“加载中”）",
             "加载失败：" in index and "e.message" in index)
 
+    # ---------------- P0：内联事件处理器不得拼接用户可控字符串 ----------------
+    # escapeAttr 产出的是 HTML 实体（' → &#39;），而内联 onclick 属性会先做实体解码、
+    # 再编译成 JS —— &#39; 会被还原成 '，字符串闭合被击穿 → 存储型 XSS。
+    # 动态参数必须走 data-* + 事件委托，永不进入 JS 代码。
+    bad_inline = [line.strip() for line in index.splitlines()
+                  if "onclick=" in line and "escapeAttr(" in line]
+    t.equal("P0 内联 onclick 不再拼接 escapeAttr（防实体解码击穿）", bad_inline, [])
+    t.check("P0 index.html 使用 data-act 事件委托",
+            "data-act=" in index and "const _ACTIONS" in index)
+    for act in ("tile-fav", "tile-delete", "filter-author", "filter-fav",
+                "fav-delete", "sub-delete", "viewer-author", "viewer-tag", "viewer-fav"):
+        t.check('P0 index.html 含 data-act="%s"' % act, 'data-act="%s"' % act in index)
+    t.check("P0 委托在捕获阶段注册（命中后阻止瓦片误触发）", "}, true);" in index)
+
+    # ---------------- P0：本机访问守卫 / 阻塞调用 ----------------
+    main_src = _read(APP, "main.py")
+    t.check("P0 main.py 注册本机访问守卫中间件",
+            "_local_access_guard" in main_src and '@app.middleware("http")' in main_src)
+    t.check("P0 守卫同时校验 Host 与 Origin/Referer",
+            "_hostname_of" in main_src and "_origin_hostname" in main_src)
+    t.check("P0 订阅接口的阻塞网络调用已移出事件循环",
+            "run_in_threadpool(get_pixiv_client().get_user_display_name" in main_src)
+
     # ---------------- L8（常量部分）：分页大小 ----------------
     t.check("L8 index.html 定义 PAGE_SIZE", "const PAGE_SIZE" in index)
     t.equal("L8 两个分页 URL 都使用 PAGE_SIZE", index.count("per_page=${PAGE_SIZE}"), 2)

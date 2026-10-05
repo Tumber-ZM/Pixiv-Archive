@@ -106,6 +106,33 @@ def run(t, server):
     status, text, _headers = h.post_json(base, "/api/artworks/batch-delete", {"artwork_ids": []})
     t.equal("M8 新版 POST 批量删除可用", status, 200)
 
+    # ---------------- P0：本机访问守卫（Host / Origin / Referer）----------------
+    # 统一用「空列表批量删除」作探测体：即便守卫失效也不会改动任何归档数据。
+    t.equal("P0 正常本机 GET 仍可用", h.get(base, "/api/tags")[0], 200)
+    status, _text = h.request_with_headers(base, "/api/tags", host="evil.example")
+    t.equal("P0 非本机 Host 被拒绝（防 DNS rebinding）", status, 403)
+    status, _text = h.request_with_headers(base, "/api/tags",
+                                           host="127.0.0.1:%d" % server.port)
+    t.equal("P0 带端口的本机 Host 放行", status, 200)
+
+    empty_delete = json.dumps({"artwork_ids": []})
+    status, _text = h.request_with_headers(
+        base, "/api/artworks/batch-delete", method="POST", body=empty_delete,
+        origin="http://evil.example")
+    t.equal("P0 跨站 Origin 的 POST 被拒绝（防 CSRF）", status, 403)
+    status, _text = h.request_with_headers(
+        base, "/api/artworks/batch-delete", method="POST", body=empty_delete,
+        referer="http://evil.example/page")
+    t.equal("P0 无 Origin 但跨站 Referer 的 POST 被拒绝", status, 403)
+    status, _text = h.request_with_headers(
+        base, "/api/artworks/batch-delete", method="POST", body=empty_delete,
+        origin="http://127.0.0.1:%d" % server.port)
+    t.equal("P0 同源 Origin 的 POST 放行", status, 200)
+    status, _text = h.request_with_headers(
+        base, "/api/artworks/batch-delete", method="POST", body=empty_delete)
+    t.equal("P0 不带 Origin/Referer 的本地 POST 仍可用", status, 200)
+    t.equal("P0 拦截之后服务仍然可用", h.get(base, "/api/tags")[0], 200)
+
     # ---------------- L2：删除响应形状 ----------------
     status, text, _headers = h.post_json(base, "/api/artworks/batch-delete", {"artwork_ids": []})
     t.equal("L2 空列表删除返回 200", status, 200)

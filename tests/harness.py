@@ -15,6 +15,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TESTS_DIR)
@@ -102,6 +103,40 @@ def header(headers, name):
         if key.lower() == name.lower():
             return str(value).strip()
     return ""
+
+
+def request_with_headers(base, path, method="GET", body=None, host=None,
+                         origin=None, referer=None, timeout=20):
+    """用自定义 Host / Origin / Referer 头发请求，返回 (status, text)。
+
+    urllib 不方便覆盖 Host 头，这里直接用 http.client 的底层接口显式构造请求，
+    用于验证「本机访问守卫」中间件（Host 校验 / 跨站 Origin 拦截）。
+    """
+    import http.client
+
+    parts = urlsplit(base)
+    data = None
+    if body is not None:
+        data = body.encode("utf-8") if isinstance(body, str) else body
+
+    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=timeout)
+    try:
+        conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        conn.putheader("Host", host if host is not None else parts.netloc)
+        if data is not None:
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(len(data)))
+        if origin is not None:
+            conn.putheader("Origin", origin)
+        if referer is not None:
+            conn.putheader("Referer", referer)
+        conn.endheaders(data)
+        resp = conn.getresponse()
+        return resp.status, resp.read().decode("utf-8", "replace")
+    except Exception as exc:  # 连接被拒 / 超时
+        return 0, str(exc)
+    finally:
+        conn.close()
 
 
 def load_json(text):
