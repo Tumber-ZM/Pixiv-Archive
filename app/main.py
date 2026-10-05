@@ -108,6 +108,40 @@ async def _local_access_guard(request: Request, call_next):
     return await call_next(request)
 
 
+# ---- 安全响应头 ----
+# 本应用没有任何外部资源依赖（脚本 / 样式 / 图片全部同源，见 templates 与 static），
+# 因此可以在不放宽来源的前提下收紧 CSP。脚本与样式仍保留 'unsafe-inline'：本工具
+# 零构建、JS/CSS 全部内联，这是当前架构下的必要让步；CSP 在这里的作用是禁止加载
+# 外部脚本、禁止 object/embed、禁止被第三方页面嵌框、限制表单外发与 base 篡改，
+# 也为将来把内联脚本外移后进一步收紧（去掉 'unsafe-inline'）预留了位置。
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ),
+}
+
+
+# 定义顺序在 _local_access_guard 之后：Starlette 后添加的中间件在最外层，
+# 因此安全响应头会加在**所有**响应上，包括守卫直接返回的 403。
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 @app.exception_handler(ValidationError)
 async def _validation_error_handler(request: Request, exc: ValidationError):
     """接口内部手工构造 pydantic 模型时的校验失败，统一返回 422。

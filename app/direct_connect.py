@@ -4,6 +4,7 @@ import ssl
 import socket
 import threading
 import urllib3
+import urllib3.util.connection as urllib3_connection
 from requests.adapters import HTTPAdapter
 from app import paths
 from app import envfile
@@ -27,7 +28,11 @@ DOH_SERVERS = [
 ]
 
 _patch_lock = threading.Lock()
-_getaddrinfo_original = socket.getaddrinfo
+# urllib3 建连时通过 `urllib3.util.connection.create_connection` 解析地址
+# （urllib3.connection.HTTPConnection._new_conn 里以模块属性方式调用，见 2.8.0）。
+# 这里保存真正的原始函数，patch 只发生在这个模块属性上——作用范围限于
+# requests/urllib3 发起的连接，不再改动进程级的 socket.getaddrinfo。
+_create_connection_original = urllib3_connection.create_connection
 _patched = False
 
 ENV_KEYS = {
@@ -66,11 +71,20 @@ def save_ip_override(host, ip):
     _write_env({ENV_KEYS[host]: ip})
 
 
-def _patched_getaddrinfo(host, *args, **kwargs):
+def _patched_create_connection(address, *args, **kwargs):
+    """把 pixiv 主机的域名换成 .env 里配置的 IP，再交给 urllib3 建连。
+
+    仅挂在 urllib3 的连接创建路径上（见 enable_direct），因此只影响
+    requests/urllib3 发起的连接，不动进程级的 socket.getaddrinfo。
+    """
+    try:
+        host, port = address
+    except (TypeError, ValueError):
+        return _create_connection_original(address, *args, **kwargs)
     mapping = get_ip_map()
     if host in mapping:
-        host = mapping[host]
-    return _getaddrinfo_original(host, *args, **kwargs)
+        address = (mapping[host], port)
+    return _create_connection_original(address, *args, **kwargs)
 
 
 def enable_direct():
@@ -82,7 +96,7 @@ def enable_direct():
         # （IP 直连没有域名可用于 SNI，也就无法做证书主机名校验，见
         # DirectAdapter._make_ssl_context），与调用方其它 HTTPS 请求无关。
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        socket.getaddrinfo = _patched_getaddrinfo
+        urllib3_connection.create_connection = _patched_create_connection
         _patched = True
 
 
@@ -215,18 +229,27 @@ def _validate_ip(host, ip, timeout=10):
             "referer": "https://app-api.pixiv.net/",
             "User-Agent": "PixivIOSApp/5.8.0",
         })
-        # Temporarily override resolution to the candidate IP
-        original = socket.getaddrinfo
-        def forced(hostname, *args, **kwargs):
-            if hostname == host:
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443))]
-            return original(hostname, *args, **kwargs)
-        socket.getaddrinfo = forced
+        # Temporarily force this host to resolve to the candidate IP.
+        # 只在本函数作用域内 patch urllib3 的连接创建函数（不再改全局
+        # socket.getaddrinfo）；委托到真正的原始函数，避免与 enable_direct 的
+        # IP 映射叠加——否则候选 IP 会被 .env 里的旧 IP 覆盖，探测失去意义。
+        original = urllib3_connection.create_connection
+
+        def forced(address, *args, **kwargs):
+            try:
+                h, port = address
+            except (TypeError, ValueError):
+                return _create_connection_original(address, *args, **kwargs)
+            if h == host:
+                address = (ip, port)
+            return _create_connection_original(address, *args, **kwargs)
+
+        urllib3_connection.create_connection = forced
         try:
             resp = session.get(f"https://{host}/", timeout=timeout)
             return _response_is_usable(resp)
         finally:
-            socket.getaddrinfo = original
+            urllib3_connection.create_connection = original
     except Exception:
         return False
 

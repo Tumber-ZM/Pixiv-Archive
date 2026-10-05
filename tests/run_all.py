@@ -46,6 +46,18 @@ def skipped_module(module, reason):
     return report
 
 
+def failed_module(module, reason):
+    """把「本应运行却没能运行」的模块记成失败，而不是静默跳过。
+
+    典型场景：真实服务起不来（例如已有实例持锁、端口被占）。若按跳过处理，
+    这些 live 用例其实一项都没跑，摘要却仍报「全部通过」、退出码仍为 0——
+    「通过」会掩盖「live 用例没跑」。这里明确记为失败。
+    """
+    report = harness.Report(getattr(module, "TITLE", module.__name__))
+    report.check("需要真实服务的用例未能运行：" + reason, False)
+    return report
+
+
 def run_js_tests():
     """如果有 tests/js/*.test.js 且本机有 node，就跑一遍前端纯逻辑单测。"""
     js_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "js")
@@ -135,7 +147,8 @@ def main():
                     if ok:
                         reports.append(run_module(module, server))
                     else:
-                        reports.append(skipped_module(module, message))
+                        # 服务没起来：live 用例一项没跑，必须算失败（不能算跳过）
+                        reports.append(failed_module(module, message))
             finally:
                 server.stop()
 

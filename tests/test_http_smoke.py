@@ -133,6 +133,27 @@ def run(t, server):
     t.equal("P0 不带 Origin/Referer 的本地 POST 仍可用", status, 200)
     t.equal("P0 拦截之后服务仍然可用", h.get(base, "/api/tags")[0], 200)
 
+    # ---------------- P3：安全响应头（含被守卫拒绝的响应）----------------
+    status, _text, headers = h.request(base + "/")
+    t.equal("P3 首页仍返回 200", status, 200)
+    t.equal("P3 首页带 X-Content-Type-Options: nosniff",
+            h.header(headers, "X-Content-Type-Options"), "nosniff")
+    t.equal("P3 首页带 X-Frame-Options: DENY", h.header(headers, "X-Frame-Options"), "DENY")
+    t.equal("P3 首页带 Referrer-Policy: no-referrer",
+            h.header(headers, "Referrer-Policy"), "no-referrer")
+    csp = h.header(headers, "Content-Security-Policy")
+    t.check("P3 CSP 默认同源且禁止 object/embed",
+            "default-src 'self'" in csp and "object-src 'none'" in csp, "CSP=%r" % csp)
+    t.check("P3 CSP 禁止被第三方页面嵌框", "frame-ancestors 'none'" in csp, "CSP=%r" % csp)
+
+    status, _text, headers403 = h.request_with_headers(
+        base, "/api/tags", host="evil.example", return_headers=True)
+    t.equal("P3 被守卫拒绝仍返回 403", status, 403)
+    t.equal("P3 403 响应同样带 nosniff",
+            h.header(headers403, "X-Content-Type-Options"), "nosniff")
+    t.equal("P3 403 响应同样带 X-Frame-Options",
+            h.header(headers403, "X-Frame-Options"), "DENY")
+
     # ---------------- L2：删除响应形状 ----------------
     status, text, _headers = h.post_json(base, "/api/artworks/batch-delete", {"artwork_ids": []})
     t.equal("L2 空列表删除返回 200", status, 200)

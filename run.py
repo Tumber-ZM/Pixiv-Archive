@@ -14,6 +14,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 import webbrowser
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -59,19 +60,31 @@ def _pid_is_alive(pid):
         return True
 
 
-def _lock_file_is_stale(lock_path):
-    """锁文件存在：判断持有者是否已经不在（陈旧锁可被接管）。"""
+def _lock_content(lock_path):
+    """读取锁文件内容；不存在 / 读不到时返回 None。"""
     try:
         with open(lock_path, "r", encoding="ascii", errors="ignore") as f:
-            raw = (f.read() or "").strip()
+            return (f.read() or "").strip()
     except OSError:
-        return False
+        return None
+
+
+def _raw_is_stale(raw, lock_path):
+    """根据已读到的内容判断锁是否陈旧（持有者已不在）。"""
     if raw.isdigit() and int(raw) > 0:
         return not _pid_is_alive(int(raw))
     try:
         return (time.time() - os.path.getmtime(lock_path)) > LOCK_FILE_GRACE_SECONDS
     except OSError:
         return False
+
+
+def _lock_file_is_stale(lock_path):
+    """锁文件存在：判断持有者是否已经不在（陈旧锁可被接管）。"""
+    raw = _lock_content(lock_path)
+    if raw is None:
+        return False
+    return _raw_is_stale(raw, lock_path)
 
 
 def acquire_single_instance():
@@ -94,12 +107,36 @@ def acquire_single_instance():
                 fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
                 # 只在第一次尝试接管陈旧锁；第二次仍冲突说明确实有实例在跑
-                if attempt or not _lock_file_is_stale(lock_path):
+                if attempt:
+                    return None
+                raw = _lock_content(lock_path)
+                if raw is None:
+                    continue  # 锁刚好被释放：直接重试创建
+                if not _raw_is_stale(raw, lock_path):
+                    return None
+                # 原子接管：把锁 rename 到本进程独占的名字。rename 是原子操作，同一
+                # 把锁只有一个进程能移走，避免「remove + 重建」之间两个实例都以为
+                # 拿到了锁。移走后**复核内容**：确认移走的确实是刚才判定为陈旧的
+                # 那把。若内容已变（判陈旧之后、rename 之前，别的实例已接管并写入
+                # 了自己的活 PID），说明抢到的是别人的锁 —— 放回原位并放弃。
+                stale_path = "%s.stale.%d.%s" % (lock_path, os.getpid(), uuid.uuid4().hex)
+                try:
+                    os.rename(lock_path, stale_path)
+                except OSError:
+                    # 别人先一步接管了（或锁已被正常释放）：不抢，退出
+                    return None
+                if _lock_content(stale_path) != raw:
+                    # 移走的不是刚才那把陈旧锁（判陈旧之后被别人换成了活锁）：
+                    # 放回原位并放弃；放不回（原位已被别人重建）就留着不管。
+                    try:
+                        os.rename(stale_path, lock_path)
+                    except OSError:
+                        pass
                     return None
                 try:
-                    os.remove(lock_path)
+                    os.remove(stale_path)
                 except OSError:
-                    return None
+                    pass
                 continue
             except OSError:
                 return True  # 数据目录不可写等：不阻塞启动

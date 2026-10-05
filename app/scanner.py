@@ -4,11 +4,13 @@ import hashlib
 from datetime import datetime
 from dotenv import load_dotenv
 from app import paths
-from app.database import get_db, init_db
+from app.database import get_connection, init_db
 
 load_dotenv(paths.ENV_FILE)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+# 长扫描按作品数分批提交，避免整个任务期间独占 SQLite 写锁、卡住 UI 的并发写
+COMMIT_BATCH_SIZE = 200
 PIXIV_ID_MULTI_PATTERN = re.compile(r"(\d{7,10})_p(\d+)", re.IGNORECASE)
 PIXIV_ID_MULTI_NO_UNDERSCORE_PATTERN = re.compile(r"(\d{7,10})p(\d+)", re.IGNORECASE)
 PIXIV_ID_SEARCH_PATTERN = re.compile(r"\d{7,10}")
@@ -72,10 +74,12 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
             grouped[pixiv_id] = []
         grouped[pixiv_id].append((filepath, page))
 
-    with get_db() as conn:
+    conn = get_connection()
+    try:
         total_works = len(grouped)
         for i, (pixiv_id, images) in enumerate(grouped.items()):
             if cancel_event and cancel_event.is_set():
+                conn.commit()  # 取消时保留已完成的部分
                 return {"cancelled": True, "new_artworks": new_artworks, "new_images": new_images}
             if progress_callback:
                 progress_callback("import", i + 1, total_works, f"写入数据库…{i + 1}/{total_works}（PID {pixiv_id}）")
@@ -130,8 +134,18 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
                 )
                 new_images += 1
 
+            # 分批提交：长扫描不再整个任务独占写锁，UI 的并发写无需等到任务结束
+            if (i + 1) % COMMIT_BATCH_SIZE == 0:
+                conn.commit()
+
         pruned_duplicates = _prune_duplicates(conn)
         prune_result = _prune_missing(conn, source_dir, image_files)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
     return {
         "total_files_scanned": len(image_files),

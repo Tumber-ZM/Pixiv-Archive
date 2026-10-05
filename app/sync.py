@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 from app import paths
-from app.database import get_db, init_db
+from app.database import get_connection, init_db
 from app.pixiv import (
     get_pixiv_client,
     PixivDeletedError,
@@ -19,6 +19,11 @@ METADATA_DIR = os.getenv("METADATA_DIR", "metadata")
 # 已删除作品的复查间隔（天）：标记 deleted 时写入了 last_synced，
 # 只有距上次确认超过该天数的 deleted 作品才会被再次请求。
 _DELETED_RECHECK_DAYS = 30
+
+# 同步每处理这么多行提交一次：整批一条大事务会让写锁一直攥到任务结束，
+# UI 的并发写只能干等。分批后每批之间释放写锁（每行本身有网络往返 + 限速，
+# 这点提交开销可忽略）。
+SYNC_COMMIT_BATCH_SIZE = 25
 
 
 def _select_pending_rows(conn, specific_pixiv_id=None):
@@ -53,7 +58,8 @@ def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=N
     delay_ms = int(_d_str) if _d_str.isdigit() else 800
     delay_ms = max(0, min(delay_ms, 10000))
 
-    with get_db() as conn:
+    conn = get_connection()
+    try:
         rows = _select_pending_rows(conn, specific_pixiv_id)
 
         total = len(rows)
@@ -67,6 +73,9 @@ def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=N
         }
 
         for idx, row in enumerate(rows):
+            # 在每批开头提交上一批：continue / break 都能自然地把已完成的行落盘
+            if idx and idx % SYNC_COMMIT_BATCH_SIZE == 0:
+                conn.commit()
             artwork_id = row["id"]
             pixiv_id = row["pixiv_id"]
 
@@ -156,7 +165,13 @@ def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=N
             results["synced"] += 1
             results["details"].append({"pixiv_id": pixiv_id, "status": "synced"})
 
+        conn.commit()
         return results
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _upsert_author(conn, illust_data):

@@ -69,7 +69,9 @@ run.py               启动本地 HTTP 服务（仅 127.0.0.1，含单实例锁�
 Start.bat            启动服务（浏览器模式）
 install.bat          一键初始化环境（创建 venv + 安装依赖 + 生成 .env）
 tests/               回归测试套件（venv\Scripts\python.exe tests\run_all.py）
-requirements.txt     依赖清单
+tools/               维护脚本（gen_requirements_lock.py：重新生成依赖锁）
+requirements.txt     依赖清单（宽松版本约束）
+requirements.lock    依赖锁定清单（含各平台轮子 sha256，供可复现安装）
 .env.template        环境变量模板（复制为 .env 后填写）
 ```
 
@@ -87,6 +89,24 @@ requirements.txt     依赖清单
 
 `venv/` 只是普通 Python 虚拟环境（`python -m venv venv` 创建，再用 `venv\Scripts\python.exe -m pip install -r requirements.txt` 安装依赖）。里面没有任何个人数据，也不进版本库（`.gitignore` 已排除）；换台机器运行 `install.bat` 即可自行创建。
 
+### 依赖锁定与哈希校验
+
+`requirements.lock` 锁定了 `requirements.txt` 解析出的**完整依赖闭包**（含间接依赖），并附带每个包在 Windows + CPython 3.10–3.13 下各轮子的 `sha256`。用它安装可复现、可校验：
+
+```
+venv\Scripts\python.exe -m pip install -r requirements.lock --require-hashes
+```
+
+`install.bat` 默认走这条路；若本机 Python 版本不在覆盖范围内，pip 会拒绝，脚本会自动回退到 `requirements.txt`（此时没有哈希校验）。
+
+> **为什么不再用 `--trusted-host`**：它会关闭 pip 对 PyPI 的 TLS 证书校验，让中间人可替换下载内容。现在默认走完整校验；若确需绕过自签证书的中间盒，请用 `PIP_CERT` 指向可信 CA，而不是长期关闭校验。
+
+重新生成锁（需联网，会用到 `tools/gen_requirements_lock.py`）：
+
+```
+venv\Scripts\python.exe tools\gen_requirements_lock.py
+```
+
 ---
 
 ## 使用教程
@@ -98,7 +118,7 @@ requirements.txt     依赖清单
 双击 `install.bat`，脚本会自动：
 1. 查找系统 Python（`python` → `py`）；
 2. 创建本地虚拟环境 `venv/`；
-3. 安装 `requirements.txt` 全部依赖（带 `--trusted-host`，规避常见证书/中间人拦截）；
+3. 安装依赖：优先用 `requirements.lock` 做带哈希校验的可复现安装；若本机解释器不在锁的覆盖范围（Windows + CPython 3.10–3.13）则自动回退到 `requirements.txt`；
 4. 若不存在 `.env`，自动从 `.env.template` 复制生成。
 
 > 没有 Python？先到 https://www.python.org/downloads/ 安装，安装时勾选 "Add python.exe to PATH"，再运行 `install.bat`。

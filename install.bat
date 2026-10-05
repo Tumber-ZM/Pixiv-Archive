@@ -34,13 +34,34 @@ if not exist "%BASE%venv\Scripts\python.exe" (
     echo [1/3] venv already exists, skipping creation.
 )
 
-echo [2/3] Installing dependencies from requirements.txt ...
-"%BASE%venv\Scripts\python.exe" -m pip install --upgrade pip --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org
-"%BASE%venv\Scripts\python.exe" -m pip install -r "%BASE%requirements.txt" --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org
+echo [2/3] Installing dependencies ...
+rem pip 默认校验 PyPI 的 TLS 证书；这里不再传 --trusted-host（那会关闭校验、
+rem 让中间人有机可乘）。如遇自签证书的中间盒，请改用系统信任链或临时设置
+rem PIP_CERT，而不是长期关闭校验。
+"%BASE%venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 (
-    echo [ERROR] Dependency installation failed. Check your network and retry.
+    echo [ERROR] Failed to upgrade pip. Check your network and retry.
     pause
     exit /b 1
+)
+
+rem 优先用 requirements.lock 做带哈希校验的可复现安装。该锁覆盖 Windows +
+rem CPython 3.10-3.13；若本机解释器不在其内，pip 会拒绝，此时回退到
+rem requirements.txt，保证安装仍能成功。
+set "LOCK_OK="
+if exist "%BASE%requirements.lock" (
+    "%BASE%venv\Scripts\python.exe" -m pip install -r "%BASE%requirements.lock" --require-hashes
+    if not errorlevel 1 set "LOCK_OK=1"
+)
+if not defined LOCK_OK (
+    echo [WARN] Hash-verified install unavailable for this interpreter;
+    echo        falling back to requirements.txt without hash verification.
+    "%BASE%venv\Scripts\python.exe" -m pip install -r "%BASE%requirements.txt"
+    if errorlevel 1 (
+        echo [ERROR] Dependency installation failed. Check your network and retry.
+        pause
+        exit /b 1
+    )
 )
 
 rem NOTE: this block deliberately uses goto + labels instead of nested if blocks.

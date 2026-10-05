@@ -106,11 +106,12 @@ def header(headers, name):
 
 
 def request_with_headers(base, path, method="GET", body=None, host=None,
-                         origin=None, referer=None, timeout=20):
+                         origin=None, referer=None, timeout=20, return_headers=False):
     """用自定义 Host / Origin / Referer 头发请求，返回 (status, text)。
 
     urllib 不方便覆盖 Host 头，这里直接用 http.client 的底层接口显式构造请求，
     用于验证「本机访问守卫」中间件（Host 校验 / 跨站 Origin 拦截）。
+    return_headers=True 时额外返回响应头 dict（用于校验安全响应头）。
     """
     import http.client
 
@@ -132,8 +133,13 @@ def request_with_headers(base, path, method="GET", body=None, host=None,
             conn.putheader("Referer", referer)
         conn.endheaders(data)
         resp = conn.getresponse()
-        return resp.status, resp.read().decode("utf-8", "replace")
+        text = resp.read().decode("utf-8", "replace")
+        if return_headers:
+            return resp.status, text, dict(resp.getheaders())
+        return resp.status, text
     except Exception as exc:  # 连接被拒 / 超时
+        if return_headers:
+            return 0, str(exc), {}
         return 0, str(exc)
     finally:
         conn.close()
