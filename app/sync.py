@@ -145,6 +145,7 @@ def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=N
                 """UPDATE artworks SET
                     title = ?, description = ?, author_id = ?, author_name = ?,
                     create_date = ?, page_count = ?, width = ?, height = ?,
+                    ai_type = ?,
                     pixiv_status = 'active', last_synced = ?, sync_error = NULL
                 WHERE id = ?""",
                 (
@@ -156,6 +157,7 @@ def sync_metadata(specific_pixiv_id=None, progress_callback=None, cancel_event=N
                     illust_data["page_count"],
                     illust_data["width"],
                     illust_data["height"],
+                    illust_data.get("ai_type", 1),
                     now_str,
                     artwork_id,
                 ),

@@ -12,6 +12,7 @@ import os
 import re
 import socket
 import tempfile
+import time
 
 import urllib3.util.connection as urllib3_connection
 
@@ -34,12 +35,21 @@ DEAD_PID = 15000000
 
 def run(t):
     _security_headers(t)
+    _asgi_500_headers(t)
     _direct_patch(t)
     _scanner_batching(t)
     _sync_batching(t)
     _lock_atomic(t)
+    _stale_sweep(t)
     _deps_lock(t)
+    _db_indexes(t)
+    _explorer_select(t)
     _harness_integrity(t)
+
+
+def _read(*parts):
+    with open(os.path.join(h.ROOT, *parts), encoding="utf-8") as handle:
+        return handle.read()
 
 
 # ---------------- 安全响应头 ----------------
@@ -68,6 +78,87 @@ def _security_headers(t):
     else:
         t.check("P3 安全头中间件在守卫外层（403 也带头）", False,
                 "缺少中间件：%r" % (dispatches,))
+
+
+# ---------------- 未处理异常产生的 500 也要带安全头 ----------------
+
+def _asgi_500_headers(t):
+    """500（未处理异常）响应必须也带安全头。
+
+    这正是 `@app.middleware("http")` 覆盖不到的地方：路由抛未处理异常时，500 由
+    更外层的 ServerErrorMiddleware 直接生成、不经过普通中间件。这里用**真实的**
+    ServerErrorMiddleware 复现该路径，再套 `_SecurityHeadersASGI` 验证兜住了。
+    """
+    import asyncio
+
+    from starlette.middleware.errors import ServerErrorMiddleware
+
+    async def raising_app(scope, receive, send):
+        raise RuntimeError("boom-for-500")
+
+    inner = ServerErrorMiddleware(raising_app, handler=None, debug=False)
+    wrapped = app_main._SecurityHeadersASGI(inner)
+
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    raised = None
+    try:
+        asyncio.run(wrapped({"type": "http", "method": "GET", "path": "/", "headers": []},
+                            receive, send))
+    except Exception as exc:  # noqa: BLE001 - ServerErrorMiddleware 发完响应后会继续上抛
+        raised = exc
+
+    t.check("P3 未处理异常继续上抛（交给服务器记录）",
+            isinstance(raised, RuntimeError), "raised=%r" % (raised,))
+    start = next((m for m in sent if m.get("type") == "http.response.start"), None)
+    t.check("P3 未处理异常确实生成了 500 响应",
+            start is not None and start.get("status") == 500,
+            "sent=%r" % ([m.get("type") for m in sent],))
+    if start is None:
+        return
+    names = {name.decode("latin-1").lower() for name, _ in start.get("headers", [])}
+    for header in ("x-content-type-options", "x-frame-options",
+                   "referrer-policy", "content-security-policy"):
+        t.check("P3 500 响应带 %s" % header, header in names, "names=%r" % sorted(names))
+
+    # 包装器写对了还不够 —— 必须确认对外服务的确实是它（否则等于没接）
+    run_src = _read("run.py")
+    t.check("P3 run.py 挂载的是 asgi_app 而不是裸 app",
+            "from app.main import asgi_app" in run_src and "serve(asgi_app," in run_src)
+
+
+# ---------------- 排序字段索引 ----------------
+
+def _db_indexes(t):
+    saved = database.DB_PATH
+    database.DB_PATH = os.path.join(tempfile.mkdtemp(prefix="pa-idx-"), "idx.db")
+    try:
+        database.init_db()
+        with database.get_db() as conn:
+            names = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'").fetchall()}
+        t.check("P2 为 create_date 建了索引（排序不再全表扫）",
+                "idx_artworks_create_date" in names, "indexes=%r" % sorted(names))
+        t.check("P2 为 first_seen 建了索引（排序不再全表扫）",
+                "idx_artworks_first_seen" in names, "indexes=%r" % sorted(names))
+    finally:
+        database.DB_PATH = saved
+
+
+# ---------------- explorer /select, 参数形态 ----------------
+
+def _explorer_select(t):
+    src = _read("app", "main.py")
+    t.check("P2 explorer 的 /select, 与路径拼成同一个参数",
+            'f"/select,{path}"' in src)
+    t.check("P2 explorer 不再把 /select, 与路径拆成两个参数",
+            '["explorer", "/select,", path]' not in src)
 
 
 # ---------------- getaddrinfo patch 收窄 ----------------
@@ -309,7 +400,14 @@ def _lock_concurrent_takeover(t, tmp, lock_path, rounds=15):
             for th in threads:
                 th.start()
             for th in threads:
-                th.join(timeout=15)
+                # 无超时 join：线程内唯一的阻塞点是 barrier（自带 timeout=10），不会挂死。
+                # 用 join(timeout=...) 一旦超时先到，仍卡在 barrier 上的线程会「漏」进
+                # 下一轮，与新线程抢同一把锁，污染后续轮次。
+                th.join()
+            if any(th.is_alive() for th in threads):
+                ok = False
+                detail = "第 %d 轮有线程未结束（不应发生）" % (i + 1)
+                break
 
             won = [w for w in winners if w is not None]
             if len(won) != 1:
@@ -320,6 +418,40 @@ def _lock_concurrent_takeover(t, tmp, lock_path, rounds=15):
         t.check("P3 并发抢同一把陈旧锁：每轮只有一个赢家", ok, detail)
     finally:
         run_mod._raw_is_stale = real_raw_is_stale
+
+
+# ---------------- 被强杀遗留的 .stale 接管文件清理 ----------------
+
+def _stale_sweep(t):
+    """接管临时文件在「rename 与删除之间被强杀」时会残留，下次拿锁要顺手清掉。
+
+    清理必须带宽限期：并发实例正在进行的接管只是微秒级窗口，不能误删。
+    """
+    tmp = tempfile.mkdtemp(prefix="pa-p3-stale-")
+    original_dir = run_mod.paths.DATA_DIR
+    run_mod.paths.DATA_DIR = tmp
+    try:
+        lock_path = os.path.join(tmp, run_mod.LOCK_FILE_NAME)
+        old_stale = lock_path + ".stale.4242.aaaa"
+        fresh_stale = lock_path + ".stale.4242.bbbb"
+        for path in (old_stale, fresh_stale):
+            with open(path, "w", encoding="ascii") as handle:
+                handle.write("12345")
+        # 把其中一个改成「远超宽限期」
+        past = time.time() - (run_mod.STALE_LOCK_GRACE_SECONDS + 30)
+        os.utime(old_stale, (past, past))
+
+        taken = run_mod.acquire_single_instance()
+        t.equal("P3 取得锁（用于触发清理）", taken, lock_path)
+        t.check("P3 清理被强杀遗留的 .stale 文件（已超宽限期）",
+                not os.path.exists(old_stale),
+                "目录=%r" % sorted(os.listdir(tmp)))
+        t.check("P3 不误删仍在宽限期内的 .stale 文件（可能是并发接管）",
+                os.path.exists(fresh_stale),
+                "目录=%r" % sorted(os.listdir(tmp)))
+        run_mod.release_single_instance(taken)
+    finally:
+        run_mod.paths.DATA_DIR = original_dir
 
 
 # ---------------- 依赖锁 + TLS 校验 ----------------

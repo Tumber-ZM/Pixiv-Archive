@@ -5,8 +5,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 from app import paths
 from app.database import get_connection, init_db
+from app import logging_setup
 
 load_dotenv(paths.ENV_FILE)
+
+logger = logging_setup.get_logger("pixiv_archive.scanner")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 # 长扫描按作品数分批提交，避免整个任务期间独占 SQLite 写锁、卡住 UI 的并发写
@@ -117,7 +120,8 @@ def scan_directory(source_dir, progress_callback=None, cancel_event=None):
 
                 try:
                     sha = compute_sha256(filepath)
-                except Exception:
+                except Exception as exc:
+                    logger.warning("计算 SHA256 失败，该文件跳过去重：%s（%s）", filepath, exc)
                     sha = None
 
                 if sha:

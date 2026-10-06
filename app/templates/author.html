@@ -53,7 +53,7 @@ async function loadAuthorArtworks(page = 1) {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('gallery').innerHTML = '';
 
-    const data = await fetchJson(`/api/artworks?page=${page}&author=${encodeURIComponent(window._authorName)}&r18=${r18Param()}`);
+    const data = await fetchJson(`/api/artworks?page=${page}&author=${encodeURIComponent(window._authorName)}&r18=${r18Param()}&ai=${aiParam()}`);
     if (!data) return;
     document.getElementById('loading').style.display = 'none';
 
@@ -69,7 +69,7 @@ async function loadAuthorArtworks(page = 1) {
         html += `
         <div class="card">
             <a href="/artwork/${a.id}">
-                ${thumb ? `<img class="thumb" src="${thumb}" alt="${title}" loading="lazy">`
+                ${thumb ? `<img class="thumb" src="${thumb}" alt="${escapeAttr(title)}" loading="lazy">`
                         : `<div class="thumb">无缩略图</div>`}
                 <div class="info">
                     <div class="title">${escapeHtml(title)}</div>

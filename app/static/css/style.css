@@ -20,6 +20,7 @@
     --gold: #f2c14e;
     --danger: #f0566a;
     --danger-soft: rgba(240, 86, 106, 0.14);
+    --ai: #a78bfa;
     --success: #43cf8c;
     --overlay: rgba(6, 8, 11, 0.86);
 
@@ -724,6 +725,12 @@ html.sb-collapsed .safe-badge {
 .tile-badges span.sync-err {
     background: var(--gold);
     color: #201a05;
+}
+
+/* AI 生成：刻意用紫色，与 R18 的红色（--danger）明确区分，避免看混 */
+.tile-badges span.ai {
+    background: var(--ai);
+    color: #1b1330;
 }
 
 .tile-check {

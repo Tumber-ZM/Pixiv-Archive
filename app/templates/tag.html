@@ -24,7 +24,10 @@
 </div>
 
 <script>
-const tagName = decodeURIComponent("{{ tag_name }}");
+// tojson 会转义 < > & ' 与反斜杠/换行，避免标签名里的特殊字符打断脚本字面量。
+// （Jinja 的 HTML 转义在 script 标签内不解码实体：用双引号直接包住变量，既可能
+//   给出错误的值，也无法处理反斜杠导致的语法错误。）
+const tagName = decodeURIComponent({{ tag_name | tojson }});
 let currentPage = 1;
 
 async function load() {
@@ -38,7 +41,7 @@ async function loadTagArtworks(page = 1) {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('gallery').innerHTML = '';
 
-    const data = await fetchJson(`/api/artworks?page=${page}&tag=${encodeURIComponent(tagName)}&r18=${r18Param()}`);
+    const data = await fetchJson(`/api/artworks?page=${page}&tag=${encodeURIComponent(tagName)}&r18=${r18Param()}&ai=${aiParam()}`);
     if (!data) return;
     document.getElementById('loading').style.display = 'none';
 
@@ -57,7 +60,7 @@ async function loadTagArtworks(page = 1) {
         html += `
         <div class="card">
             <a href="/artwork/${a.id}">
-                ${thumb ? `<img class="thumb" src="${thumb}" alt="${title}" loading="lazy">`
+                ${thumb ? `<img class="thumb" src="${thumb}" alt="${escapeAttr(title)}" loading="lazy">`
                         : `<div class="thumb">无缩略图</div>`}
                 <div class="info">
                     <div class="title">${escapeHtml(title)}</div>

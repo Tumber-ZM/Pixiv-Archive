@@ -70,6 +70,7 @@
             <div class="sort-menu hidden" id="sortMenu"></div>
         </div>
         <button class="top-btn" id="btnR18" onclick="cycleR18()" title="切换 R18 显示模式">R18：全部</button>
+        <button class="top-btn" id="btnAI" onclick="cycleAI()" title="切换 AI 生成作品显示模式">AI：全部</button>
         <button class="top-btn" id="btnDeleted" onclick="toggleDeletedFilter()" title="只看已删除作品">已删除</button>
     </header>
 
@@ -608,6 +609,8 @@ function buildGalleryUrl(page, ctx) {
     }
     const r = r18Param();
     if (r) url += '&r18=' + r;
+    const aip = aiParam();
+    if (aip) url += '&ai=' + aip;
     if (deletedFilter) url += '&status=deleted';
     // 随机排序必须带上固定 seed，否则后端每次重新排序，翻页会重复/漏项
     if (ctx.sort === 'random') url += '&seed=' + (ctx.seed || 0);
@@ -647,6 +650,7 @@ function renderGallery(data) {
         let badges = '';
         if (a.page_count > 1) badges += `<span>${a.page_count}P</span>`;
         if (a.is_r18) badges += `<span class="r18">R18</span>`;
+        if (a.is_ai) badges += `<span class="ai">AI</span>`;
         if (a.pixiv_status === 'deleted') badges += `<span class="deleted">已删除</span>`;
         if (a.sync_error) badges += `<span class="sync-err">同步失败</span>`;
 
@@ -839,7 +843,7 @@ async function loadAuthorsView() {
     const q = $('authorSearchInput') ? $('authorSearchInput').value.trim() : '';
     list.innerHTML = '<div class="loading">加载中...</div>';
     try {
-        let url = '/api/authors/works?limit=20&r18=' + r18Param();
+        let url = '/api/authors/works?limit=20&r18=' + r18Param() + '&ai=' + aiParam();
         if (q) url += '&q=' + encodeURIComponent(q);
         const resp = await fetch(url);
         const authors = await resp.json();
@@ -929,7 +933,7 @@ async function loadFavoritesView() {
     const grid = $('favoriteGrid');
     grid.innerHTML = '<div class="loading">加载中...</div>';
     try {
-        const resp = await fetch('/api/favorites?r18=' + r18Param());
+        const resp = await fetch('/api/favorites?r18=' + r18Param() + '&ai=' + aiParam());
         const favorites = await resp.json();
         _favCache = favorites;
         grid.innerHTML = '';
@@ -1284,7 +1288,7 @@ async function showViewer(artworkId) {
             <div>Pixiv ID：<span>${data.pixiv_id}</span></div>
             <div>页数：<span>${data.page_count}</span></div>
             <div>尺寸：<span>${data.width || '?'} × ${data.height || '?'}</span></div>
-            <div>发布时间：<span>${data.create_date || '未知'}</span></div>
+            <div>发布时间：<span>${escapeHtml(data.create_date || '未知')}</span></div>
             <div>状态：<span>${data.pixiv_status === 'deleted' ? '已从 Pixiv 删除' : '活跃'}</span></div>
             <div>首次扫描：<span>${data.first_seen || '未知'}</span></div>
             <div>最后同步：<span>${data.last_synced || '未同步'}</span></div>
@@ -1775,6 +1779,37 @@ function updateR18Btn() {
     if (btn) btn.textContent = labels[_r18Mode] || 'R18：全部';
 }
 
+// ===== AI 生成显示模式（与 R18 完全独立：各自的变量 / localStorage 键 / 按钮）=====
+let _aiMode = 'all';
+
+function aiParam() {
+    return _aiMode === 'all' ? '' : _aiMode;
+}
+
+function initAI() {
+    try {
+        const v = localStorage.getItem('pa-ai');
+        if (v === 'hide' || v === 'only') _aiMode = v;
+    } catch (e) {}
+    updateAIBtn();
+}
+
+function cycleAI() {
+    _aiMode = ({ all: 'hide', hide: 'only', only: 'all' })[_aiMode] || 'all';
+    try { localStorage.setItem('pa-ai', _aiMode); } catch (e) {}
+    updateAIBtn();
+    if (currentView === 'authors') loadAuthorsView();
+    else if (currentView === 'tags') loadTagsView();
+    else if (currentView === 'favorites') loadFavoritesView();
+    else loadGallery(1);
+}
+
+function updateAIBtn() {
+    const labels = { all: 'AI：全部', hide: 'AI：隐藏', only: 'AI：仅AI' };
+    const btn = $('btnAI');
+    if (btn) btn.textContent = labels[_aiMode] || 'AI：全部';
+}
+
 function toggleDeletedFilter() {
     deletedFilter = !deletedFilter;
     const btn = $('btnDeleted');
@@ -1834,7 +1869,7 @@ async function openSettings() {
     try {
         const resp = await fetch('/api/settings');
         const data = await resp.json();
-        $('tokenHint').textContent = data.has_token ? `当前: ${data.token_preview}` : '未设置';
+        $('tokenHint').textContent = data.has_token ? '已设置' : '未设置';
         $('dirHint').textContent = data.image_source_dir ? `当前: ${data.image_source_dir}` : '未设置';
         $('proxyHint').textContent = data.proxy ? `当前: ${data.proxy}` : '未设置';
         $('modeHint').textContent = data.connection_mode === 'direct' ? '直连模式：无需代理' : (data.connection_mode === 'proxy' ? '代理模式：使用下方代理地址' : '自动模式：直连失败自动回退代理');
@@ -2173,6 +2208,7 @@ updateThemeBtn();
 updateSidebarToggle();
 updateSafeBadge();
 initR18();
+initAI();
 updateSortBtn();
 loadGallery(1);
 </script>

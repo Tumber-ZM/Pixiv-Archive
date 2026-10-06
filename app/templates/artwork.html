@@ -108,7 +108,7 @@ async function loadDetail() {
             <div>Pixiv ID：<span>${data.pixiv_id}</span></div>
             <div>页数：<span>${data.page_count}</span></div>
             <div>尺寸：<span>${data.width || '?'} × ${data.height || '?'}</span></div>
-            <div>发布时间：<span>${data.create_date || '未知'}</span></div>
+            <div>发布时间：<span>${escapeHtml(data.create_date || '未知')}</span></div>
             <div>状态：<span>${data.pixiv_status === 'deleted' ? '已从 Pixiv 删除' : '活跃'}</span></div>
             <div>首次扫描：<span>${data.first_seen || '未知'}</span></div>
             <div>最后同步：<span>${data.last_synced || '未同步'}</span></div>

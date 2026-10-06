@@ -77,3 +77,13 @@ def run(t, server):
     t.check("L2 图库提示删除失败项", "files_failed" in pages["/"])
     t.check("作者页只保留两个必要的请求",
             pages["/author/1"].count("fetchJson(`") + pages["/author/1"].count("fetchJson('") == 2)
+
+    # ---------- F-008：标签名含反斜杠时不打断脚本字面量 ----------
+    # 用 "{{ tag_name }}" 的旧写法：反斜杠不被 Jinja 转义，会吃掉结尾引号导致
+    # 整个 <script> 语法错误（标签页白屏）。改 | tojson 后反斜杠成对出现。
+    status, tag_text = h.get(base, "/tag/a%5Cb")
+    t.equal("F-008 标签名含反斜杠仍返回 200", status, 200)
+    idx = tag_text.find("decodeURIComponent(")
+    t.check("F-008 tag_name 经 tojson 注入（反斜杠被 JSON 转义，字面量不断裂）",
+            'decodeURIComponent("a\\\\b")' in tag_text,
+            "实际=%r" % tag_text[idx:idx + 40])

@@ -5,17 +5,22 @@ import shutil
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from app import paths
+from app import logging_setup
 from app.scanner import IMAGE_EXTENSIONS
 from app.pixiv import (
     get_pixiv_client,
     _build_session_with_referer,
+    _is_allowed_image_url,
     apply_image_mirror,
+    open_allowed_image_stream,
     PixivAuthError,
     PixivNetworkError,
     PixivError,
 )
 
 load_dotenv(paths.ENV_FILE)
+
+logger = logging_setup.get_logger("pixiv_archive.download")
 
 REQUEST_TIMEOUT = 30
 _ILLEGAL_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -162,6 +167,10 @@ def download_single_illust(session, illust, author_root, author_name):
         for p, url in enumerate(urls):
             if not url:
                 continue
+            # 图片 URL 源自 Pixiv API 响应（可被中间人篡改）。非官方 / 非镜像
+            # 主机一律不下载，防 SSRF；重定向由 open_allowed_image_stream 逐跳复核。
+            if not _is_allowed_image_url(url):
+                return "failed", "图片地址不在允许的域名范围内"
             ext = _url_ext(url) or ".jpg"
             if page_count > 1:
                 filename = f"[{_safe_name(title)}] {pixiv_id}_p{p}{ext}"
@@ -175,12 +184,17 @@ def download_single_illust(session, illust, author_root, author_name):
             # 避免扫描时把残损 JPEG 当成完整作品入库
             tmp = dest + ".part"
             try:
-                with session.get(url, timeout=REQUEST_TIMEOUT, stream=True) as resp:
+                resp = open_allowed_image_stream(session, url, REQUEST_TIMEOUT)
+                try:
                     if resp.status_code != 200:
                         raise PixivNetworkError(f"HTTP {resp.status_code}")
                     with open(tmp, "wb") as f:
                         shutil.copyfileobj(resp.raw, f)
+                finally:
+                    resp.close()
                 os.replace(tmp, dest)
+            except ValueError as e:
+                raise PixivNetworkError(str(e))
             finally:
                 if os.path.exists(tmp):
                     try:
@@ -193,6 +207,7 @@ def download_single_illust(session, illust, author_root, author_name):
     except PixivError as e:
         return "failed", str(e)
     except Exception as e:
+        logger.warning("下载作品 %s 失败：%s", pixiv_id, e)
         return "failed", str(e)
 
 

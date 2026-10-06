@@ -8,6 +8,9 @@ import urllib3.util.connection as urllib3_connection
 from requests.adapters import HTTPAdapter
 from app import paths
 from app import envfile
+from app import logging_setup
+
+logger = logging_setup.get_logger("pixiv_archive.direct")
 
 # 注意：不在 import 时全局抑制 TLS 告警。免 SNI 直连必须关闭证书校验，
 # 但 urllib3.disable_warnings() 是进程级全局副作用，import 本模块就静音会
@@ -141,27 +144,84 @@ def resolve_ip_via_doh(host, timeout=10):
                 ips = _doh_query(doh_host, ip, host, timeout)
                 if ips:
                     return ips
-            except Exception:
+            except Exception as exc:
+                # 不中断：换下一个 DoH 服务器/地址重试。但要留痕，否则「刷新 IP
+                # 一直失败」会完全没有线索（校验不过、被阻断、DNS 无记录都在这里）。
+                logger.debug("DoH 查询失败 %s@%s（查询 %s）：%s", doh_host, ip, host, exc)
                 continue
     return []
 
 
-def _doh_query(doh_host, doh_ip, query_host, timeout):
-    # 与 DirectAdapter 同理：DoH 服务器用 IP 直连、握手不带 SNI，必须关校验
-    # （见 _make_ssl_context 的说明）；代价同样是没有中间人防护。
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    orig_wrap = ctx.wrap_socket
+def _doh_san_matches(cert, host):
+    """证书 SAN 是否**精确**等于目标主机名。
 
-    def wrap_without_sni(*args, **kwargs):
-        kwargs["server_hostname"] = None
-        return orig_wrap(*args, **kwargs)
+    只用于免 SNI 回退路径，且刻意只做精确比对（不支持通配符）：DOH_SERVERS 是固定
+    的两个主机名、证书都带精确 SAN，宁可校验失败也不引入易错的通配符匹配
+    （stdlib 的 ssl.match_hostname 正因这类坑在 3.13 被移除）。
+    """
+    for entry in (cert or {}).get("subjectAltName", ()):
+        try:
+            typ, value = entry
+        except (TypeError, ValueError):
+            continue
+        if typ == "DNS" and str(value).lower() == host.lower():
+            return True
+    return False
 
-    ctx.wrap_socket = wrap_without_sni
+
+def _doh_connect(doh_host, doh_ip, timeout):
+    """建立到 DoH 服务器的、**已做证书校验**的 TLS 连接。
+
+    DoH 应答是「pixiv 域名 → IP」的信任根：不校验的话中间人可伪造应答，把 pixiv
+    钉到攻击者 IP，直连模式下等于把 pixiv 直接交给攻击者。但直连模式又依赖「免
+    SNI」来绕开 SNI 阻断，所以两条路都要留：
+
+      1. 标准：发 SNI + 完整校验（check_hostname=True + CERT_REQUIRED）。
+      2. 回退：SNI 被阻断导致握手失败时**重连**，改用「不发 SNI + CERT_REQUIRED
+         （可信 CA 链）+ SAN 精确匹配主机名」。只验链不验名是不够的——攻击者拿
+         任意一张可信证书就能冒充，所以回退路径同样强制主机名匹配。
+    """
+    sock = socket.create_connection((doh_ip, 443), timeout=timeout)
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        return ctx.wrap_socket(sock, server_hostname=doh_host)
+    except (ssl.SSLError, ConnectionError):
+        # 握手失败（典型是 SNI 被阻断 / RST）：原连接已不可用，关掉后重连走回退路径
+        try:
+            sock.close()
+        except OSError:
+            pass
 
     sock = socket.create_connection((doh_ip, 443), timeout=timeout)
-    ssock = ctx.wrap_socket(sock, server_hostname=None)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    try:
+        ssock = ctx.wrap_socket(sock, server_hostname=None)
+    except BaseException:
+        # 握手失败：显式关掉底层 TCP，不依赖 CPython 在失败时自关
+        try:
+            sock.close()
+        except OSError:
+            pass
+        raise
+    try:
+        if not _doh_san_matches(ssock.getpeercert(), doh_host):
+            raise ssl.SSLCertVerificationError(
+                "DoH 证书不含 %s 的 SAN，拒绝使用该连接" % doh_host)
+    except BaseException:
+        try:
+            ssock.close()
+        except OSError:
+            pass
+        raise
+    return ssock
+
+
+def _doh_query(doh_host, doh_ip, query_host, timeout):
+    ssock = _doh_connect(doh_host, doh_ip, timeout)
     try:
         request = (
             f"GET /dns-query?name={query_host}&type=A HTTP/1.1\r\n"
@@ -176,7 +236,9 @@ def _doh_query(doh_host, doh_ip, query_host, timeout):
             if not chunk:
                 break
             data += chunk
-        body = data.split(b"\r\n\r\n", 1)[1]
+        _head, sep, body = data.partition(b"\r\n\r\n")
+        if not sep:
+            raise ValueError("DoH 响应缺少 HTTP 头分隔符")
         result = json.loads(body)
         answers = [
             a["data"]
@@ -259,10 +321,18 @@ def refresh_ips():
     updated = {}
     for host in DEFAULT_IP_MAP:
         ips = resolve_ip_via_doh(host)
+        if not ips:
+            logger.warning("DoH 未返回 %s 的解析结果，保持现有 IP", host)
+            continue
         for ip in ips:
             if _validate_ip(host, ip):
                 updated[ENV_KEYS[host]] = ip
+                logger.info("已更新 %s 的直连 IP → %s", host, ip)
                 break
+        else:
+            logger.warning("DoH 返回的 %s 地址均探测不可用：%s", host, ips)
     if updated:
         _write_env(updated)
+    else:
+        logger.warning("本次未刷新到任何可用 IP（现有 IP 保持不变）")
     return updated

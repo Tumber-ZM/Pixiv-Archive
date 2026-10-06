@@ -59,6 +59,8 @@ def init_db():
             first_seen TEXT DEFAULT (datetime('now')),
             last_synced TEXT,
             local_path TEXT,
+            -- Pixiv illust_ai_type：1 = 非 AI，2 = AI 生成。存量与未同步行按 1 处理
+            ai_type INTEGER DEFAULT 1,
             FOREIGN KEY (author_id) REFERENCES authors(id)
         );
 
@@ -116,6 +118,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_artworks_pixiv_id ON artworks(pixiv_id);
         CREATE INDEX IF NOT EXISTS idx_artworks_author_id ON artworks(author_id);
         CREATE INDEX IF NOT EXISTS idx_artworks_title ON artworks(title);
+        -- 列表排序白名单允许按 create_date / first_seen 排序，没有索引会退化成全表排序
+        CREATE INDEX IF NOT EXISTS idx_artworks_create_date ON artworks(create_date);
+        CREATE INDEX IF NOT EXISTS idx_artworks_first_seen ON artworks(first_seen);
         CREATE INDEX IF NOT EXISTS idx_images_artwork_id ON images(artwork_id);
         CREATE INDEX IF NOT EXISTS idx_images_sha256 ON images(sha256);
         CREATE INDEX IF NOT EXISTS idx_artwork_tags_artwork_id ON artwork_tags(artwork_id);
@@ -126,6 +131,7 @@ def init_db():
     """)
 
     _migrate_sync_error(conn)
+    _migrate_ai_type(conn)
     _migrate_drop_artist_subs(conn)
     _migrate_bookmark_subs_col(conn)
 
@@ -151,3 +157,14 @@ def _migrate_sync_error(conn):
     cols = {row[1] for row in conn.execute("PRAGMA table_info(artworks)").fetchall()}
     if "sync_error" not in cols:
         conn.execute("ALTER TABLE artworks ADD COLUMN sync_error TEXT")
+
+
+def _migrate_ai_type(conn):
+    """为旧库补上 ai_type 列（Pixiv `illust_ai_type`：1 = 非 AI，2 = AI 生成）。
+
+    存量行由 `DEFAULT 1` 统一落成「非 AI」—— 与「不确定时不打 AI 标记」的预期一致；
+    该作品下次同步时会被 Pixiv 的真实值覆盖。未同步的新行同理按 1 处理。
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(artworks)").fetchall()}
+    if "ai_type" not in cols:
+        conn.execute("ALTER TABLE artworks ADD COLUMN ai_type INTEGER DEFAULT 1")

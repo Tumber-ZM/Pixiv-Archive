@@ -8,20 +8,24 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 import harness as h
 
 h.bootstrap()
 import run as run_mod  # noqa: E402
+from app import paths as app_paths  # noqa: E402
 
 TITLE = "HTTP 冒烟 / H1 / M4 / M8 / L2 / 锁端到端"
 NEEDS_SERVER = True
 
+# 只保留「与库内容无关、必然 200」的路径。作品详情页与缩略图依赖库内数据，
+# 不写死开发者库里的 PID（干净克隆上必然 404 → 假失败）：改为运行时从列表接口
+# 取一条真实记录再请求，见 run()。
 SMOKE_PATHS = (
-    "/", "/tag/R-18", "/author/1", "/artwork/148494017",
+    "/", "/tag/R-18", "/author/1",
     "/api/tags", "/api/authors", "/api/settings",
     "/api/artworks?page=1&per_page=3", "/api/search?q=",
-    "/thumbnails/148494017.jpg",
 )
 
 
@@ -49,12 +53,26 @@ def run(t, server):
     data = h.load_json(text) or {}
     t.check("列表接口返回 artwork 数组与总数",
             isinstance(data.get("artworks"), list) and isinstance(data.get("total"), int))
-    artwork_id = (data.get("artworks") or [{}])[0].get("id")
+    first_row = (data.get("artworks") or [{}])[0]
+    artwork_id = first_row.get("id")
+    pixiv_id = first_row.get("pixiv_id")
+
     if artwork_id:
         status, _text = h.get(base, "/api/artworks/%d" % artwork_id)
         t.equal("按 id 取单件作品", status, 200)
+        # 详情页同样不写死 PID
+        status, _text = h.get(base, "/artwork/%d" % artwork_id)
+        t.equal("作品详情页返回 200（用库内真实 id）", status, 200)
     else:
         t.skip("库里没有作品，跳过单件作品接口")
+
+    # 缩略图由 StaticFiles 直接托管：文件不存在就是 404，所以必须用库内真实
+    # pixiv_id，且只在缩略图确实存在时才断言 200。
+    if pixiv_id and os.path.exists(app_paths.thumbnail_path(pixiv_id)):
+        status, _text = h.get(base, "/thumbnails/%d.jpg" % pixiv_id)
+        t.equal("缩略图返回 200（用库内真实 pixiv_id）", status, 200)
+    else:
+        t.skip("库里没有可用缩略图，跳过缩略图冒烟")
 
     # ---------------- H1：坏请求不能打掉服务 ----------------
     settings_before = h.get(base, "/api/settings")[1]
@@ -154,6 +172,19 @@ def run(t, server):
     t.equal("P3 403 响应同样带 X-Frame-Options",
             h.header(headers403, "X-Frame-Options"), "DENY")
 
+    # ---------------- P1：/api/settings 不再回显 token 片段 ----------------
+    status, text = h.get(base, "/api/settings")
+    t.equal("P1 设置接口返回 200", status, 200)
+    payload = h.load_json(text) or {}
+    t.check("P1 设置响应体里不含 token_preview", "token_preview" not in text)
+    t.equal("P1 设置接口字段集合不再含 token 片段",
+            set(payload),
+            {"has_token", "image_source_dir", "proxy", "connection_mode",
+             "image_mirror", "server_port", "sync_delay_ms"})
+    t.check("P1 设置接口仍返回 has_token 布尔",
+            isinstance(payload.get("has_token"), bool),
+            "has_token=%r" % payload.get("has_token"))
+
     # ---------------- L2：删除响应形状 ----------------
     status, text, _headers = h.post_json(base, "/api/artworks/batch-delete", {"artwork_ids": []})
     t.equal("L2 空列表删除返回 200", status, 200)
@@ -195,6 +226,22 @@ def run(t, server):
     t.check("单实例锁：提示已在运行中", "已在运行中" in second_out, second_out.strip()[:120])
     t.check("单实例锁：第二个实例没有占用端口", h.get("http://127.0.0.1:%d" % other_port, "/api/tags", timeout=5)[0] == 0)
     t.equal("单实例锁：第一个实例仍在服务", h.get(base, "/api/tags")[0], 200)
+
+    # P1-7：README 承诺的 pixiv_archive.log 必须由**真实启动链路**（run.py）生成。
+    # 除了存在性，还要求「本次运行刚写过」（mtime 新鲜）——否则历史遗留的日志会
+    # 让这条断言恒真。
+    log_file = os.path.join(run_mod.paths.DATA_DIR, "pixiv_archive.log")
+    t.check("P1-7 真实服务启动后生成了 pixiv_archive.log",
+            os.path.exists(log_file), log_file)
+    if os.path.exists(log_file):
+        with open(log_file, encoding="utf-8", errors="replace") as handle:
+            log_text = handle.read()
+        t.check("P1-7 日志含启动记录", "启动 Pixiv Archive" in log_text)
+        t.check("P1-7 日志含「拒绝重复启动」记录（证明真的在记录运行事件）",
+                "拒绝重复启动" in log_text)
+        t.check("P1-7 日志在本次运行中被写入（mtime 新鲜）",
+                time.time() - os.path.getmtime(log_file) < 600,
+                "age=%.0fs" % (time.time() - os.path.getmtime(log_file)))
 
 
 def app_random_sql():

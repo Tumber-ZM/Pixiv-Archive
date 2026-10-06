@@ -2,8 +2,11 @@ import os
 from PIL import Image
 from dotenv import load_dotenv
 from app import paths
+from app import logging_setup
 
 load_dotenv(paths.ENV_FILE)
+
+logger = logging_setup.get_logger("pixiv_archive.thumbnails")
 
 THUMBNAIL_SIZE = int(os.getenv("THUMBNAIL_SIZE", "400"))
 THUMBNAIL_DIR = os.getenv("THUMBNAIL_DIR", "thumbnails")
@@ -28,7 +31,8 @@ def generate_thumbnail(source_path, pixiv_id):
         img.thumbnail((THUMBNAIL_SIZE, THUMBNAIL_SIZE), Image.LANCZOS)
         img.save(thumb_path, "JPEG", quality=85)
         return thumb_path
-    except Exception:
+    except Exception as exc:
+        logger.warning("生成缩略图失败（源文件 %s）：%s", source_path, exc)
         return None
 
 

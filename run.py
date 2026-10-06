@@ -20,16 +20,22 @@ import webbrowser
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import paths  # noqa: E402
+from app import logging_setup  # noqa: E402
 from app.config import DEFAULT_PORT  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 
 # 先加载 .env，使设置里保存的 PA_PORT 生效
 load_dotenv(paths.ENV_FILE)
 
+logger = logging_setup.get_logger("pixiv_archive")
+
 HOST = "127.0.0.1"
 LOCK_FILE_NAME = ".instance.lock"
 # 创建锁文件与写入 PID 之间被强杀时可能留下空文件，超过这个秒数即视为陈旧
 LOCK_FILE_GRACE_SECONDS = 10
+# 接管临时文件（.stale.*）的清理宽限期：必须远大于一次接管的耗时（微秒级），
+# 否则可能误删并发实例正在进行的接管
+STALE_LOCK_GRACE_SECONDS = 60
 
 
 def _pid_is_alive(pid):
@@ -87,6 +93,33 @@ def _lock_file_is_stale(lock_path):
     return _raw_is_stale(raw, lock_path)
 
 
+def _sweep_abandoned_stale(lock_path):
+    """清理先前被强杀留下的 `.stale.*` 接管临时文件。
+
+    接管路径是「rename 到 `.stale.<pid>.<uuid>` → 复核内容 → 删除」。若进程在
+    rename 与删除之间被强杀（Windows 上 TerminateProcess 不会执行 finally），该
+    文件会永久残留。这里在**成功持有锁之后**顺手清掉超过宽限期的遗留文件；宽限期
+    保证不会误删并发实例正在进行的接管（那只是微秒级窗口）。
+    """
+    directory = os.path.dirname(lock_path) or "."
+    prefix = os.path.basename(lock_path) + ".stale."
+    now = time.time()
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(prefix):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            if now - os.path.getmtime(path) < STALE_LOCK_GRACE_SECONDS:
+                continue
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def acquire_single_instance():
     """获取单实例锁。
 
@@ -102,16 +135,24 @@ def acquire_single_instance():
     """
     lock_path = os.path.join(paths.DATA_DIR, LOCK_FILE_NAME)
     try:
-        for attempt in (0, 1):
+        for attempt in (0, 1, 2):
             try:
                 fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
-                # 只在第一次尝试接管陈旧锁；第二次仍冲突说明确实有实例在跑
-                if attempt:
+                # 前两次尝试接管陈旧锁；仍冲突说明确实有实例在跑
+                if attempt == 2:
                     return None
                 raw = _lock_content(lock_path)
                 if raw is None:
-                    continue  # 锁刚好被释放：直接重试创建
+                    # 锁文件存在却读不出内容，通常是「读」这一下被打断（杀软扫描、
+                    # 另一实例正在写），而不是锁已被释放。此时若直接 continue，下一次
+                    # O_EXCL 必然又撞上同一个文件、把这次接管机会白白耗光——两个实例
+                    # 同时进来就会「谁都没拿到锁」。确认文件还在就稍等后重读一次。
+                    if os.path.exists(lock_path):
+                        time.sleep(0.05)
+                        raw = _lock_content(lock_path)
+                    if raw is None:
+                        continue  # 确实读不到（或已被释放）：交给下一轮
                 if not _raw_is_stale(raw, lock_path):
                     return None
                 # 原子接管：把锁 rename 到本进程独占的名字。rename 是原子操作，同一
@@ -137,6 +178,7 @@ def acquire_single_instance():
                     os.remove(stale_path)
                 except OSError:
                     pass
+                logger.info("接管陈旧单实例锁：原持有者 PID=%s 已不在", raw)
                 continue
             except OSError:
                 return True  # 数据目录不可写等：不阻塞启动
@@ -144,6 +186,7 @@ def acquire_single_instance():
                 os.write(fd, str(os.getpid()).encode("ascii"))
             finally:
                 os.close(fd)
+            _sweep_abandoned_stale(lock_path)
             return lock_path
         return None
     except Exception:
@@ -175,7 +218,7 @@ def _parse_server_args():
 
 PORT, OPEN_BROWSER = _parse_server_args()
 
-from app.main import app  # noqa: E402
+from app.main import asgi_app  # noqa: E402
 from hypercorn.asyncio import serve  # noqa: E402
 from hypercorn.config import Config  # noqa: E402
 
@@ -199,12 +242,16 @@ async def _serve(host=HOST, port=None):
     print("Pixiv Archive running at " + url, flush=True)
     if OPEN_BROWSER:
         threading.Timer(1.0, webbrowser.open, args=[url]).start()
-    await serve(app, build_config(host, port))
+    await serve(asgi_app, build_config(host, port))
 
 
 def main():
+    log_path = logging_setup.setup_logging()
+    logger.info("启动 Pixiv Archive（数据目录 %s，日志 %s）", paths.DATA_DIR, log_path)
+
     lock = acquire_single_instance()
     if lock is None:
+        logger.warning("检测到已有实例在运行，拒绝重复启动")
         print("Pixiv Archive 已在运行中，请勿重复启动。")
         print("如无响应，请先结束现有进程后重试。")
         return 1
@@ -214,14 +261,17 @@ def main():
             asyncio.run(_serve())
         except KeyboardInterrupt:
             print("Server stopped")
+            logger.info("收到中断信号，服务停止")
         except OSError as exc:
             # 端口被占用等：给一句可读的提示，而不是抛一串 traceback
+            logger.error("无法监听 %s:%d —— %s", HOST, PORT, exc)
             print("启动失败：无法监听 %s:%d —— %s" % (HOST, PORT, exc))
             print("端口可能已被占用：可用 --port 指定其它端口，或在设置里改 PA_PORT。")
             return 1
         return 0
     finally:
         release_single_instance(lock)
+        logger.info("已退出并释放单实例锁")
 
 
 if __name__ == "__main__":

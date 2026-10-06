@@ -7,6 +7,10 @@ import time
 import traceback
 import uuid
 
+from app import logging_setup
+
+logger = logging_setup.get_logger("pixiv_archive.jobs")
+
 _lock = threading.Lock()
 _jobs = {}
 _active = {"thread": None}
@@ -99,6 +103,8 @@ def start(kind, fn):
                 if job.state["status"] == "running":
                     job.set_status("done")
             except Exception as e:
+                # 失败详情原先只留在内存里的 job.state，重启即丢；这里落一份日志
+                logger.exception("后台任务 %s 执行失败：%s", kind, e)
                 job.set_status("error")
                 job.set_error({
                     "code": "INTERNAL",

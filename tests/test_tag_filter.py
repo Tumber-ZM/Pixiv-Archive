@@ -19,8 +19,9 @@ TAG_NAME = "原題タグ"
 TAG_TRANSLATED = "中文译名XYZ"
 
 # 直接调用路由函数时，FastAPI 的 Query 默认值不会自动生效，必须把所有参数给全
+# （注意：api_artworks 每加一个查询参数，这里都要同步补上）
 ARTWORK_DEFAULTS = dict(page=1, per_page=50, sort="id", order="desc", author="",
-                        tag="", favorite_id=0, r18="", status="", seed=0)
+                        tag="", favorite_id=0, r18="", ai="", status="", seed=0)
 
 
 def artworks(**overrides):

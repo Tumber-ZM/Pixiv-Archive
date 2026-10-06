@@ -17,6 +17,14 @@ function r18Param() {
     } catch (e) { return ''; }
 }
 
+// AI 生成作品筛选（与 R18 相互独立，互不影响）
+function aiParam() {
+    try {
+        const v = localStorage.getItem('pa-ai');
+        return (v === 'hide' || v === 'only') ? v : '';
+    } catch (e) { return ''; }
+}
+
 // 统一的加载失败提示：收起仍在转的「加载中」，把原因显示出来（默认写进 #detail，
 // 没有就退回 #empty）。原先这些页面请求失败时会永久停在「加载中」并留下未处理的
 // rejection。

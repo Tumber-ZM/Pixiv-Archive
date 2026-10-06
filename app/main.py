@@ -24,8 +24,11 @@ from app.scanner import scan_directory
 from app.sync import sync_metadata
 from app.download import check_bookmark_subscription
 from app.pixiv import reset_pixiv_client, fetch_profile_image, get_pixiv_client
+from app import logging_setup
 
 load_dotenv(paths.ENV_FILE)
+
+logger = logging_setup.get_logger("pixiv_archive")
 
 _SYNC_DELAY_DEFAULT = 800
 _SYNC_DELAY_MAX = 10000
@@ -133,13 +136,49 @@ _SECURITY_HEADERS = {
 
 
 # 定义顺序在 _local_access_guard 之后：Starlette 后添加的中间件在最外层，
-# 因此安全响应头会加在**所有**响应上，包括守卫直接返回的 403。
+# 因此安全响应头会加在**所有经过中间件栈的**响应上（含守卫直接返回的 403）。
+# 但未处理异常产生的 500 不经过这里 —— 那由更外层的 ServerErrorMiddleware 生成，
+# 所以还需要下面的 asgi_app 在 ASGI 层再兜一层。
 @app.middleware("http")
 async def _security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     for name, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
     return response
+
+
+class _SecurityHeadersASGI:
+    """在 ASGI 层给**所有**响应补安全头，包括 ServerErrorMiddleware 生成的 500。
+
+    `@app.middleware("http")` 注册的中间件位于 Starlette 的 ServerErrorMiddleware
+    **之内**：路由抛未处理异常时，那个 500 由更外层的 ServerErrorMiddleware 直接
+    生成、不经过它，于是 500 响应会缺安全头（HTML 兜底页会被当成普通页面渲染）。
+    这里把整个 ASGI 应用再包一层，位置在 ServerErrorMiddleware 之外，兜住全部响应。
+    """
+
+    def __init__(self, wrapped):
+        self.app = wrapped
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message.get("type") == "http.response.start":
+                headers = message.setdefault("headers", [])
+                present = {name.lower() for name, _ in headers}
+                for name, value in _SECURITY_HEADERS.items():
+                    encoded = name.lower().encode("latin-1")
+                    if encoded not in present:
+                        headers.append((encoded, value.encode("latin-1")))
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+# 真正对外服务的是这个包装后的应用（run.py 挂载它）
+asgi_app = _SecurityHeadersASGI(app)
 
 
 @app.exception_handler(ValidationError)
@@ -203,6 +242,26 @@ def _r18_where(alias, value):
     return None
 
 
+# ---- AI 生成筛选 ----
+# 与 R18 那套**并存但相互独立**：R18 靠标签子查询判定，AI 靠 artworks.ai_type 列。
+# Pixiv 的 illust_ai_type：1 = 非 AI，2 = AI 生成；未同步 / 存量行按 1（非 AI）处理。
+_AI_TYPE_AI = 2
+
+
+def _is_ai_expr(alias="a"):
+    return f"(COALESCE({alias}.ai_type, 1) = {_AI_TYPE_AI})"
+
+
+def _ai_where(alias, value):
+    """三态筛选，与 `_r18_where` 同构：'' = 全部，hide = 排除 AI，only = 仅 AI。"""
+    mode = (value or "").strip().lower()
+    if mode == "hide":
+        return "NOT " + _is_ai_expr(alias)
+    if mode == "only":
+        return "(" + _is_ai_expr(alias) + ")"
+    return None
+
+
 def _random_order_sql(seed: int) -> str:
     """按 seed 确定的伪随机排序（不用 ORDER BY RANDOM()）。
 
@@ -229,6 +288,7 @@ def api_artworks(
     tag: str = Query(""),
     favorite_id: int = Query(0, ge=0),
     r18: str = Query(""),
+    ai: str = Query(""),
     status: str = Query(""),
     seed: int = Query(0),
 ):
@@ -260,6 +320,9 @@ def api_artworks(
         _r18c = _r18_where("a", r18)
         if _r18c:
             where_clauses.append(_r18c)
+        _aic = _ai_where("a", ai)
+        if _aic:
+            where_clauses.append(_aic)
 
         where_sql = ""
         if where_clauses:
@@ -284,7 +347,8 @@ def api_artworks(
         rows = conn.execute(
             f"""SELECT a.*, i.path AS thumb_path,
                 a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
-                {_r18_exists()} AS is_r18
+                {_r18_exists()} AS is_r18,
+                {_is_ai_expr()} AS is_ai
                 FROM artworks a
                 LEFT JOIN images i ON a.id = i.artwork_id AND i.page = 0
                 {where_sql}
@@ -306,6 +370,7 @@ def api_artworks(
                 "thumb_path": row["thumb_path"] or "",
                 "is_favorited": bool(row["is_favorited"]),
                 "is_r18": bool(row["is_r18"]),
+                "is_ai": bool(row["is_ai"]),
                 "sync_error": row["sync_error"] or "",
             })
 
@@ -489,6 +554,7 @@ def api_search(
     tag: str = Query(""),
     favorite_id: int = Query(0, ge=0),
     r18: str = Query(""),
+    ai: str = Query(""),
     status: str = Query(""),
     seed: int = Query(0),
 ):
@@ -496,7 +562,7 @@ def api_search(
     if not query:
         return api_artworks(page=page, per_page=per_page, sort=sort, order=order,
                             author=author, tag=tag, favorite_id=favorite_id,
-                            r18=r18, status=status, seed=seed)
+                            r18=r18, ai=ai, status=status, seed=seed)
 
     tokens = [t for t in query.split() if t]
 
@@ -540,6 +606,9 @@ def api_search(
         _r18c = _r18_where("a", r18)
         if _r18c:
             token_conditions.append(_r18c)
+        _aic = _ai_where("a", ai)
+        if _aic:
+            token_conditions.append(_aic)
 
         where_sql = " WHERE " + " AND ".join(token_conditions)
 
@@ -563,7 +632,8 @@ def api_search(
         rows = conn.execute(
             f"""SELECT a.*, i.path AS thumb_path,
                 a.id IN (SELECT fa.artwork_id FROM favorite_artworks fa) AS is_favorited,
-                {_r18_exists()} AS is_r18
+                {_r18_exists()} AS is_r18,
+                {_is_ai_expr()} AS is_ai
                 FROM artworks a
                 LEFT JOIN images i ON a.id = i.artwork_id AND i.page = 0
                 {where_sql}
@@ -585,6 +655,7 @@ def api_search(
                 "thumb_path": row["thumb_path"] or "",
                 "is_favorited": bool(row["is_favorited"]),
                 "is_r18": bool(row["is_r18"]),
+                "is_ai": bool(row["is_ai"]),
                 "sync_error": row["sync_error"] or "",
             })
 
@@ -621,7 +692,7 @@ def api_tags(q: str = Query("")):
 
 
 @app.get("/api/favorites")
-def api_favorites(r18: str = Query("")):
+def api_favorites(r18: str = Query(""), ai: str = Query("")):
     with get_db() as conn:
         favorites = conn.execute(
             """SELECT f.*, COUNT(fa.artwork_id) AS artwork_count
@@ -637,6 +708,9 @@ def api_favorites(r18: str = Query("")):
             _r18c = _r18_where("a", r18)
             if _r18c:
                 works_clauses.append(_r18c)
+            _aic = _ai_where("a", ai)
+            if _aic:
+                works_clauses.append(_aic)
             works = conn.execute(
                 f"""SELECT a.id, a.pixiv_id, a.title, a.page_count, i.path AS thumb_path
                     FROM artworks a
@@ -762,6 +836,7 @@ def api_authors_works(
     limit: int = Query(20, ge=1, le=100),
     q: str = Query(""),
     r18: str = Query(""),
+    ai: str = Query(""),
 ):
     with get_db() as conn:
         q = q.strip()
@@ -786,6 +861,9 @@ def api_authors_works(
             _r18c = _r18_where("a", r18)
             if _r18c:
                 works_where += " AND " + _r18c
+            _aic = _ai_where("a", ai)
+            if _aic:
+                works_where += " AND " + _aic
             works = conn.execute(
                 f"""SELECT a.id, a.pixiv_id, a.title, a.page_count, i.path AS thumb_path
                    FROM artworks a
@@ -848,10 +926,12 @@ async def api_open_folder(request: Request):
     if not path or not os.path.isabs(path) or not os.path.exists(path):
         return JSONResponse({"error": "文件不存在"}, status_code=404)
     try:
-        # 用资源管理器打开并选中文件
-        subprocess.Popen(["explorer", "/select,", path])
+        # 用资源管理器打开并选中文件。`/select,` 必须与路径拼成**同一个参数**：
+        # 拆成两个参数时资源管理器只打开文件夹、不选中文件。
+        subprocess.Popen(["explorer", f"/select,{path}"])
         return {"status": "ok"}
     except Exception as e:
+        logger.warning("打开资源管理器失败（%s）：%s", path, e)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -1181,9 +1261,10 @@ def api_get_settings():
     settings = _read_env_file()
     token = settings.get("PIXIV_REFRESH_TOKEN", "")
     port_str = (settings.get("PA_PORT", "") or "").strip()
+    # 只回「有没有」布尔，不回 token 的任何片段：预览值会经 /api/settings 落到
+    # 任意能读到响应的页面，等于把凭据的一部分送出去。
     return {
         "has_token": bool(token),
-        "token_preview": token[:8] + "..." if len(token) > 8 else token,
         "image_source_dir": settings.get("IMAGE_SOURCE_DIR", ""),
         "proxy": settings.get("PIXIV_PROXY", ""),
         "connection_mode": settings.get("PIXIV_MODE", "auto"),
@@ -1275,7 +1356,9 @@ def _is_registered_image(path):
         with get_db() as conn:
             row = conn.execute("SELECT 1 FROM images WHERE path = ?", (path,)).fetchone()
             return row is not None
-    except Exception:
+    except Exception as exc:
+        # 查库失败会被当成「未登记」→ 可能导致该图片被当作新文件处理；必须留痕
+        logger.warning("查询图片是否已登记失败（%s）：%s", path, exc)
         return False
 
 

@@ -2,7 +2,7 @@ import os
 import re
 import time
 import requests
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from pixivpy3 import AppPixivAPI
 from dotenv import load_dotenv
 from app import paths
@@ -50,6 +50,135 @@ def apply_image_mirror(url):
     if not _SCHEME_RE.match(mirror):
         mirror = "https://" + mirror
     return mirror + parsed.path + (f"?{parsed.query}" if parsed.query else "")
+
+
+def _allowed_image_hosts():
+    """允许抓取的图片主机：Pixiv 官方图片域名 + 设置里配置的镜像主机。
+
+    `fetch_profile_image` 的 URL 来自数据库（源头是 Pixiv API 响应）。若链路被
+    中间人篡改，攻击者可以把头像地址指向内网 / 本机地址做探测（受限 SSRF），
+    因此只认这两类主机。
+    """
+    hosts = set(_PIXIV_IMAGE_HOSTS)
+    mirror = image_mirror_host()
+    if mirror:
+        try:
+            host = (urlsplit("https://" + mirror).hostname or "").lower()
+        except ValueError:
+            host = ""
+        if host:
+            hosts.add(host)
+    return hosts
+
+
+# URL 里不该出现的字符：反斜杠、空白、控制字符。合法图片 URL 不含这些。
+_FORBIDDEN_URL_CHARS_RE = re.compile(r"[\\\s\x00-\x1f\x7f]")
+
+
+def _is_allowed_image_url(url, allowed_hosts=None):
+    """图片 URL 白名单校验：必须 https，且主机在官方域名 / 已配置镜像之内。
+
+    判定分四层，任一层不过即拒（fail closed）：
+
+    1. 拒绝含反斜杠 / 空白 / 控制字符的 URL —— urllib3 把 `\\` 当作 authority
+       终止符，与 urlsplit 的解析不一致，`https://127.0.0.1\\@i.pximg.net/x`
+       会被 urlsplit 认成主机 i.pximg.net，而实际连的是 127.0.0.1；
+    2. scheme 必须 https，且不含 userinfo（`user:pass@host` 形态一律拒）；
+    3. urlsplit 取出的 hostname 命中白名单；
+    4. 交叉复核：HTTP 客户端实际会连接的主机必须与第 3 步一致，挡掉解析器差异。
+
+    私网 / 环回地址不在白名单里，无需另设 IP 段规则。
+    """
+    if not url or not isinstance(url, str):
+        return False
+    if _FORBIDDEN_URL_CHARS_RE.search(url):
+        return False
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    if allowed_hosts is None:
+        allowed_hosts = _allowed_image_hosts()
+    if host not in allowed_hosts:
+        return False
+    return _client_hostname(url) == host
+
+
+def _client_hostname(url):
+    """HTTP 客户端（requests / urllib3）实际会连接的 hostname。
+
+    urlsplit 与 urllib3 对同一串 URL 的解析可能不一致，白名单若只看 urlsplit
+    就会被解析器差异绕过。这里借 requests 的 PreparedRequest 拿到真正会被请求
+    的 URL 再取主机；解析失败一律返回空串（fail closed）。
+    """
+    try:
+        prepared = requests.Request("GET", url).prepare()
+    except Exception:
+        return ""
+    try:
+        return (urlsplit(prepared.url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+_MAX_IMAGE_REDIRECTS = 3
+
+
+def _fetch_allowed_image(session, url, allowed_hosts, timeout):
+    """按白名单逐跳抓取图片字节；重定向的每一跳都要重新过白名单。
+
+    requests 默认自动跟随重定向，而白名单只校验初始 URL —— 白名单主机若返回
+    302 指向内网地址就会被跟过去。这里关掉自动跟随，自己走跳并逐跳复核。
+    """
+    current = url
+    for _ in range(_MAX_IMAGE_REDIRECTS + 1):
+        if not _is_allowed_image_url(current, allowed_hosts):
+            return None
+        try:
+            resp = session.get(current, timeout=timeout, allow_redirects=False)
+        except Exception:
+            return None
+        if resp.status_code == 200:
+            return resp.content
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("location") or resp.headers.get("Location")
+            if not location:
+                return None
+            current = urljoin(current, location)
+            continue
+        return None
+    return None
+
+
+def open_allowed_image_stream(session, url, timeout, allowed_hosts=None):
+    """按白名单逐跳解析后返回最终响应（stream=True，调用方负责 close）。
+
+    与 `_fetch_allowed_image` 同一套逐跳校验，供「流式落盘」的下载路径复用。
+    校验不过 / 重定向超出上限时抛 ValueError（fail closed）。
+    """
+    if allowed_hosts is None:
+        allowed_hosts = _allowed_image_hosts()
+    current = url
+    for _ in range(_MAX_IMAGE_REDIRECTS + 1):
+        if not _is_allowed_image_url(current, allowed_hosts):
+            raise ValueError("图片地址不在允许的域名范围内")
+        resp = session.get(current, timeout=timeout, stream=True, allow_redirects=False)
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("location") or resp.headers.get("Location")
+            resp.close()
+            if not location:
+                raise ValueError("重定向缺少 Location")
+            current = urljoin(current, location)
+            continue
+        return resp
+    raise ValueError("重定向次数超出上限")
 
 
 class PixivError(Exception):
@@ -162,7 +291,9 @@ def _build_session_with_referer(referer, use_proxy=False):
 
 def fetch_profile_image(url, timeout=REQUEST_TIMEOUT):
     """Download a pixiv author profile image (for avatar cache). Returns bytes or None."""
-    if not url:
+    if not _is_allowed_image_url(url):
+        # URL 源自数据库里的 Pixiv API 响应，可能被中间人篡改；非官方 / 非镜像主机
+        # 一律不发起请求（受限 SSRF 防护）。
         return None
     try:
         enable_direct()
@@ -171,18 +302,18 @@ def fetch_profile_image(url, timeout=REQUEST_TIMEOUT):
         except Exception:
             use_proxy = False
         session = _build_session_with_referer("https://www.pixiv.net/", use_proxy=use_proxy)
+        allowed_hosts = _allowed_image_hosts()
         candidates = [url]
         mirrored = apply_image_mirror(url)
         if mirrored and mirrored != url:
             # 优先走镜像，失败回退官方地址（部分镜像不服务 s.pximg.net 头像）
             candidates.insert(0, mirrored)
         for candidate in candidates:
-            try:
-                resp = session.get(candidate, timeout=timeout)
-                if resp.status_code == 200:
-                    return resp.content
-            except Exception:
+            if not _is_allowed_image_url(candidate, allowed_hosts):
                 continue
+            content = _fetch_allowed_image(session, candidate, allowed_hosts, timeout)
+            if content is not None:
+                return content
         return None
     except Exception:
         return None
@@ -400,6 +531,8 @@ class PixivClient:
             "page_count": illust.get("page_count", 1),
             "width": illust.get("width", 0),
             "height": illust.get("height", 0),
+            # Pixiv：1 = 非 AI，2 = AI 生成。缺失时按 1（非 AI）处理，避免误标
+            "ai_type": illust.get("illust_ai_type", 1),
             "tags": tags,
             "image_urls": image_urls,
             "total_view": illust.get("total_view", 0),
