@@ -1383,6 +1383,14 @@ html.sb-collapsed .safe-badge {
     animation: fadeIn 0.16s ease;
 }
 
+/* 二级确认弹窗复用了 .settings-overlay（z-index 350），但它的 DOM 顺序在 #settingsOverlay
+   之前，同层级时会被设置面板盖住（在设置里点「导入数据包」的确认框就是这样被挡掉的）。
+   这里显式抬高，保证确认弹窗始终浮在设置面板之上。 */
+#confirmDialogOverlay,
+#deleteConfirmOverlay {
+    z-index: 380;
+}
+
 .settings-panel {
     width: 540px;
     max-width: 100%;
@@ -1480,7 +1488,7 @@ html.sb-collapsed .safe-badge {
     word-break: break-all;
 }
 
-/* 数据迁移：目录 / 数据包输入框 + 按钮同一行 */
+/* 数据迁移：路径输入框 + 「选择…」按钮同一行 */
 .migrate-row {
     display: flex;
     gap: 8px;
@@ -1495,6 +1503,27 @@ html.sb-collapsed .safe-badge {
 .migrate-row .btn-folder-ghost {
     flex-shrink: 0;
     white-space: nowrap;
+}
+
+/* 路径由资源管理器选择后回填，默认只读展示；原生对话框不可用时 JS 会自动解除只读 */
+.migrate-row input[readonly] {
+    cursor: default;
+    color: var(--text-2);
+}
+
+.migrate-sub {
+    font-size: 12.5px;
+    font-weight: 550;
+    color: var(--text-2);
+    margin-top: 2px;
+}
+
+.migrate-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
 }
 
 .settings-actions {

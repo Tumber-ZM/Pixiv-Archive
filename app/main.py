@@ -19,6 +19,7 @@ from app import paths
 from app import jobs
 from app import envfile
 from app import migration
+from app import filedialog
 from app.config import DEFAULT_PORT
 from app.database import get_db, init_db
 from app.scanner import scan_directory
@@ -1409,6 +1410,34 @@ async def api_migrate_import(request: Request):
     if err:
         return _busy_error()
     return {"job_id": job_id}
+
+
+# ---- 原生文件 / 文件夹选择（资源管理器样式）----
+# 本机工具：由服务端弹出 Windows 原生对话框，把绝对路径回填给前端，省去手打路径。
+# 对话框是**模态**的，会阻塞到用户选完，因此必须丢到线程池，不能占用事件循环线程。
+
+@app.post("/api/pick-folder")
+async def api_pick_folder(request: Request):
+    body = await _json_body(request)
+    initial = str(body.get("initial_dir") or "").strip()
+    try:
+        path = await run_in_threadpool(filedialog.pick_folder, initial or None, "选择导出位置")
+    except filedialog.FileDialogError as exc:
+        return _error_response(exc.code, exc.message, exc.hint)
+    return {"path": path} if path else {"cancelled": True}
+
+
+@app.post("/api/pick-file")
+async def api_pick_file(request: Request):
+    body = await _json_body(request)
+    initial = str(body.get("initial_dir") or "").strip()
+    try:
+        path = await run_in_threadpool(
+            filedialog.pick_file, initial or None, "选择数据包（.zip）", None, "zip"
+        )
+    except filedialog.FileDialogError as exc:
+        return _error_response(exc.code, exc.message, exc.hint)
+    return {"path": path} if path else {"cancelled": True}
 
 
 @app.get("/image/{filepath:path}")

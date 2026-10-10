@@ -337,21 +337,35 @@
             <div class="settings-field" style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
                 <label>数据迁移</label>
                 <span class="field-hint" id="migrateSummary">加载中…</span>
+
+                <label class="migrate-sub">导出位置</label>
                 <div class="migrate-row">
-                    <input type="text" id="migrateExportDir" placeholder="导出目录（留空 = 数据目录）" autocomplete="off">
-                    <button type="button" class="btn-folder-ghost" onclick="doExportData()">
-                        <svg class="icon"><use href="#i-download"/></svg>导出
+                    <input type="text" id="migrateExportDir" placeholder="留空 = 数据目录" autocomplete="off" readonly>
+                    <button type="button" class="btn-folder-ghost" onclick="pickMigratePath('folder')" title="在资源管理器中选择文件夹">
+                        <svg class="icon"><use href="#i-folder"/></svg>选择…
                     </button>
                 </div>
+
+                <label class="migrate-sub">导入数据包</label>
                 <div class="migrate-row">
-                    <input type="text" id="migrateImportPath" placeholder="要导入的 .zip 数据包路径" autocomplete="off">
-                    <button type="button" class="btn-folder-ghost" onclick="doImportData()">
-                        <svg class="icon"><use href="#i-upload"/></svg>导入
+                    <input type="text" id="migrateImportPath" placeholder="选择由本工具导出的 .zip" autocomplete="off" readonly>
+                    <button type="button" class="btn-folder-ghost" onclick="pickMigratePath('file')" title="在资源管理器中选择 .zip 数据包">
+                        <svg class="icon"><use href="#i-upload"/></svg>选择…
                     </button>
                 </div>
+
                 <label class="fav-check" style="margin-top:6px;">
                     <input type="checkbox" id="migrateRemap" checked> 导入后自动重新关联本地图片路径
                 </label>
+
+                <div class="migrate-row" style="margin-top:8px;">
+                    <button type="button" class="btn-primary migrate-btn" onclick="doExportData()">
+                        <svg class="icon"><use href="#i-download"/></svg>导出数据包
+                    </button>
+                    <button type="button" class="btn-primary migrate-btn" onclick="doImportData()">
+                        <svg class="icon"><use href="#i-upload"/></svg>导入数据包
+                    </button>
+                </div>
                 <span class="field-hint">导出：把数据库 + 缩略图 + 元数据打包成一个 .zip，可在新的工具文件夹里导入还原，无需重新扫描或同步。导入会覆盖当前数据库（原库自动备份为 archive.db.bak-*）。</span>
             </div>
             </div>
@@ -2088,6 +2102,36 @@ async function loadMigrateSummary() {
     }
 }
 
+// 调起系统原生「资源管理器」选择窗口（文件夹 / 文件），选中路径回填到只读输入框。
+// 若原生对话框不可用（非 Windows / 调用失败），退化为可手动输入，避免把用户卡死。
+async function pickMigratePath(kind) {
+    const input = $(kind === 'folder' ? 'migrateExportDir' : 'migrateImportPath');
+    if (!input) return;
+    const originalPlaceholder = input.placeholder;
+    const initial = input.value.trim();
+    input.placeholder = '正在等待选择…';
+    try {
+        const resp = await fetch(kind === 'folder' ? '/api/pick-folder' : '/api/pick-file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initial_dir: initial })
+        });
+        const d = await resp.json();
+        if (d && d.error) {
+            input.readOnly = false;
+            input.placeholder = '手动输入路径';
+            showToast((d.error.hint || d.error.message || '无法打开选择窗口') + '，可手动输入路径');
+            input.focus();
+            return;
+        }
+        if (d && d.path) input.value = d.path;
+    } catch (e) {
+        showToast('无法打开选择窗口：' + e.message);
+    } finally {
+        if (input.placeholder === '正在等待选择…') input.placeholder = originalPlaceholder;
+    }
+}
+
 function doExportData() {
     const dest = ($('migrateExportDir').value || '').trim();
     closeSettings();
@@ -2099,7 +2143,7 @@ function doImportData() {
     const msg = $('settingsMsg');
     if (!zipPath) {
         msg.style.display = 'block';
-        msg.textContent = '请先填写要导入的 .zip 数据包路径';
+        msg.textContent = '请先选择要导入的 .zip 数据包';
         msg.style.color = '#e94560';
         return;
     }
