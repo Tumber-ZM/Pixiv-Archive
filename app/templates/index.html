@@ -334,6 +334,26 @@
                 </label>
                 <span class="field-hint">开启后所有图片将模糊显示，适合演示 / 屏幕共享时保护内容。</span>
             </div>
+            <div class="settings-field" style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px;">
+                <label>数据迁移</label>
+                <span class="field-hint" id="migrateSummary">加载中…</span>
+                <div class="migrate-row">
+                    <input type="text" id="migrateExportDir" placeholder="导出目录（留空 = 数据目录）" autocomplete="off">
+                    <button type="button" class="btn-folder-ghost" onclick="doExportData()">
+                        <svg class="icon"><use href="#i-download"/></svg>导出
+                    </button>
+                </div>
+                <div class="migrate-row">
+                    <input type="text" id="migrateImportPath" placeholder="要导入的 .zip 数据包路径" autocomplete="off">
+                    <button type="button" class="btn-folder-ghost" onclick="doImportData()">
+                        <svg class="icon"><use href="#i-upload"/></svg>导入
+                    </button>
+                </div>
+                <label class="fav-check" style="margin-top:6px;">
+                    <input type="checkbox" id="migrateRemap" checked> 导入后自动重新关联本地图片路径
+                </label>
+                <span class="field-hint">导出：把数据库 + 缩略图 + 元数据打包成一个 .zip，可在新的工具文件夹里导入还原，无需重新扫描或同步。导入会覆盖当前数据库（原库自动备份为 archive.db.bak-*）。</span>
+            </div>
             </div>
         <div class="settings-section" id="secNetwork" style="display:none;">
             <div class="settings-field">
@@ -621,7 +641,6 @@ function renderGallery(data) {
     $('loading').style.display = 'none';
     currentTotal = data.total;
     currentTotalPages = data.total_pages;
-    $('stats').textContent = `共 ${data.total} 件`;
 
     const wall = $('wall');
     wall.innerHTML = '';
@@ -675,6 +694,24 @@ function renderGallery(data) {
     wall.appendChild(frag);
 
     renderPagination(data);
+}
+
+// 侧栏「图库概览」：启动时拉一次全局计数渲染成卡片（与筛选无关，不随画廊刷新）。
+async function loadStats() {
+    try {
+        const resp = await fetch('/api/stats');
+        const s = await resp.json();
+        $('stats').innerHTML = `
+            <div class="stats-title">图库概览</div>
+            <div class="stats-grid">
+                <div class="stat-cell"><span class="stat-num">${s.artworks}</span><span class="stat-label">作品</span></div>
+                <div class="stat-cell"><span class="stat-num">${s.authors}</span><span class="stat-label">画师</span></div>
+                <div class="stat-cell"><span class="stat-num">${s.tags}</span><span class="stat-label">标签</span></div>
+                <div class="stat-cell"><span class="stat-num">${s.images}</span><span class="stat-label">图片</span></div>
+            </div>`;
+    } catch (e) {
+        // 概览是锦上添花，失败就保持空白，不打扰用户
+    }
 }
 
 function toggleTileCheck(span, artworkId) {
@@ -1543,6 +1580,8 @@ function hideJobWindow() {
 function jobKindLabel(kind) {
     if (kind === 'scan') return '扫描图片';
     if (kind === 'bookmark_check') return '收藏订阅更新';
+    if (kind === 'migrate_export') return '导出数据包';
+    if (kind === 'migrate_import') return '导入数据包';
     return '同步元数据';
 }
 
@@ -1577,6 +1616,40 @@ function launchJob(reqUrl, kind, method) {
             } else {
                 const err = (d && d.error) ? d.error : { message: '任务启动失败', code: 'UNKNOWN' };
                 showJobError(err);
+            }
+        })
+        .catch(e => {
+            showJobError({ code: 'CONN', message: '无法连接服务器：' + e.message,
+                           hint: '请确认服务仍在运行' });
+        });
+}
+
+// 需要 JSON 请求体的后台任务（导出 / 导入数据包）
+function launchJobWithBody(reqUrl, kind, payload) {
+    clearTimeout(_jobCloseTimer);
+    clearTimeout(_jobPollTimer);
+    setFabBusy(true);
+    $('jobTitle').textContent = jobKindLabel(kind);
+    $('jobBody').style.display = 'block';
+    $('jobResult').style.display = 'none';
+    $('jobError').style.display = 'none';
+    $('jobPhase').textContent = '正在启动…';
+    $('jobPct').textContent = '';
+    $('jobBarFill').style.width = '0%';
+    showJobWindow();
+
+    fetch(reqUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {})
+    })
+        .then(r => r.json())
+        .then(d => {
+            if (d && d.job_id) {
+                _currentJobId = d.job_id;
+                pollJob(d.job_id);
+            } else {
+                showJobError((d && d.error) ? d.error : { code: 'UNKNOWN', message: '任务启动失败' });
             }
         })
         .catch(e => {
@@ -1641,6 +1714,12 @@ function finishJob(d) {
     } else if (d.kind === 'bookmark_check') {
         loadGallery(1);
         loadBookmarkSubsView();
+    } else if (d.kind === 'migrate_import') {
+        // 导入换掉了整库：刷新当前视图与设置页统计
+        loadGallery(1);
+        if ($('viewAuthors').classList.contains('active')) loadAuthorsView();
+        if ($('viewTags').classList.contains('active')) loadTagsView();
+        loadMigrateSummary();
     }
     clearTimeout(_jobCloseTimer);
     _jobCloseTimer = setTimeout(hideJobWindow, 3500);
@@ -1672,6 +1751,29 @@ function renderJobResult(d) {
             html += `<div class="job-err-line">入库：新作品 ${r.scan.new_artworks || 0} · 新图片 ${r.scan.new_images || 0}${r.synced ? ' · 元数据同步 ' + r.synced : ''}</div>`;
         } else if (!r.cancelled) {
             html += `<div class="job-err-line">没有新增收藏，无需入库。</div>`;
+        }
+    } else if (d.kind === 'migrate_export') {
+        if (r.cancelled) {
+            html = '导出已取消';
+        } else {
+            const c = r.counts || {};
+            html = `导出完成<br>作品 ${c.artworks || 0} · 图片 ${c.images || 0} · 缩略图 ${c.thumbnails || 0} · 元数据 ${c.metadata || 0}`;
+            if (r.path) html += `<div class="job-err-line">已保存到：${escapeHtml(r.path)}</div>`;
+        }
+    } else if (d.kind === 'migrate_import') {
+        if (r.cancelled) {
+            html = '导入已取消';
+        } else {
+            const c = r.counts || {};
+            html = `导入完成<br>作品 ${c.artworks || 0} · 图片 ${c.images || 0} · 缩略图 ${c.thumbnails || 0} · 元数据 ${c.metadata || 0}`;
+            if (r.backup) html += `<div class="job-err-line">原库已备份：${escapeHtml(r.backup)}</div>`;
+            const rp = r.remap;
+            if (rp && rp.ok) {
+                html += `<div class="job-err-line">图片路径重关联：成功 ${rp.relinked || 0} · 未找到 ${rp.missing || 0}`
+                    + (rp.ambiguous ? ` · 同名歧义 ${rp.ambiguous}` : '') + `</div>`;
+            } else if (rp && rp.reason === 'no_source_dir') {
+                html += `<div class="job-err-line">未设置本地图片目录，已跳过图片路径重关联。</div>`;
+            }
         }
     } else {
         html = `同步完成<br>成功 ${r.synced || 0} · 已删除 ${r.deleted || 0} · 失败 ${r.failed || 0}`;
@@ -1865,6 +1967,7 @@ function updateSafeBadge() {
 async function openSettings() {
     $('settingsOverlay').classList.remove('hidden');
     $('settingsMsg').style.display = 'none';
+    loadMigrateSummary();
     $('settingSafeMode').checked = document.documentElement.classList.contains('safe-mode');
     try {
         const resp = await fetch('/api/settings');
@@ -1970,6 +2073,43 @@ async function saveSettings() {
         msg.textContent = '保存失败: ' + e.message;
         msg.style.color = '#e94560';
     }
+}
+
+// ===== 数据迁移（导出 / 导入数据包）=====
+async function loadMigrateSummary() {
+    const hint = $('migrateSummary');
+    if (!hint) return;
+    try {
+        const r = await fetch('/api/migrate/summary');
+        const d = await r.json();
+        hint.textContent = `当前库：作品 ${d.artworks} · 图片 ${d.images} · 缩略图 ${d.thumbnails} · 元数据 ${d.metadata} ｜ 数据目录：${d.data_dir}`;
+    } catch (e) {
+        hint.textContent = '无法读取库信息';
+    }
+}
+
+function doExportData() {
+    const dest = ($('migrateExportDir').value || '').trim();
+    closeSettings();
+    launchJobWithBody('/api/migrate/export', 'migrate_export', { dest_dir: dest });
+}
+
+function doImportData() {
+    const zipPath = ($('migrateImportPath').value || '').trim();
+    const msg = $('settingsMsg');
+    if (!zipPath) {
+        msg.style.display = 'block';
+        msg.textContent = '请先填写要导入的 .zip 数据包路径';
+        msg.style.color = '#e94560';
+        return;
+    }
+    const remap = $('migrateRemap').checked;
+    showConfirmDialog('导入数据包',
+        '导入会覆盖当前数据库（原库会自动备份为 archive.db.bak-*），确定继续？',
+        function () {
+            closeSettings();
+            launchJobWithBody('/api/migrate/import', 'migrate_import', { zip_path: zipPath, remap: remap });
+        }, '导入');
 }
 
 // ===== Helpers =====
@@ -2166,7 +2306,9 @@ window.addEventListener('resize', function () { hideCtxMenu(); });
     right.addEventListener('mousedown', function (e) {
         if (e.button !== 0) return;
         if (e.target.closest && (e.target.closest('button') || e.target.closest('a'))) return;
-        if (_viewerZoom <= 1) return;
+        // 只要不是默认「适应窗口」比例（放大或缩小）就允许拖动。原判断 `_viewerZoom <= 1`
+        // 会把缩小（zoom < 1）也一并挡掉，导致缩小后无法拖动。
+        if (Math.abs(_viewerZoom - 1) < 1e-6) return;
         e.preventDefault();
         dragging = true;
         sx = e.clientX; sy = e.clientY;
@@ -2210,6 +2352,7 @@ updateSafeBadge();
 initR18();
 initAI();
 updateSortBtn();
+loadStats();
 loadGallery(1);
 </script>
 </body>

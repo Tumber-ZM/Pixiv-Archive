@@ -397,13 +397,48 @@ html.sb-collapsed .safe-badge {
     gap: 2px;
 }
 
+/* 侧栏底部「图库概览」统计卡：2×2 网格，每格大号数字 + 小号灰标签。
+   颜色全部取自 :root 变量，不引入新色值。 */
 .side-stats {
-    padding: 8px 10px 4px;
-    font-size: 12px;
+    margin: 10px 2px 2px;
+    padding: 12px 14px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+.stats-title {
+    margin-bottom: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
     color: var(--text-3);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 10px;
+}
+
+.stat-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.stat-num {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+    font-size: 11px;
+    color: var(--text-3);
 }
 
 .safe-badge {
@@ -702,6 +737,9 @@ html.sb-collapsed .safe-badge {
     pointer-events: none;
 }
 
+/* 角标整体半透明（60%），让它们退到图片之后、不抢主体；
+   P数（无修饰类）/R18/AI 三类都吃这条。告警类（已删除/同步失败）在下面单独
+   恢复为不透明——它们是需要被立刻看见的状态，不能跟着变淡。 */
 .tile-badges span {
     padding: 2px 8px;
     font-size: 10.5px;
@@ -712,6 +750,7 @@ html.sb-collapsed .safe-badge {
     border-radius: var(--radius-full);
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
+    opacity: 0.6;
 }
 
 .tile-badges span.r18 {
@@ -720,11 +759,13 @@ html.sb-collapsed .safe-badge {
 
 .tile-badges span.deleted {
     background: var(--danger);
+    opacity: 1;
 }
 
 .tile-badges span.sync-err {
     background: var(--gold);
     color: #201a05;
+    opacity: 1;
 }
 
 /* AI 生成：刻意用紫色，与 R18 的红色（--danger）明确区分，避免看混 */
@@ -741,9 +782,10 @@ html.sb-collapsed .safe-badge {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
+    /* 与右上角的 .tile-action-btn（26×26 / 8px）同规格，一排图标才齐 */
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
     background: rgba(10, 12, 16, 0.55);
     border: 1px solid rgba(255, 255, 255, 0.28);
     backdrop-filter: blur(6px);
@@ -764,8 +806,8 @@ html.sb-collapsed .safe-badge {
 }
 
 .tile-checkbox {
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
     accent-color: var(--accent);
     cursor: pointer;
 }
@@ -773,7 +815,9 @@ html.sb-collapsed .safe-badge {
 .tile-actions {
     position: absolute;
     top: 8px;
-    right: 38px;
+    /* 复选框容器已放大到 26px（right:8 → 左缘距右 34px），这里取 40px，
+       与 .tile-actions 的 6px 内间距一致，三颗按钮等距且不重叠 */
+    right: 40px;
     display: flex;
     gap: 6px;
     opacity: 0;
@@ -1434,6 +1478,23 @@ html.sb-collapsed .safe-badge {
     line-height: 1.5;
     color: var(--text-3);
     word-break: break-all;
+}
+
+/* 数据迁移：目录 / 数据包输入框 + 按钮同一行 */
+.migrate-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.migrate-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.migrate-row .btn-folder-ghost {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .settings-actions {

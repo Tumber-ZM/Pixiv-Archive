@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import paths
 from app import jobs
 from app import envfile
+from app import migration
 from app.config import DEFAULT_PORT
 from app.database import get_db, init_db
 from app.scanner import scan_directory
@@ -666,6 +667,22 @@ def api_search(
             "per_page": per_page,
             "total_pages": (total + per_page - 1) // per_page,
         }
+
+
+@app.get("/api/stats")
+def api_stats():
+    """侧栏「图库概览」用的全局计数（不随筛选变化）。"""
+    with get_db() as conn:
+        artworks = conn.execute("SELECT COUNT(*) FROM artworks").fetchone()[0]
+        authors = conn.execute("SELECT COUNT(*) FROM authors").fetchone()[0]
+        tags = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+        images = conn.execute("SELECT COUNT(*) FROM images").fetchone()[0]
+    return {
+        "artworks": artworks,
+        "authors": authors,
+        "tags": tags,
+        "images": images,
+    }
 
 
 @app.get("/api/tags")
@@ -1340,6 +1357,58 @@ def api_refresh_ips():
     from app.pixiv import refresh_direct_ips
     updated = refresh_direct_ips()
     return {"status": "ok", "updated": updated}
+
+
+# ---- 数据迁移（导出 / 导入）----
+# 把「刮削后的元数据」（数据库 + 缩略图 + 元数据 JSON）打包成 zip，可在新的工具
+# 目录里导入还原，无需重新扫描或同步。导入是文件写入操作，复用后台任务 + 进度窗。
+
+@app.get("/api/migrate/summary")
+def api_migrate_summary():
+    return migration.summary()
+
+
+@app.post("/api/migrate/export")
+async def api_migrate_export(request: Request):
+    body = await _json_body(request)
+    dest_dir = str(body.get("dest_dir") or "").strip()
+
+    def run(job):
+        job.update(phase="export", message="准备导出…")
+        try:
+            job.state["result"] = migration.export_data(
+                dest_dir, job.update, job.cancel_event
+            )
+        except migration.MigrationError as exc:
+            job.set_error({"code": exc.code, "message": exc.message, "hint": exc.hint})
+            job.set_status("error")
+
+    job_id, err = jobs.start("migrate_export", run)
+    if err:
+        return _busy_error()
+    return {"job_id": job_id}
+
+
+@app.post("/api/migrate/import")
+async def api_migrate_import(request: Request):
+    body = await _json_body(request)
+    zip_path = str(body.get("zip_path") or "").strip()
+    remap = bool(body.get("remap", True))
+
+    def run(job):
+        job.update(phase="import", message="准备导入…")
+        try:
+            job.state["result"] = migration.import_data(
+                zip_path, remap=remap, progress_callback=job.update, cancel_event=job.cancel_event
+            )
+        except migration.MigrationError as exc:
+            job.set_error({"code": exc.code, "message": exc.message, "hint": exc.hint})
+            job.set_status("error")
+
+    job_id, err = jobs.start("migrate_import", run)
+    if err:
+        return _busy_error()
+    return {"job_id": job_id}
 
 
 @app.get("/image/{filepath:path}")

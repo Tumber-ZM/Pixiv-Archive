@@ -30,6 +30,8 @@ desktop.ini
 # ---- 本仓库自用：审查/临时产物 ----
 .removed-backup/
 .qa-tmp/
+# 交付物报告（安全审计 / QA 等内部工作产物，不随仓库分发）
+deliverables/
 
 # ---- AI 工作区（本地工具状态，非项目源码）----
 .workbuddy-ai/
