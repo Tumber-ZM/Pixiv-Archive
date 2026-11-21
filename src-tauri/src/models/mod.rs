@@ -326,6 +326,8 @@ pub struct ListQuery {
     pub seed: Option<i64>,
     pub author_id: Option<i64>,
     pub tag: Option<String>,
+    /// 同时命中这些标签（标签组合用，AND）
+    pub tags_all: Option<Vec<String>>,
     pub favorite_id: Option<i64>,
     /// 只看 Pixiv 收藏里的作品（作者页的「仅看收藏」）
     pub favorited_only: Option<bool>,

@@ -28,6 +28,8 @@ interface ArtworkListProps {
   onChanged?: () => void;
   /** 本地搜不到时去 Pixiv 搜作品（只给画廊用） */
   remoteSearch?: boolean;
+  /** 忽略顶栏搜索词（标签页的图片区只按勾选标签过滤） */
+  ignoreQuery?: boolean;
 }
 
 /**
@@ -36,7 +38,7 @@ interface ArtworkListProps {
  * 无限滚动：每批 60 条，底部哨兵进入视口就取下一批并追加。
  * 筛选条件变化会清空累积结果、退回第 1 批——否则新旧条件的结果会混在一起。
  */
-export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChanged, remoteSearch }: ArtworkListProps) {
+export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChanged, remoteSearch, ignoreQuery }: ArtworkListProps) {
   const q = useUi((state) => state.q);
   const sort = useUi((state) => state.sort);
   const order = useUi((state) => state.order);
@@ -115,7 +117,7 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
 
   // 本地没有结果时，非阻塞地补一次 Pixiv 作品搜索
   useEffect(() => {
-    if (!remoteSearch || !debouncedQ.trim() || loading || items.length > 0) {
+    if (!remoteSearch || ignoreQuery || !debouncedQ.trim() || loading || items.length > 0) {
       setRemoteItems([]);
       setRemoteError(null);
       setRemoteLoading(false);
@@ -146,7 +148,7 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [remoteSearch, debouncedQ, loading, items.length]);
+  }, [remoteSearch, ignoreQuery, debouncedQ, loading, items.length]);
 
   // 条件变了：清空累积结果，退回第 1 批
   useEffect(() => {
@@ -164,7 +166,7 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
     const query: ListQuery = {
       page,
       page_size: PAGE_SIZE,
-      q: debouncedQ.trim() || undefined,
+      q: ignoreQuery ? undefined : debouncedQ.trim() || undefined,
       sort: effectiveSort,
       order: effectiveOrder,
       r18,

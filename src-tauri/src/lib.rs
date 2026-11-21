@@ -87,6 +87,7 @@ pub fn run() {
             commands::pixiv_favorites::sync_pixiv_favorites,
             commands::pixiv_search::search_pixiv_authors,
             commands::pixiv_search::search_pixiv_illusts,
+            commands::pixiv_search::search_pixiv_tags,
             commands::pixiv_search::download_pixiv_illust,
             commands::scan::cancel_scan,
             commands::scan::data_directory,

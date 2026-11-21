@@ -13,7 +13,7 @@ import { Dialog } from "../components/dialog/Dialog";
 import { ArtworkList } from "../components/wall/ArtworkList";
 import { CMD, call, isAppError } from "../lib/ipc";
 import { useUi } from "../stores/ui";
-import type { FavoriteSyncStatus, TagCombo, TagRow } from "../types/ipc";
+import type { FavoriteSyncStatus, RemoteTag, TagCombo, TagRow } from "../types/ipc";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const TAG_ROW_HEIGHT = 36;
@@ -60,6 +60,11 @@ export function Tags() {
   const [visibleRows, setVisibleRows] = useState(DEFAULT_ROWS);
   const [hasOverflow, setHasOverflow] = useState(false);
   const tagBoxRef = useRef<HTMLDivElement>(null);
+
+  const [remoteTags, setRemoteTags] = useState<RemoteTag[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteFor, setRemoteFor] = useState("");
 
   const pendingTag = useUi((state) => state.pendingTag);
   const consumePending = useUi((state) => state.consumePending);
@@ -131,12 +136,50 @@ export function Tags() {
     void loadCombos();
   }, []);
 
+  // Pixiv 上的标签：有搜索词时聚合远端作品标签，没词时取热门标签；失败只提示
+  useEffect(() => {
+    let cancelled = false;
+    const word = q.trim();
+    const timer = window.setTimeout(() => {
+      setRemoteLoading(true);
+      setRemoteError(null);
+      call<RemoteTag[]>(CMD.searchPixivTags, { word })
+        .then((tags) => {
+          if (cancelled) return;
+          setRemoteTags(tags);
+          setRemoteFor(word);
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setRemoteError(isAppError(reason) ? reason.message : String(reason));
+          setRemoteTags([]);
+          setRemoteFor(word);
+        })
+        .finally(() => {
+          if (!cancelled) setRemoteLoading(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [q]);
+
+  // 顶栏「默认展示全部」：清空勾选，图片区回到全部作品
+  useEffect(() => {
+    const handler = () => setSelectedTags([]);
+    window.addEventListener("pa-tags-show-all", handler);
+    return () => window.removeEventListener("pa-tags-show-all", handler);
+  }, []);
+
   // 标签按钮云是否有被 2 行裁掉的内容
   useEffect(() => {
     const el = tagBoxRef.current;
     if (!el) return undefined;
     const update = () => {
-      setHasOverflow(el.scrollHeight > visibleRows * TAG_ROW_HEIGHT + 1);
+      setHasOverflow(
+        !q.trim() && el.scrollHeight > visibleRows * TAG_ROW_HEIGHT + 1,
+      );
     };
     update();
     const observer = new ResizeObserver(update);
@@ -229,6 +272,8 @@ export function Tags() {
       />
     );
   }
+
+  const searching = Boolean(q.trim());
 
   const comboMenuItems: MenuItem[] = comboMenu
     ? [
@@ -460,8 +505,8 @@ export function Tags() {
           <>
             <div
               ref={tagBoxRef}
-              className="mt-2 flex flex-wrap gap-2 overflow-hidden"
-              style={{ maxHeight: visibleRows * TAG_ROW_HEIGHT }}
+              className={`mt-2 flex flex-wrap gap-2 ${searching ? "" : "overflow-hidden"}`}
+              style={searching ? undefined : { maxHeight: visibleRows * TAG_ROW_HEIGHT }}
             >
               {rows.map((row) => {
                 const label = row.translated_name ?? row.name;
@@ -477,8 +522,8 @@ export function Tags() {
                     <button
                       type="button"
                       className="tag-pick-open"
-                      onClick={() => setCurrent({ name: row.name, label })}
-                      title={`点名称查看 #${label} 的作品（${row.count} 件）`}
+                      onClick={() => toggleTag(row.name)}
+                      title={`勾选 / 取消 #${label}（${row.count} 件）`}
                     >
                       <span className="tag-pick-label"># {label}</span>
                       <span className="tag-pick-count">{row.count}</span>
@@ -487,7 +532,7 @@ export function Tags() {
                 );
               })}
             </div>
-            {(hasOverflow || visibleRows > DEFAULT_ROWS) && (
+            {!searching && (hasOverflow || visibleRows > DEFAULT_ROWS) && (
               <div className="mt-2 flex items-center gap-3 text-micro">
                 {hasOverflow && (
                   <button
@@ -511,6 +556,69 @@ export function Tags() {
             )}
           </>
         )}
+      </div>
+
+      {/* Pixiv 上的标签 */}
+      <div className="mt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-micro text-text-3">Pixiv 的标签</span>
+          {remoteLoading && <span className="text-micro text-text-3">获取中…</span>}
+        </div>
+        {remoteError ? (
+          <p className="mt-2 text-micro text-text-2">
+            Pixiv 标签暂不可用：{remoteError}。本地标签不受影响。
+          </p>
+        ) : remoteLoading ? (
+          <p className="mt-2 text-micro text-text-2">
+            正在从 Pixiv 获取{q.trim() ? `「${q.trim()}」的` : "热门"}标签…
+          </p>
+        ) : remoteFor === q.trim() && remoteTags.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {remoteTags.map((tag) => {
+              const selected = selectedTags.includes(tag.name);
+              const label = tag.translated_name ?? tag.name;
+              return (
+                <div
+                  key={tag.name}
+                  className="tag-pick"
+                  data-active={selected}
+                  data-source="pixiv"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={() => toggleTag(tag.name)}
+                    aria-label={`选择 Pixiv 标签 ${label}`}
+                  />
+                  <button
+                    type="button"
+                    className="tag-pick-open"
+                    onClick={() => toggleTag(tag.name)}
+                    title={`勾选 / 取消 Pixiv 标签 #${label}`}
+                  >
+                    <span className="tag-pick-label"># {label}</span>
+                    {tag.count > 0 && <span className="tag-pick-count">{tag.count}</span>}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : remoteFor === q.trim() ? (
+          <p className="mt-2 text-micro text-text-2">Pixiv 上也没有找到相关标签。</p>
+        ) : null}
+      </div>
+
+      {/* 图片区：勾选标签时按组合过滤，没勾选就是全部作品 */}
+      <div className="-mx-6 mt-5 border-t border-line pt-4">
+        <ArtworkList
+          ignoreQuery
+          heading={
+            selectedTags.length > 0 ? `已选 ${selectedTags.length} 个标签` : "全部作品"
+          }
+          extraQuery={
+            selectedTags.length > 0 ? { tags_all: selectedTags } : undefined
+          }
+        />
       </div>
 
       {comboMenu && (

@@ -97,6 +97,15 @@ pub struct RemoteIllust {
     pub author_name: String,
     pub author_id: i64,
     pub page_count: i64,
+    pub tags: Vec<String>,
+}
+
+/// Pixiv 上的标签（热门标签或作品搜索结果里聚合出来的）。
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteTag {
+    pub name: String,
+    pub translated_name: Option<String>,
+    pub count: i64,
 }
 
 struct CachedToken {
@@ -956,6 +965,103 @@ impl PixivClient {
                         .to_string(),
                     author_id: illust.pointer("/user/id").and_then(Value::as_i64).unwrap_or(0),
                     page_count: illust.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+                    tags: illust
+                        .get("tags")
+                        .and_then(Value::as_array)
+                        .map(|tags| {
+                            tags.iter()
+                                .filter_map(|tag| {
+                                    tag.get("name")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect())
+    }
+
+    /// Pixiv 上的标签：有搜索词时聚合作品搜索结果的标签，没有搜索词时取热门标签。
+    pub async fn search_tags(&self, word: &str) -> AppResult<Vec<RemoteTag>> {
+        let word = word.trim();
+        if word.is_empty() {
+            return self.trending_tags().await;
+        }
+        let illusts = self.search_illusts(word).await?;
+        let mut counts: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        for illust in illusts {
+            for tag in illust.tags {
+                *counts.entry(tag).or_insert(0) += 1;
+            }
+        }
+        let mut tags: Vec<RemoteTag> = counts
+            .into_iter()
+            .map(|(name, count)| RemoteTag {
+                name,
+                translated_name: None,
+                count,
+            })
+            .collect();
+        tags.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+        tags.truncate(40);
+        Ok(tags)
+    }
+
+    async fn trending_tags(&self) -> AppResult<Vec<RemoteTag>> {
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{API_BASE}/v1/trending-tags/illust"))
+            .query(&[("filter", "for_android")])
+            .bearer_auth(token)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .send()
+            .await
+            .map_err(|error| AppError::new("NETWORK", format!("无法连接 Pixiv：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 热门标签返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("热门标签响应无法解析：{error}")))?;
+        let trend_tags = body
+            .get("trend_tags")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(trend_tags
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.get("tag").and_then(Value::as_str)?;
+                Some(RemoteTag {
+                    name: name.to_string(),
+                    translated_name: entry
+                        .get("translated_name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    count: 0,
                 })
             })
             .collect())

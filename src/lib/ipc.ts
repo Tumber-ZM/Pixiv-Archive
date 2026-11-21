@@ -35,6 +35,7 @@ export const CMD = {
   syncPixivFavorites: "sync_pixiv_favorites",
   searchPixivAuthors: "search_pixiv_authors",
   searchPixivIllusts: "search_pixiv_illusts",
+  searchPixivTags: "search_pixiv_tags",
   downloadPixivIllust: "download_pixiv_illust",
   scanDirectory: "scan_directory",
   cancelScan: "cancel_scan",

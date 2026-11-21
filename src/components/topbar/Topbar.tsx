@@ -64,6 +64,15 @@ export function Topbar() {
 
       {view === "authors" && <AuthorActions />}
 
+      {view === "tags" && (
+        <TopbarButton
+          onClick={() => window.dispatchEvent(new Event("pa-tags-show-all"))}
+          title="清空标签勾选，图片区显示全部作品"
+        >
+          默认展示全部
+        </TopbarButton>
+      )}
+
       {isLibraryView && (
         <>
       <TopbarButton

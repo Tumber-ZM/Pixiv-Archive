@@ -248,6 +248,13 @@ export interface RemoteIllust {
   page_count: number;
 }
 
+/** Pixiv 上的标签（热门标签或远端作品结果聚合）。 */
+export interface RemoteTag {
+  name: string;
+  translated_name: string | null;
+  count: number;
+}
+
 /** 校验/补页的结果。 */
 export interface RepairReport {
   checked: number;
@@ -329,6 +336,8 @@ export interface ListQuery {
   seed?: number;
   author_id?: number;
   tag?: string;
+  /** 同时命中这些标签（标签组合用，AND） */
+  tags_all?: string[];
   favorite_id?: number;
   /** 只看 Pixiv 收藏里的作品（作者页的「仅看收藏」） */
   favorited_only?: boolean;

@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use crate::commands::download;
 use crate::commands::settings;
 use crate::error::{AppError, AppResult};
-use crate::net::pixiv::{PixivClient, RemoteAuthor, RemoteIllust};
+use crate::net::pixiv::{PixivClient, RemoteAuthor, RemoteIllust, RemoteTag};
 use crate::platform::paths;
 
 /// 本地作者搜不到时，去 Pixiv 上搜作者。
@@ -28,6 +28,13 @@ pub async fn search_pixiv_illusts(word: String) -> AppResult<Vec<RemoteIllust>> 
     }
     let client = PixivClient::from_settings()?;
     client.search_illusts(word).await
+}
+
+/// Pixiv 上的标签：有搜索词时聚合远端作品结果的标签，没有词时取热门标签。
+#[tauri::command]
+pub async fn search_pixiv_tags(word: String) -> AppResult<Vec<RemoteTag>> {
+    let client = PixivClient::from_settings()?;
+    client.search_tags(word.trim()).await
 }
 
 /// 把远端搜索结果里的一件作品下载并入库（补全 / 下载按钮）。

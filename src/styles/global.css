@@ -637,6 +637,10 @@ a {
   opacity: 0.8;
 }
 
+.tag-pick[data-source="pixiv"] {
+  border-style: dashed;
+}
+
 .combo-tag {
   display: inline-flex;
   align-items: center;

@@ -97,6 +97,16 @@ pub fn build_filter(query: &ListQuery) -> Filter {
         );
         params.push(Value::Text(tag.to_string()));
     }
+    if let Some(tags) = query.tags_all.as_ref().filter(|tags| !tags.is_empty()) {
+        for tag in tags {
+            clauses.push(
+                "EXISTS (SELECT 1 FROM artwork_tags at JOIN tags t ON t.id = at.tag_id \
+                 WHERE at.artwork_id = a.id AND t.name = ?)"
+                    .to_string(),
+            );
+            params.push(Value::Text(tag.clone()));
+        }
+    }
     if let Some(favorite_id) = query.favorite_id {
         clauses.push(
             "EXISTS (SELECT 1 FROM favorite_artworks fa \
