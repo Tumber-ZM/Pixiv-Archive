@@ -96,6 +96,8 @@ interface UiState {
   shuffleToken: number;
   /** 标签页：随机标签展示在顶栏，点一次换一个并自动勾选 */
   randomTag: { name: string; label: string; count: number } | null;
+  /** 标签页：最近点过的标签，最多 7 个 */
+  tagHistory: { name: string; label: string }[];
   /** 标签页：没勾选标签时，图片区是否默认展示全部作品 */
   showAllTagsDefault: boolean;
 
@@ -115,6 +117,7 @@ interface UiState {
   clearFilters: () => void;
   requestShuffle: () => void;
   setRandomTag: (tag: { name: string; label: string; count: number } | null) => void;
+  pushTagHistory: (tag: { name: string; label: string }) => void;
   toggleShowAllTagsDefault: () => void;
 }
 
@@ -145,6 +148,7 @@ export const useUi = create<UiState>()(
       deletedOnly: false,
       shuffleToken: 0,
       randomTag: null,
+      tagHistory: [],
       showAllTagsDefault: true,
 
       // 切换页面时清掉搜索词：顶栏搜索的搜索范围会跟着页面变
@@ -205,6 +209,13 @@ export const useUi = create<UiState>()(
       clearFilters: () => set({ q: "", r18: "all", ai: "all", gif: "all", deletedOnly: false }),
       requestShuffle: () => set((s) => ({ shuffleToken: s.shuffleToken + 1 })),
       setRandomTag: (randomTag) => set({ randomTag }),
+      pushTagHistory: ({ name, label }) =>
+        set((s) => ({
+          tagHistory: [
+            { name, label },
+            ...s.tagHistory.filter((item) => item.name !== name),
+          ].slice(0, 7),
+        })),
       toggleShowAllTagsDefault: () =>
         set((s) => ({ showAllTagsDefault: !s.showAllTagsDefault })),
     }),
@@ -218,6 +229,7 @@ export const useUi = create<UiState>()(
         layout: state.layout,
         sort: state.sort,
         order: state.order,
+        tagHistory: state.tagHistory,
       }),
     },
   ),

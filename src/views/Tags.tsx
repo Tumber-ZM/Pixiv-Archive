@@ -83,6 +83,8 @@ export function Tags() {
   const showAllTagsDefault = useUi((state) => state.showAllTagsDefault);
   const setRandomTag = useUi((state) => state.setRandomTag);
   const randomTag = useUi((state) => state.randomTag);
+  const tagHistory = useUi((state) => state.tagHistory);
+  const pushTagHistory = useUi((state) => state.pushTagHistory);
 
   const pendingTag = useUi((state) => state.pendingTag);
   const consumePending = useUi((state) => state.consumePending);
@@ -195,11 +197,15 @@ export function Tags() {
         label: row.translated_name ?? row.name,
         count: row.count,
       });
+      pushTagHistory({
+        name: row.name,
+        label: row.translated_name ?? row.name,
+      });
       setRandomActive(true);
     };
     window.addEventListener("pa-tags-random", handler);
     return () => window.removeEventListener("pa-tags-random", handler);
-  }, [rows, selectedTags, setRandomTag]);
+  }, [rows, selectedTags, setRandomTag, pushTagHistory]);
 
   // 顶栏黄色按钮：点击加入 / 取消随机标签；黄色本身常驻
   useEffect(() => {
@@ -274,6 +280,14 @@ export function Tags() {
   };
 
   const handleTagClick = (name: string) => {
+    const historyLabel = tagHistory.find((item) => item.name === name)?.label;
+    pushTagHistory({
+      name,
+      label:
+        randomTag?.name === name
+          ? randomTag.label
+          : historyLabel ?? labelFor(name),
+    });
     if (randomTag?.name === name) {
       // 黄色随机标签：点击加入组合并变蓝；再点取消，黄色候选保留
       setRandomActive(false);
@@ -620,6 +634,27 @@ export function Tags() {
           <p className="order-6 w-full text-micro text-danger">{comboError}</p>
         )}
         </div>
+
+        {tagHistory.length > 0 && (
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="text-micro text-text-3">历史标签</span>
+            {tagHistory.map((item) => {
+              const selected = selectedTags.includes(item.name);
+              return (
+                <button
+                  key={item.name}
+                  type="button"
+                  className="tag-pick"
+                  data-active={selected}
+                  onClick={() => handleTagClick(item.name)}
+                  title={`历史标签 #${item.label}`}
+                >
+                  <span className="tag-pick-label"># {item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
         {combosOpen && (
