@@ -30,9 +30,6 @@ interface CurrentTag {
   label: string;
 }
 
-function sameTags(a: string[], b: string[]) {
-  return a.length === b.length && a.every((tag) => b.includes(tag));
-}
 
 export function Tags() {
   const q = useUi((state) => state.q);
@@ -55,8 +52,9 @@ export function Tags() {
   const [comboName, setComboName] = useState("");
   const [comboBusy, setComboBusy] = useState(false);
   const [comboError, setComboError] = useState<string | null>(null);
-  const [combosOpen, setCombosOpen] = useState(true);
+  const [combosOpen, setCombosOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [activeComboId, setActiveComboId] = useState<number | null>(null);
   const [comboMenu, setComboMenu] = useState<{
     x: number;
     y: number;
@@ -267,7 +265,9 @@ export function Tags() {
   };
 
   const removeTag = (name: string) => {
-    setSelectedTags((prev) => prev.filter((tag) => tag !== name));
+    const next = selectedTags.filter((tag) => tag !== name);
+    if (next.length === 0) setActiveComboId(null);
+    setSelectedTags(next);
     setPriorityTags((prev) => prev.filter((tag) => tag !== name));
     setRandomActive(false);
   };
@@ -307,6 +307,8 @@ export function Tags() {
     setSelectedTags([...combo.tags]);
     setPriorityTags([]);
     setRandomActive(false);
+    setActiveComboId(combo.id);
+    setCombosOpen(false);
     setComboError(null);
   };
 
@@ -315,11 +317,12 @@ export function Tags() {
     setComboBusy(true);
     setComboError(null);
     try {
-      await call<TagCombo>(CMD.saveTagCombo, {
+      const combo = await call<TagCombo>(CMD.saveTagCombo, {
         name: comboName.trim() || null,
         tags: selectedTags,
       });
       setComboName("");
+      setActiveComboId(combo.id);
       await loadCombos();
       return true;
     } catch (reason: unknown) {
@@ -486,14 +489,12 @@ export function Tags() {
             清除筛选
           </button>
         )}
-      </div>
 
-      {/* 已保存的标签组合 */}
-      <div className="relative mt-3 rounded-card border border-line bg-surface px-3 py-2">
-        <div className="flex flex-wrap items-center gap-2">
+        {/* 已保存的标签组合：和筛选同一行，宽度随内容增长 */}
+        <div className="relative ml-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-card border border-line bg-surface px-2 py-1">
           <button
             type="button"
-            className="flex items-center gap-1.5 text-label text-text"
+            className="order-1 flex items-center gap-1.5 text-label text-text"
             onClick={() => setCombosOpen((value) => !value)}
             title={combosOpen ? "收起已保存的标签组合" : "展开已保存的标签组合"}
           >
@@ -501,15 +502,15 @@ export function Tags() {
             已保存的标签组合
             {combosOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
           </button>
-          <span className="h-4 w-px bg-line" aria-hidden />
+          <span className="order-2 h-4 w-px bg-line" aria-hidden />
           {selectedTags.length === 0 ? (
-            <span className="text-micro text-text-3">未选择标签</span>
+            <span className="order-4 text-micro text-text-3">未选择标签</span>
           ) : (
             selectedTags.map((tag) => (
               <button
                 key={tag}
                 type="button"
-                className="tag-pick"
+                className="tag-pick order-4"
                 data-active="true"
                 title={`点击取消选择 ${tag}`}
                 onClick={() => removeTag(tag)}
@@ -521,28 +522,29 @@ export function Tags() {
           )}
           <button
             type="button"
-            className="tag-pick"
+            className="tag-pick order-5"
             onClick={focusTagSearch}
             title="到标签区搜索并添加标签"
           >
             <Plus size={10} />
             添加标签
           </button>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="order-3 flex items-center gap-2">
             <button
               type="button"
-              className="inline-flex items-center gap-1 text-micro text-text-3 hover:text-text disabled:opacity-40"
+              className="order-2 inline-flex items-center gap-1 text-micro text-text-3 hover:text-text disabled:opacity-40"
               disabled={selectedTags.length === 0}
               onClick={() => {
                 setSelectedTags([]);
                 setPriorityTags([]);
                 setRandomActive(false);
+                setActiveComboId(null);
               }}
             >
               清空
               <RotateCcw size={11} />
             </button>
-            <div className="relative">
+            <div className="relative order-1">
               <button
                 type="button"
                 className="tri-btn tri-btn-accent inline-flex items-center gap-1"
@@ -595,8 +597,10 @@ export function Tags() {
               )}
             </div>
           </div>
+        {comboError && (
+          <p className="order-6 w-full text-micro text-danger">{comboError}</p>
+        )}
         </div>
-        {comboError && <p className="mt-1 text-micro text-danger">{comboError}</p>}
       </div>
 
         {combosOpen && (
@@ -609,7 +613,7 @@ export function Tags() {
               <div className="flex flex-wrap gap-2">
                 {combos.map((combo) => {
               const expanded = expandedCombos.has(combo.id);
-              const active = sameTags(selectedTags, combo.tags);
+              const active = activeComboId === combo.id;
               return (
                 <div
                   key={combo.id}
