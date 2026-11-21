@@ -24,7 +24,7 @@ const TAG_ROW_HEIGHT = 36;
 // 本地标签初始固定 1 行，避免异步加载完成后把下面的图片区顶下去
 const DEFAULT_ROWS = 1;
 const MORE_ROWS = 4;
-type LocalRowsMode = "collapsed" | "more" | "all";
+type LocalRowsMode = "collapsed" | "all";
 
 /** 当前正在看的标签。跳转只需要名字，不必带完整 TagRow。 */
 interface CurrentTag {
@@ -68,7 +68,7 @@ export function Tags() {
   const [deleteTarget, setDeleteTarget] = useState<TagCombo | null>(null);
   const [expandedCombos, setExpandedCombos] = useState<Set<number>>(new Set());
 
-  const [localMode, setLocalMode] = useState<LocalRowsMode>("collapsed");
+  const [localMode, setLocalMode] = useState<LocalRowsMode>("all");
   const [totalRows, setTotalRows] = useState(0);
   const tagBoxRef = useRef<HTMLDivElement>(null);
 
@@ -137,11 +137,6 @@ export function Tags() {
       clearTimeout(timer);
     };
   }, [q, dataEpoch, onlyCollected, onlySubscribed, favoritesSynced]);
-
-  // 换搜索词 / 筛选条件时回到 1 行
-  useEffect(() => {
-    setLocalMode("collapsed");
-  }, [q, onlyCollected, onlySubscribed]);
 
   const loadCombos = async () => {
     try {
@@ -250,7 +245,7 @@ export function Tags() {
     setRemoteExpanded(false);
   }, [q]);
 
-  // 标签按钮云总共有多少行（用于决定「展开更多 / 展开全部」）
+  // 标签按钮云总共有多少行（用于决定「展开 / 展开（全部）」）
   useEffect(() => {
     const el = tagBoxRef.current;
     if (!el) {
@@ -734,64 +729,28 @@ export function Tags() {
         <div className="flex h-7 items-center gap-2">
           <span className="section-label">标签</span>
           {!searching && totalRows > DEFAULT_ROWS && (
-            totalRows > MORE_ROWS ? (
-              <>
-                {localMode === "collapsed" && (
-                  <button
-                    type="button"
-                    className="section-more"
-                    onClick={() => setLocalMode("more")}
-                    title={`展开到 ${MORE_ROWS} 行`}
-                  >
-                    <ChevronDown size={10} />
-                    展开更多
-                  </button>
-                )}
-                {localMode !== "all" && (
-                  <button
-                    type="button"
-                    className="section-more"
-                    onClick={() => setLocalMode("all")}
-                    title="展开全部本地标签"
-                  >
-                    <ChevronDown size={10} />
-                    展开（全部）
-                  </button>
-                )}
-                {localMode !== "collapsed" && (
-                  <button
-                    type="button"
-                    className="section-more"
-                    onClick={() => setLocalMode("collapsed")}
-                    title="收起本地标签"
-                  >
-                    <ChevronUp size={10} />
-                    收起
-                  </button>
-                )}
-              </>
-            ) : (
-              <button
-                type="button"
-                className="section-more"
-                onClick={() =>
-                  setLocalMode(localMode === "all" ? "collapsed" : "all")
-                }
-                title={localMode === "all" ? "收起本地标签" : "展开全部本地标签"}
-              >
-                {localMode === "all" ? (
-                  <>
-                    <ChevronUp size={10} />
-                    收起
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown size={10} />
-                    展开
-                  </>
-                )}
-              </button>
-            )
+            <button
+              type="button"
+              className="section-more"
+              onClick={() =>
+                setLocalMode(localMode === "all" ? "collapsed" : "all")
+              }
+              title={
+                localMode === "all" ? "收起本地标签" : "展开全部本地标签"
+              }
+            >
+              {localMode === "all" ? (
+                <>
+                  <ChevronUp size={10} />
+                  收起
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={10} />
+                  {totalRows > MORE_ROWS ? "展开（全部）" : "展开"}
+                </>
+              )}
+            </button>
           )}
           <span className="min-w-0 truncate text-micro text-text-3">
             {q.trim()
@@ -831,9 +790,7 @@ export function Tags() {
                 searching || localMode === "all"
                   ? undefined
                   : {
-                      maxHeight:
-                        (localMode === "more" ? MORE_ROWS : DEFAULT_ROWS) *
-                        TAG_ROW_HEIGHT,
+                      maxHeight: DEFAULT_ROWS * TAG_ROW_HEIGHT,
                       minHeight:
                         localMode === "collapsed"
                           ? TAG_ROW_HEIGHT
@@ -956,9 +913,9 @@ export function Tags() {
         )}
       </div>
 
-      {/* 图片区：勾选标签时按组合过滤；没勾选时看「默认状态」开关 */}
-      <div className="-mx-6 mt-5 border-t border-line pt-4">
-        {galleryTags.length > 0 || showAllTagsDefault ? (
+      {/* 没选标签时只展示标签区；需要全库预览可打开顶栏「默认状态」 */}
+      {(galleryTags.length > 0 || showAllTagsDefault) && (
+        <div className="-mx-6 mt-5 border-t border-line pt-4">
           <ArtworkList
             ignoreQuery
             heading={
@@ -972,12 +929,8 @@ export function Tags() {
               galleryTags.length > 0 ? { tags_all: galleryTags } : undefined
             }
           />
-        ) : (
-          <div className="px-6 py-10 text-center text-micro text-text-3">
-            默认状态：不展示全部。勾选上面的标签后显示对应作品。
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {comboMenu && (
         <ContextMenu

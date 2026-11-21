@@ -149,7 +149,7 @@ export const useUi = create<UiState>()(
       shuffleToken: 0,
       randomTag: null,
       tagHistory: [],
-      showAllTagsDefault: true,
+      showAllTagsDefault: false,
 
       // 切换页面时清掉搜索词：顶栏搜索的搜索范围会跟着页面变
       setView: (view) =>
