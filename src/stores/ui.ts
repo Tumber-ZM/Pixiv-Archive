@@ -95,7 +95,7 @@ interface UiState {
   /** 「随机」按钮触发的一次性乱序；只递增，不参与排序下拉框 */
   shuffleToken: number;
   /** 标签页：随机标签展示在顶栏，点一次换一个并自动勾选 */
-  randomTag: { name: string; label: string } | null;
+  randomTag: { name: string; label: string; count: number } | null;
   /** 标签页：没勾选标签时，图片区是否默认展示全部作品 */
   showAllTagsDefault: boolean;
 
@@ -114,7 +114,7 @@ interface UiState {
   toggleDeletedOnly: () => void;
   clearFilters: () => void;
   requestShuffle: () => void;
-  setRandomTag: (tag: { name: string; label: string } | null) => void;
+  setRandomTag: (tag: { name: string; label: string; count: number } | null) => void;
   toggleShowAllTagsDefault: () => void;
 }
 

@@ -662,6 +662,17 @@ a {
   color: var(--color-text);
 }
 
+.combo-tag-button {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.combo-tag-button:hover {
+  border-color: var(--color-line-hover);
+}
+
 .combo-card[data-active="true"] {
   border-color: var(--color-accent-soft);
 }

@@ -45,6 +45,8 @@ export function Tags() {
 
   const [combos, setCombos] = useState<TagCombo[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  // 通过搜索/随机得到的标签：置顶显示，方便继续操作；手动翻到的选中标签留在原位
+  const [priorityTags, setPriorityTags] = useState<string[]>([]);
   const [comboName, setComboName] = useState("");
   const [comboBusy, setComboBusy] = useState(false);
   const [comboError, setComboError] = useState<string | null>(null);
@@ -183,6 +185,7 @@ export function Tags() {
       setRandomTag({
         name: row.name,
         label: row.translated_name ?? row.name,
+        count: row.count,
       });
     };
     window.addEventListener("pa-tags-random", handler);
@@ -228,25 +231,35 @@ export function Tags() {
 
   const removeTag = (name: string) => {
     setSelectedTags((prev) => prev.filter((tag) => tag !== name));
+    setPriorityTags((prev) => prev.filter((tag) => tag !== name));
     setRandomTag(null);
   };
 
   const handleTagClick = (name: string) => {
     if (randomTag?.name === name) {
-      // 黄色随机标签：点击后用它替换当前组合，变成蓝色
+      // 黄色随机标签：用它替换当前组合，变成蓝色并置顶
       setSelectedTags([name]);
+      setPriorityTags([name]);
       setRandomTag(null);
       return;
     }
     // 点其他标签时结束随机预览，再切换这个标签的组合选中态
     setRandomTag(null);
+    const adding = !selectedTags.includes(name);
     setSelectedTags((prev) =>
       prev.includes(name) ? prev.filter((tag) => tag !== name) : [...prev, name],
     );
+    setPriorityTags((prev) => {
+      if (!adding) return prev.filter((tag) => tag !== name);
+      // 搜索状态点中的标签置顶；手动翻到的保持在原位
+      if (q.trim() && !prev.includes(name)) return [...prev, name];
+      return prev;
+    });
   };
 
   const applyCombo = (combo: TagCombo) => {
     setSelectedTags([...combo.tags]);
+    setPriorityTags([]);
     setRandomTag(null);
     setComboError(null);
   };
@@ -323,6 +336,28 @@ export function Tags() {
 
   const searching = Boolean(q.trim());
   const galleryTags = randomTag ? [randomTag.name] : selectedTags;
+  const rowByName = new Map(rows.map((row) => [row.name, row]));
+  const priorityNames: string[] = [];
+  if (randomTag) priorityNames.push(randomTag.name);
+  for (const name of priorityTags) {
+    if (!priorityNames.includes(name)) priorityNames.push(name);
+  }
+  const prioritySet = new Set(priorityNames);
+  const priorityRows: TagRow[] = priorityNames.map((name, index) => {
+    const row = rowByName.get(name);
+    if (row) return row;
+    return {
+      id: -100000 - index,
+      name,
+      translated_name: randomTag?.name === name ? randomTag.label : null,
+      count: randomTag?.name === name ? randomTag.count : 0,
+      cover_path: null,
+    };
+  });
+  const displayRows = [
+    ...priorityRows,
+    ...rows.filter((row) => !prioritySet.has(row.name)),
+  ];
 
   const comboMenuItems: MenuItem[] = comboMenu
     ? [
@@ -428,6 +463,7 @@ export function Tags() {
               className="text-micro text-text-3 hover:text-text"
               onClick={() => {
                 setSelectedTags([]);
+                setPriorityTags([]);
                 setRandomTag(null);
               }}
             >
@@ -439,17 +475,16 @@ export function Tags() {
             <span className="text-micro text-text-3">未选择标签</span>
           ) : (
             selectedTags.map((tag) => (
-              <span key={tag} className="combo-tag" title={tag}>
+              <button
+                key={tag}
+                type="button"
+                className="combo-tag combo-tag-button"
+                title={`点击取消选择 ${tag}`}
+                onClick={() => removeTag(tag)}
+              >
                 #{labelFor(tag)}
-                <button
-                  type="button"
-                  className="combo-tag-x"
-                  aria-label={`移除 ${tag}`}
-                  onClick={() => removeTag(tag)}
-                >
-                  <X size={10} />
-                </button>
-              </span>
+                <X size={10} />
+              </button>
             ))
           )}
         </div>
@@ -547,7 +582,7 @@ export function Tags() {
               className={`mt-2 flex flex-wrap gap-2 ${searching ? "" : "overflow-hidden"}`}
               style={searching ? undefined : { maxHeight: visibleRows * TAG_ROW_HEIGHT }}
             >
-              {rows.map((row) => {
+              {displayRows.map((row) => {
                 const label = row.translated_name ?? row.name;
                 const selected = selectedTags.includes(row.name);
                 const isRandom = randomTag?.name === row.name;
@@ -567,7 +602,9 @@ export function Tags() {
                     }
                   >
                     <span className="tag-pick-label"># {label}</span>
-                    <span className="tag-pick-count">{row.count}</span>
+                    {row.count > 0 && (
+                      <span className="tag-pick-count">{row.count}</span>
+                    )}
                   </button>
                 );
               })}
