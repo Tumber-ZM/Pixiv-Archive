@@ -91,13 +91,17 @@ export function Topbar() {
             随机标签
           </TopbarButton>
           {randomTag && (
-            <span
-              className="combo-tag"
+            <button
+              type="button"
+              className="combo-tag combo-tag-button"
               data-random="true"
-              title={`随机标签：${randomTag.name}`}
+              onClick={() =>
+                window.dispatchEvent(new Event("pa-tags-toggle-random"))
+              }
+              title={`随机标签：${randomTag.name}（点击加入 / 取消）`}
             >
               # {randomTag.label}
-            </span>
+            </button>
           )}
         </>
       ) : (

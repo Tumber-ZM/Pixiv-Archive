@@ -651,6 +651,19 @@ a {
   background: var(--color-warn-soft);
 }
 
+/* 顶栏黄色常驻；下方候选在用户改选其他标签后变暗，但仍可点击 */
+.tag-pick[data-random="dim"] {
+  color: var(--color-warn);
+  border-color: var(--color-line);
+  background: transparent;
+  opacity: 0.55;
+}
+
+.tag-pick[data-random="dim"]:hover {
+  border-color: var(--color-warn);
+  opacity: 0.85;
+}
+
 .tag-pick-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -672,6 +685,10 @@ a {
   color: var(--color-warn);
   border-color: var(--color-warn);
   background: var(--color-warn-soft);
+}
+
+.combo-tag[data-random="true"]:hover {
+  border-color: var(--color-warn);
 }
 
 .tag-pick[data-source="pixiv"] {

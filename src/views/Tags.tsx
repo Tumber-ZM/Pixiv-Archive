@@ -45,6 +45,8 @@ export function Tags() {
 
   const [combos, setCombos] = useState<TagCombo[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  // 顶栏黄色常驻；active=true 表示这次随机还在“预览覆盖”状态，false 表示只是候选
+  const [randomActive, setRandomActive] = useState(false);
   // 通过搜索/随机得到的标签：置顶显示，方便继续操作；手动翻到的选中标签留在原位
   const [priorityTags, setPriorityTags] = useState<string[]>([]);
   const [comboName, setComboName] = useState("");
@@ -187,10 +189,26 @@ export function Tags() {
         label: row.translated_name ?? row.name,
         count: row.count,
       });
+      setRandomActive(true);
     };
     window.addEventListener("pa-tags-random", handler);
     return () => window.removeEventListener("pa-tags-random", handler);
   }, [rows, selectedTags, setRandomTag]);
+
+  // 顶栏黄色按钮：点击加入 / 取消随机标签；黄色本身常驻
+  useEffect(() => {
+    const handler = () => {
+      if (!randomTag) return;
+      setRandomActive(false);
+      setSelectedTags((prev) =>
+        prev.includes(randomTag.name)
+          ? prev.filter((tag) => tag !== randomTag.name)
+          : [...prev, randomTag.name],
+      );
+    };
+    window.addEventListener("pa-tags-toggle-random", handler);
+    return () => window.removeEventListener("pa-tags-toggle-random", handler);
+  }, [randomTag]);
 
   // Pixiv 标签默认只显示一行
   useEffect(() => {
@@ -238,19 +256,20 @@ export function Tags() {
   const removeTag = (name: string) => {
     setSelectedTags((prev) => prev.filter((tag) => tag !== name));
     setPriorityTags((prev) => prev.filter((tag) => tag !== name));
-    setRandomTag(null);
+    setRandomActive(false);
   };
 
   const handleTagClick = (name: string) => {
     if (randomTag?.name === name) {
-      // 黄色随机标签：用它替换当前组合，变成蓝色并置顶
-      setSelectedTags([name]);
-      setPriorityTags([name]);
-      setRandomTag(null);
+      // 黄色随机标签：点击加入组合并变蓝；再点取消，黄色候选保留
+      setRandomActive(false);
+      setSelectedTags((prev) =>
+        prev.includes(name) ? prev.filter((tag) => tag !== name) : [...prev, name],
+      );
       return;
     }
-    // 点其他标签时结束随机预览，再切换这个标签的组合选中态
-    setRandomTag(null);
+    // 点其他标签只切换这个标签，不再清掉顶栏的随机标签
+    setRandomActive(false);
     const adding = !selectedTags.includes(name);
     setSelectedTags((prev) =>
       prev.includes(name) ? prev.filter((tag) => tag !== name) : [...prev, name],
@@ -266,7 +285,7 @@ export function Tags() {
   const applyCombo = (combo: TagCombo) => {
     setSelectedTags([...combo.tags]);
     setPriorityTags([]);
-    setRandomTag(null);
+    setRandomActive(false);
     setComboError(null);
   };
 
@@ -341,7 +360,8 @@ export function Tags() {
   }
 
   const searching = Boolean(q.trim());
-  const galleryTags = randomTag ? [randomTag.name] : selectedTags;
+  const galleryTags =
+    randomActive && randomTag ? [randomTag.name] : selectedTags;
   const rowByName = new Map(rows.map((row) => [row.name, row]));
   const priorityNames: string[] = [];
   if (randomTag) priorityNames.push(randomTag.name);
@@ -470,7 +490,7 @@ export function Tags() {
               onClick={() => {
                 setSelectedTags([]);
                 setPriorityTags([]);
-                setRandomTag(null);
+                setRandomActive(false);
               }}
             >
               清空
@@ -484,11 +504,12 @@ export function Tags() {
               <button
                 key={tag}
                 type="button"
-                className="combo-tag combo-tag-button"
+                className="tag-pick"
+                data-active="true"
                 title={`点击取消选择 ${tag}`}
                 onClick={() => removeTag(tag)}
               >
-                #{labelFor(tag)}
+                <span className="tag-pick-label"># {labelFor(tag)}</span>
                 <X size={10} />
               </button>
             ))
@@ -563,43 +584,44 @@ export function Tags() {
       {/* 标签按钮云 */}
       <div className="mt-5">
         <div className="flex h-7 items-center gap-2">
-          <span className="section-label">标签</span>
-          <span className="text-micro text-text-3">
+          <span className="section-label w-[88px] shrink-0">标签</span>
+          {!searching && (hasOverflow || visibleRows > DEFAULT_ROWS) && (
+            <button
+              type="button"
+              className="section-more"
+              onClick={() =>
+                visibleRows > DEFAULT_ROWS
+                  ? setVisibleRows(DEFAULT_ROWS)
+                  : setVisibleRows((value) => value + MORE_ROWS)
+              }
+              title={
+                visibleRows > DEFAULT_ROWS
+                  ? "收起本地标签"
+                  : `每次多展开 ${MORE_ROWS} 行`
+              }
+            >
+              {visibleRows > DEFAULT_ROWS ? (
+                <>
+                  <ChevronUp size={10} />
+                  收起
+                </>
+              ) : (
+                <>
+                  <ChevronDown size={10} />
+                  展开
+                </>
+              )}
+            </button>
+          )}
+          <span className="min-w-0 truncate text-micro text-text-3">
             {q.trim()
               ? `搜索「${q.trim()}」的本地结果 · ${rows.length} 个`
               : `按本地数量排序 · ${rows.length} 个`}
           </span>
-          {searching ? (
-            <span className="ml-auto text-micro text-text-3">全部搜索结果</span>
-          ) : (
-            (hasOverflow || visibleRows > DEFAULT_ROWS) && (
-              <button
-                type="button"
-                className="section-more ml-1"
-                onClick={() =>
-                  visibleRows > DEFAULT_ROWS
-                    ? setVisibleRows(DEFAULT_ROWS)
-                    : setVisibleRows((value) => value + MORE_ROWS)
-                }
-                title={
-                  visibleRows > DEFAULT_ROWS
-                    ? "收起本地标签"
-                    : `每次多展开 ${MORE_ROWS} 行`
-                }
-              >
-                {visibleRows > DEFAULT_ROWS ? (
-                  <>
-                    <ChevronUp size={10} />
-                    收起
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown size={10} />
-                    展开
-                  </>
-                )}
-              </button>
-            )
+          {searching && (
+            <span className="ml-auto shrink-0 text-micro text-text-3">
+              全部搜索结果
+            </span>
           )}
         </div>
 
@@ -641,18 +663,24 @@ export function Tags() {
                 const label = row.translated_name ?? row.name;
                 const selected = selectedTags.includes(row.name);
                 const isRandom = randomTag?.name === row.name;
+                const randomVisual =
+                  isRandom && !selected
+                    ? randomActive
+                      ? "true"
+                      : "dim"
+                    : undefined;
                 return (
                   <button
                     key={row.id}
                     type="button"
                     className="tag-pick"
-                    data-active={selected && !isRandom}
-                    data-random={isRandom}
+                    data-active={selected}
+                    data-random={randomVisual}
                     aria-pressed={selected}
                     onClick={() => handleTagClick(row.name)}
                     title={
                       isRandom
-                        ? `随机标签 #${label}：点击加入组合`
+                        ? `随机标签 #${label}：点击加入 / 取消组合`
                         : `点击选中 / 取消 #${label}（${row.count} 件）`
                     }
                   >
@@ -671,14 +699,14 @@ export function Tags() {
       {/* Pixiv 上的标签：固定一行高度，异步返回时不会顶动下面的图片区 */}
       <div className="mt-4">
         <div className="flex h-7 items-center gap-2">
-          <span className="section-label">Pixiv 的标签</span>
+          <span className="section-label w-[88px] shrink-0">Pixiv 的标签</span>
           {!remoteLoading &&
             !remoteError &&
             remoteTags.length > 0 &&
             (remoteHasOverflow || remoteExpanded) && (
               <button
                 type="button"
-                className="section-more ml-1"
+                className="section-more"
                 onClick={() => setRemoteExpanded((value) => !value)}
                 title={remoteExpanded ? "收起 Pixiv 标签" : "展开 Pixiv 标签"}
               >
@@ -755,7 +783,7 @@ export function Tags() {
           <ArtworkList
             ignoreQuery
             heading={
-              randomTag
+              randomActive && randomTag
                 ? `随机标签：# ${randomTag.label}`
                 : selectedTags.length > 0
                   ? `已选 ${selectedTags.length} 个标签`
