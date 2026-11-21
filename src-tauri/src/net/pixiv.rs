@@ -98,6 +98,8 @@ pub struct RemoteIllust {
     pub author_id: i64,
     pub page_count: i64,
     pub thumbnail: String,
+    pub is_gif: bool,
+    pub ai_type: i64,
     pub tags: Vec<String>,
 }
 
@@ -980,6 +982,15 @@ impl PixivClient {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string(),
+                    is_gif: illust
+                        .get("illustType")
+                        .and_then(Value::as_i64)
+                        .map(|kind| kind == 2)
+                        .unwrap_or(false),
+                    ai_type: illust
+                        .get("illustAiType")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(1),
                     tags: illust
                         .get("tags")
                         .and_then(Value::as_array)

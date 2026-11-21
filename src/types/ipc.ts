@@ -247,6 +247,9 @@ export interface RemoteIllust {
   author_id: number;
   page_count: number;
   thumbnail: string;
+  is_gif: boolean;
+  ai_type: number;
+  tags: string[];
 }
 
 /** Pixiv 上的标签（热门标签或远端作品结果聚合）。 */

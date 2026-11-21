@@ -66,7 +66,25 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
   const [done, setDone] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const bumpData = useUi((state) => state.bumpData);
+  const r18 = useUi((state) => state.r18);
+  const ai = useUi((state) => state.ai);
+  const gif = useUi((state) => state.gif);
+  const deletedOnly = useUi((state) => state.deletedOnly);
   const label = tag.translated_name ?? tag.name;
+
+  const visibleItems = items.filter((item) => {
+    const isR18 = item.tags.some((name) => name === "R-18" || name === "R-18G");
+    if (r18 === "hide" && isR18) return false;
+    if (r18 === "only" && !isR18) return false;
+    const isAi =
+      item.ai_type === 2 ||
+      item.tags.some((name) => /^ai(イラスト|生成|画像)?$/i.test(name.trim()));
+    if (ai === "hide" && isAi) return false;
+    if (ai === "only" && !isAi) return false;
+    if (gif === "hide" && item.is_gif) return false;
+    if (gif === "only" && !item.is_gif) return false;
+    return true;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -125,7 +143,8 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
         <div className="min-w-0">
           <h2 className="truncate text-heading text-text"># {label}</h2>
           <p className="text-micro text-text-3">
-            Pixiv 线上结果 · 优先按热门排序 · {tag.name}
+            Pixiv 线上结果 · 优先按热门排序 · {label === tag.name ? tag.name : `原始标签 ${tag.name}`}
+            {items.length > 0 && ` · 显示 ${visibleItems.length}/${items.length}`}
           </p>
         </div>
         <button
@@ -140,6 +159,12 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
         </button>
       </div>
 
+      {deletedOnly && (
+        <p className="mt-2 text-micro text-text-3">
+          「已隐藏」只适用于本地库；Pixiv 线上结果没有这个状态。
+        </p>
+      )}
+
       {loading ? (
         <p className="py-10 text-center text-micro text-text-2">
           正在从 Pixiv 获取「{label}」的作品…
@@ -153,10 +178,14 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
         <p className="py-10 text-center text-micro text-text-2">
           Pixiv 上没有找到「{label}」的作品。
         </p>
+      ) : visibleItems.length === 0 ? (
+        <p className="py-10 text-center text-micro text-text-2">
+          当前 R18 / AI / GIF 筛选下没有作品；把顶栏筛选调回「全部」即可。
+        </p>
       ) : (
         <>
           <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))]">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <div
                 key={item.pixiv_id}
                 className="overflow-hidden rounded-card border border-line bg-surface"
