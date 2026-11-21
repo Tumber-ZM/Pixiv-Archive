@@ -121,6 +121,17 @@ pub fn build_filter(query: &ListQuery) -> Filter {
                 .to_string(),
         );
     }
+    if query.collected_only.unwrap_or(false) {
+        clauses.push("COALESCE(a.origin, 'local') <> 'author_sub'".to_string());
+    }
+    if query.subscribed_only.unwrap_or(false) {
+        clauses.push(
+            "EXISTS (SELECT 1 FROM authors au \
+             JOIN subs s ON s.kind = 'author' AND s.target_pixiv_id = au.pixiv_user_id \
+             WHERE au.id = a.author_id)"
+                .to_string(),
+        );
+    }
 
     let where_sql = if clauses.is_empty() {
         "1 = 1".to_string()

@@ -72,6 +72,7 @@ export function Tags() {
 
   const showAllTagsDefault = useUi((state) => state.showAllTagsDefault);
   const setRandomTag = useUi((state) => state.setRandomTag);
+  const randomTag = useUi((state) => state.randomTag);
 
   const pendingTag = useUi((state) => state.pendingTag);
   const consumePending = useUi((state) => state.consumePending);
@@ -183,9 +184,6 @@ export function Tags() {
         name: row.name,
         label: row.translated_name ?? row.name,
       });
-      setSelectedTags((prev) =>
-        prev.includes(row.name) ? prev : [...prev, row.name],
-      );
     };
     window.addEventListener("pa-tags-random", handler);
     return () => window.removeEventListener("pa-tags-random", handler);
@@ -228,7 +226,20 @@ export function Tags() {
     return row?.translated_name ?? name;
   };
 
-  const toggleTag = (name: string) => {
+  const removeTag = (name: string) => {
+    setSelectedTags((prev) => prev.filter((tag) => tag !== name));
+    setRandomTag(null);
+  };
+
+  const handleTagClick = (name: string) => {
+    if (randomTag?.name === name) {
+      // 黄色随机标签：点击后用它替换当前组合，变成蓝色
+      setSelectedTags([name]);
+      setRandomTag(null);
+      return;
+    }
+    // 点其他标签时结束随机预览，再切换这个标签的组合选中态
+    setRandomTag(null);
     setSelectedTags((prev) =>
       prev.includes(name) ? prev.filter((tag) => tag !== name) : [...prev, name],
     );
@@ -236,6 +247,7 @@ export function Tags() {
 
   const applyCombo = (combo: TagCombo) => {
     setSelectedTags([...combo.tags]);
+    setRandomTag(null);
     setComboError(null);
   };
 
@@ -310,6 +322,7 @@ export function Tags() {
   }
 
   const searching = Boolean(q.trim());
+  const galleryTags = randomTag ? [randomTag.name] : selectedTags;
 
   const comboMenuItems: MenuItem[] = comboMenu
     ? [
@@ -413,7 +426,10 @@ export function Tags() {
             <button
               type="button"
               className="text-micro text-text-3 hover:text-text"
-              onClick={() => setSelectedTags([])}
+              onClick={() => {
+                setSelectedTags([]);
+                setRandomTag(null);
+              }}
             >
               清空
             </button>
@@ -429,7 +445,7 @@ export function Tags() {
                   type="button"
                   className="combo-tag-x"
                   aria-label={`移除 ${tag}`}
-                  onClick={() => toggleTag(tag)}
+                  onClick={() => removeTag(tag)}
                 >
                   <X size={10} />
                 </button>
@@ -534,24 +550,25 @@ export function Tags() {
               {rows.map((row) => {
                 const label = row.translated_name ?? row.name;
                 const selected = selectedTags.includes(row.name);
+                const isRandom = randomTag?.name === row.name;
                 return (
-                  <div key={row.id} className="tag-pick" data-active={selected}>
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleTag(row.name)}
-                      aria-label={`选择标签 ${label}`}
-                    />
-                    <button
-                      type="button"
-                      className="tag-pick-open"
-                      onClick={() => toggleTag(row.name)}
-                      title={`勾选 / 取消 #${label}（${row.count} 件）`}
-                    >
-                      <span className="tag-pick-label"># {label}</span>
-                      <span className="tag-pick-count">{row.count}</span>
-                    </button>
-                  </div>
+                  <button
+                    key={row.id}
+                    type="button"
+                    className="tag-pick"
+                    data-active={selected && !isRandom}
+                    data-random={isRandom}
+                    aria-pressed={selected}
+                    onClick={() => handleTagClick(row.name)}
+                    title={
+                      isRandom
+                        ? `随机标签 #${label}：点击加入组合`
+                        : `点击选中 / 取消 #${label}（${row.count} 件）`
+                    }
+                  >
+                    <span className="tag-pick-label"># {label}</span>
+                    <span className="tag-pick-count">{row.count}</span>
+                  </button>
                 );
               })}
             </div>
@@ -608,30 +625,21 @@ export function Tags() {
                 const selected = selectedTags.includes(tag.name);
                 const label = tag.translated_name ?? tag.name;
                 return (
-                  <div
+                  <button
                     key={tag.name}
+                    type="button"
                     className="tag-pick"
                     data-active={selected}
                     data-source="pixiv"
+                    aria-pressed={selected}
+                    onClick={() => handleTagClick(tag.name)}
+                    title={`点击选中 / 取消 Pixiv 标签 #${label}`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleTag(tag.name)}
-                      aria-label={`选择 Pixiv 标签 ${label}`}
-                    />
-                    <button
-                      type="button"
-                      className="tag-pick-open"
-                      onClick={() => toggleTag(tag.name)}
-                      title={`勾选 / 取消 Pixiv 标签 #${label}`}
-                    >
-                      <span className="tag-pick-label"># {label}</span>
-                      {tag.count > 0 && (
-                        <span className="tag-pick-count">{tag.count}</span>
-                      )}
-                    </button>
-                  </div>
+                    <span className="tag-pick-label"># {label}</span>
+                    {tag.count > 0 && (
+                      <span className="tag-pick-count">{tag.count}</span>
+                    )}
+                  </button>
                 );
               })}
             </div>
@@ -652,16 +660,18 @@ export function Tags() {
 
       {/* 图片区：勾选标签时按组合过滤；没勾选时看「默认状态」开关 */}
       <div className="-mx-6 mt-5 border-t border-line pt-4">
-        {selectedTags.length > 0 || showAllTagsDefault ? (
+        {galleryTags.length > 0 || showAllTagsDefault ? (
           <ArtworkList
             ignoreQuery
             heading={
-              selectedTags.length > 0
-                ? `已选 ${selectedTags.length} 个标签`
-                : "全部作品"
+              randomTag
+                ? `随机标签：# ${randomTag.label}`
+                : selectedTags.length > 0
+                  ? `已选 ${selectedTags.length} 个标签`
+                  : "全部作品"
             }
             extraQuery={
-              selectedTags.length > 0 ? { tags_all: selectedTags } : undefined
+              galleryTags.length > 0 ? { tags_all: galleryTags } : undefined
             }
           />
         ) : (

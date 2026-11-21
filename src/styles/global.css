@@ -588,7 +588,14 @@ a {
   border-radius: var(--radius-btn);
   color: var(--color-text-2);
   font-size: var(--text-label);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
   background: transparent;
+}
+
+.tag-pick:hover {
+  border-color: var(--color-line-hover);
 }
 
 .tag-pick[data-active="true"] {
@@ -597,43 +604,11 @@ a {
   background: var(--color-accent-soft);
 }
 
-.tag-pick input[type="checkbox"] {
-  appearance: none;
-  display: grid;
-  place-content: center;
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  border: 1px solid var(--color-line-hover);
-  border-radius: 3px;
-  background: transparent;
-}
-
-.tag-pick input[type="checkbox"]::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 1px;
-  background: var(--color-accent);
-  transform: scale(0);
-  transition: transform var(--dur-hover) var(--ease);
-}
-
-.tag-pick input[type="checkbox"]:checked::before {
-  transform: scale(1);
-}
-
-.tag-pick[data-active="true"] input[type="checkbox"] {
-  border-color: var(--color-accent);
-}
-
-.tag-pick-open {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: inherit;
-  font: inherit;
+/* 随机标签：亮黄色，覆盖当前组合但不算选中；点击后变蓝加入组合 */
+.tag-pick[data-random="true"] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+  background: var(--color-warn-soft);
 }
 
 .tag-pick-label {
@@ -647,9 +622,16 @@ a {
   font-size: var(--text-micro);
 }
 
-.tag-pick[data-active="true"] .tag-pick-count {
+.tag-pick[data-active="true"] .tag-pick-count,
+.tag-pick[data-random="true"] .tag-pick-count {
   color: inherit;
   opacity: 0.8;
+}
+
+.combo-tag[data-random="true"] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+  background: var(--color-warn-soft);
 }
 
 .tag-pick[data-source="pixiv"] {

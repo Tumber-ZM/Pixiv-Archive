@@ -404,9 +404,7 @@ export function Authors() {
 
   return (
     <div className="px-6 py-4">
-      {notice && <p className="mb-2 text-micro text-text-2">{notice}</p>}
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <span className="text-micro text-text-3">筛选</span>
         <button
           type="button"
@@ -451,6 +449,7 @@ export function Authors() {
           </button>
         )}
       </div>
+      {notice && <p className="mt-2 text-micro text-text-2">{notice}</p>}
 
       <div className="mt-4">
         {error ? (

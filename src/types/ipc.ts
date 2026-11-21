@@ -341,6 +341,10 @@ export interface ListQuery {
   favorite_id?: number;
   /** 只看 Pixiv 收藏里的作品（作者页的「仅看收藏」） */
   favorited_only?: boolean;
+  /** 没同步收藏时的兜底：只看订阅前就有的作品 */
+  collected_only?: boolean;
+  /** 只看已订阅作者的作品 */
+  subscribed_only?: boolean;
   /** `local` = 只看本地文件（pixiv_id < 0）；缺省 = 只看 Pixiv 作品 */
   scope?: "local" | "pixiv";
 }

@@ -91,7 +91,11 @@ export function Topbar() {
             随机标签
           </TopbarButton>
           {randomTag && (
-            <span className="combo-tag" title={`随机标签：${randomTag.name}`}>
+            <span
+              className="combo-tag"
+              data-random="true"
+              title={`随机标签：${randomTag.name}`}
+            >
               # {randomTag.label}
             </span>
           )}
