@@ -64,14 +64,14 @@ export default function App() {
 
     // 订阅检查进度
     track(
-      listen<{ current: number; total: number; message: string }>(
+      listen<{ current: number; total: number; imported?: number; message: string }>(
         "sub-progress",
         (event) => {
           const payload = event.payload;
           setScanTask({
             current: payload.current,
             total: payload.total,
-            imported: 0,
+            imported: payload.imported ?? 0,
             message: payload.message,
             kind: "subs",
           });
@@ -98,14 +98,14 @@ export default function App() {
 
     // 校验缺页并补下
     track(
-      listen<{ current: number; total: number; message: string }>(
+      listen<{ current: number; total: number; imported?: number; message: string }>(
         "repair-progress",
         (event) => {
           const payload = event.payload;
           setScanTask({
             current: payload.current,
             total: payload.total,
-            imported: 0,
+            imported: payload.imported ?? 0,
             message: payload.message,
             kind: "repair",
           });

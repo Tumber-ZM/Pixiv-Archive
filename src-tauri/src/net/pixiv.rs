@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -519,7 +520,16 @@ impl PixivClient {
     /// - `.part` 已存在时带 `Range` 续传，网络中断不必从头再下；
     /// - 哈希边下边算，入库时直接用，省掉一次整文件重读；
     /// - `Content-Length` 与实写字节数不符视为失败（防代理返回截断或 HTML 错误页）。
-    pub async fn fetch_image_to(&self, url: &str, dest: &Path) -> AppResult<String> {
+    pub async fn fetch_image_to(
+        &self,
+        url: &str,
+        dest: &Path,
+        cancel: Option<&AtomicBool>,
+    ) -> AppResult<String> {
+        let cancelled = || cancel.is_some_and(|flag| flag.load(Ordering::Relaxed));
+        if cancelled() {
+            return Err(AppError::cancelled());
+        }
         let _permit = self
             .image_permits
             .acquire()
@@ -530,6 +540,9 @@ impl PixivClient {
         let mut last_error = String::from("未知错误");
 
         for attempt in 0..MAX_IMAGE_ATTEMPTS {
+            if cancelled() {
+                return Err(AppError::cancelled());
+            }
             let (have, mut hasher) = match read_part_state(&part).await {
                 Some(state) => state,
                 None => (0u64, Sha256::new()),
@@ -548,7 +561,7 @@ impl PixivClient {
                 Ok(response) => response,
                 Err(error) => {
                     last_error = format!("{error}");
-                    sleep_backoff(attempt).await;
+                    sleep_cancellable(backoff_duration(attempt), cancel).await?;
                     continue;
                 }
             };
@@ -564,7 +577,7 @@ impl PixivClient {
                 self.note_rate_limited();
                 let wait = retry_after(&response).unwrap_or_else(|| Duration::from_secs(30));
                 last_error = format!("HTTP 429（冷却 {}s）", wait.as_secs());
-                tokio::time::sleep(wait).await;
+                sleep_cancellable(wait, cancel).await?;
                 continue;
             }
             if !status.is_success() {
@@ -572,7 +585,7 @@ impl PixivClient {
                 if status.is_client_error() && status != reqwest::StatusCode::FORBIDDEN {
                     break;
                 }
-                sleep_backoff(attempt).await;
+                sleep_cancellable(backoff_duration(attempt), cancel).await?;
                 continue;
             }
 
@@ -592,6 +605,10 @@ impl PixivClient {
             let mut failure: Option<String> = None;
             let mut written = 0u64;
             loop {
+                if cancelled() {
+                    let _ = file.sync_all().await;
+                    return Err(AppError::cancelled());
+                }
                 match response.chunk().await {
                     Ok(Some(chunk)) => {
                         hasher.update(&chunk);
@@ -613,14 +630,14 @@ impl PixivClient {
 
             if let Some(error) = failure {
                 last_error = error;
-                sleep_backoff(attempt).await;
+                sleep_cancellable(backoff_duration(attempt), cancel).await?;
                 continue;
             }
 
             if let Some(expected) = response.content_length() {
                 if written != expected {
                     last_error = format!("下载不完整：服务端声明 {expected} 字节，实际 {written}");
-                    sleep_backoff(attempt).await;
+                    sleep_cancellable(backoff_duration(attempt), cancel).await?;
                     continue;
                 }
             }
@@ -674,9 +691,28 @@ fn finish_part(part: &Path, dest: &Path, hasher: Sha256) -> AppResult<String> {
 }
 
 /// 指数退避 + 抖动。
-async fn sleep_backoff(attempt: usize) {
+fn backoff_duration(attempt: usize) -> Duration {
     let base = 500u64.saturating_mul(1u64 << attempt.min(4));
-    tokio::time::sleep(Duration::from_millis(base + jitter_ms())).await;
+    Duration::from_millis(base + jitter_ms())
+}
+
+async fn sleep_backoff(attempt: usize) {
+    tokio::time::sleep(backoff_duration(attempt)).await;
+}
+
+/// 可取消的等待：取消后 100ms 内返回，避免退避/429 冷却把取消拖住。
+async fn sleep_cancellable(duration: Duration, cancel: Option<&AtomicBool>) -> AppResult<()> {
+    let step = Duration::from_millis(100);
+    let mut left = duration;
+    while left > Duration::ZERO {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(AppError::cancelled());
+        }
+        let chunk = left.min(step);
+        tokio::time::sleep(chunk).await;
+        left -= chunk;
+    }
+    Ok(())
 }
 
 /// 避开 `rand` 依赖：用纳秒低位做 0–250ms 抖动。

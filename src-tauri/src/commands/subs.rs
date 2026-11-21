@@ -49,6 +49,8 @@ pub struct SubResult {
 pub struct SubProgress {
     pub current: usize,
     pub total: usize,
+    /// 本次检查已经下载入库的作品数
+    pub imported: usize,
     pub message: String,
 }
 
@@ -91,12 +93,20 @@ fn local_page_counts(conn: &Connection) -> AppResult<HashMap<i64, i64>> {
     Ok(counts)
 }
 
-fn emit(app: &AppHandle, current: usize, total: usize, message: &str) {
+fn kind_label(kind: SubKind) -> &'static str {
+    match kind {
+        SubKind::Bookmark => "收藏订阅",
+        SubKind::Author => "作者订阅",
+    }
+}
+
+fn emit(app: &AppHandle, current: usize, total: usize, imported: usize, message: &str) {
     let _ = app.emit(
         SUB_PROGRESS_EVENT,
         &SubProgress {
             current,
             total,
+            imported,
             message: message.to_string(),
         },
     );
@@ -229,7 +239,13 @@ async fn run_checks(
         // 作者订阅第一次检查如果还没有起点，会在 check_one 里补建一遍，结果文案要说清楚
         let baseline_missing = *kind == SubKind::Author && baseline.is_none();
 
-        emit(app, index, total, &format!("检查订阅 {}/{}", index + 1, total));
+        emit(
+            app,
+            index,
+            total,
+            0,
+            &format!("{}「{}」：读取列表…", kind_label(*kind), result.name),
+        );
 
         let outcome = check_one(
             &client,
@@ -243,8 +259,6 @@ async fn run_checks(
             baseline,
             full,
             app,
-            index,
-            total,
             cancel,
             &mut result,
         )
@@ -284,10 +298,12 @@ async fn run_checks(
     // check_one 内部发现取消时也会标 result；最终提示统一看这两个来源
     let cancelled = cancelled || results.last().map(|row| row.cancelled).unwrap_or(false);
 
+    let downloaded: usize = results.iter().map(|row| row.downloaded).sum();
     emit(
         app,
         total,
         total,
+        downloaded,
         if cancelled {
             "订阅检查已取消"
         } else {
@@ -310,8 +326,6 @@ async fn check_one(
     baseline: Option<i64>,
     full: bool,
     app: &AppHandle,
-    index: usize,
-    total: usize,
     cancel: &Arc<AtomicBool>,
     result: &mut SubResult,
 ) -> AppResult<()> {
@@ -390,12 +404,25 @@ async fn check_one(
             collected.push(item.clone());
         }
 
+        emit(
+            app,
+            pages,
+            0,
+            result.downloaded,
+            &format!(
+                "{}「{}」：第 {} 页，已发现 {} 件待处理",
+                kind_label(kind),
+                result.name,
+                pages,
+                collected.len()
+            ),
+        );
+
         // 追到订阅起点：再往后都是订阅之前的作品，停止翻页
         if hit_baseline {
             result.caught_up = true;
             break;
-        }
-        let Some(next) = next else {
+        }        let Some(next) = next else {
             reached_end = true;
             break;
         };
@@ -440,10 +467,13 @@ async fn check_one(
         }
         emit(
             app,
-            index,
-            total,
+            idx + 1,
+            queued_total,
+            result.downloaded,
             &format!(
-                "下载订阅作品 {}/{}（PID {}）",
+                "{}「{}」：下载 {}/{}（PID {}）",
+                kind_label(kind),
+                result.name,
                 idx + 1,
                 queued_total,
                 pixiv_id
@@ -452,6 +482,10 @@ async fn check_one(
 
         match client.illust_detail(*pixiv_id).await {
             Ok(data) => {
+                if cancel.load(Ordering::Relaxed) {
+                    result.cancelled = true;
+                    break;
+                }
                 // 头像要在入库前判断：apply_illust 会把 profile_image 更新成新地址
                 let stored_avatar: Option<String> = conn
                     .query_row(
@@ -476,12 +510,17 @@ async fn check_one(
                     source_root,
                     &data,
                     origin,
+                    cancel,
                 )
                 .await
                 {
                     Ok(_) => {
                         download::complete_queue_item(conn, *pixiv_id)?;
                         result.downloaded += 1;
+                    }
+                    Err(error) if error.code == "CANCELLED" => {
+                        result.cancelled = true;
+                        break;
                     }
                     Err(error) => {
                         download::fail_queue_item(conn, *pixiv_id, &error.message)?;
@@ -557,6 +596,7 @@ async fn repair_inner(app: &AppHandle, cancel: &Arc<AtomicBool>) -> AppResult<Re
             serde_json::json!({
                 "current": index + 1,
                 "total": total,
+                "imported": report.repaired,
                 "message": format!("校验作品 {}/{}（PID {}）", index + 1, total, pixiv_id),
             }),
         );
@@ -577,10 +617,12 @@ async fn repair_inner(app: &AppHandle, cancel: &Arc<AtomicBool>) -> AppResult<Re
             &source_root,
             &data,
             origin,
+            cancel,
         )
         .await
         {
             Ok(_) => report.repaired += 1,
+            Err(error) if error.code == "CANCELLED" => break,
             Err(error) => {
                 report.failed += 1;
                 eprintln!("补页 {pixiv_id} 失败：{}", error.message);
@@ -590,7 +632,12 @@ async fn repair_inner(app: &AppHandle, cancel: &Arc<AtomicBool>) -> AppResult<Re
 
     let _ = app.emit(
         REPAIR_PROGRESS_EVENT,
-        serde_json::json!({ "current": total, "total": total, "message": "校验完成" }),
+        serde_json::json!({
+            "current": total,
+            "total": total,
+            "imported": report.repaired,
+            "message": "校验完成",
+        }),
     );
     Ok(report)
 }

@@ -1,5 +1,6 @@
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::future::join_all;
 use rusqlite::{params, Connection};
@@ -94,9 +95,13 @@ pub async fn download_illust(
     client: &PixivClient,
     data: &IllustData,
     source_root: &Path,
+    cancel: &AtomicBool,
 ) -> AppResult<Vec<DownloadedFile>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
     if data.is_ugoira {
-        return download_ugoira(client, data, source_root).await;
+        return download_ugoira(client, data, source_root, cancel).await;
     }
 
     if data.image_urls.is_empty() {
@@ -132,7 +137,9 @@ pub async fn download_illust(
         .collect();
 
     let tasks = targets.iter().map(|(page, dest)| async move {
-        let file: AppResult<DownloadedFile> = if dest.is_file() {
+        let file: AppResult<DownloadedFile> = if cancel.load(Ordering::Relaxed) {
+            Err(AppError::cancelled())
+        } else if dest.is_file() {
             // 上次中断前已经下好的页：跳过下载，哈希留给入库时算
             Ok(DownloadedFile {
                 path: dest.clone(),
@@ -141,7 +148,7 @@ pub async fn download_illust(
             })
         } else {
             client
-                .fetch_image_to(&data.image_urls[*page], dest)
+                .fetch_image_to(&data.image_urls[*page], dest, Some(cancel))
                 .await
                 .map(|hash| DownloadedFile {
                     path: dest.clone(),
@@ -164,6 +171,11 @@ pub async fn download_illust(
                 last_error = Some(error);
             }
         }
+    }
+
+    // 用户取消：不要入库半份，已下好的页留在磁盘上供下次续传
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
     }
 
     // 全部失败才算失败；部分成功时先入库，下次补缺页
@@ -190,7 +202,11 @@ async fn download_ugoira(
     client: &PixivClient,
     data: &IllustData,
     source_root: &Path,
+    cancel: &AtomicBool,
 ) -> AppResult<Vec<DownloadedFile>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
     let author_root = source_root.join(safe_name(&data.author_name));
     let dest = author_root.join(format!(
         "[{}] {}.gif",
@@ -218,7 +234,14 @@ async fn download_ugoira(
 
     std::fs::create_dir_all(&author_root)?;
     let zip_path = author_root.join(format!(".ugoira-{}.zip", data.pixiv_id));
-    client.fetch_image_to(&meta.zip_url, &zip_path).await?;
+    client
+        .fetch_image_to(&meta.zip_url, &zip_path, Some(cancel))
+        .await?;
+
+    if cancel.load(Ordering::Relaxed) {
+        let _ = std::fs::remove_file(&zip_path);
+        return Err(AppError::cancelled());
+    }
 
     let frames = meta.frames.clone();
     let gif_path = dest.clone();
@@ -231,6 +254,9 @@ async fn download_ugoira(
 
     let _ = std::fs::remove_file(&zip_path);
     outcome?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
 
     Ok(vec![DownloadedFile {
         path: dest,
@@ -586,7 +612,11 @@ pub async fn fetch_and_import(
     source_root: &Path,
     data: &IllustData,
     origin: &str,
+    cancel: &AtomicBool,
 ) -> AppResult<usize> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
     // Pixiv 对已删除/非公开作品返回 visible=false，图片地址是 limit_unknown 占位图。
     // 这种作品不下载、不入库；已经在库里的标记为隐藏（deleted），列表默认不显示。
     if !data.visible {
@@ -600,7 +630,7 @@ pub async fn fetch_and_import(
         return Ok(0);
     }
 
-    let files = download_illust(client, data, source_root).await?;
+    let files = download_illust(client, data, source_root, cancel).await?;
     // 和远端页数核对：缺页时不入库，队列保留重试（已下载的页留在磁盘上）
     let expected = data.page_count.max(1) as usize;
     if !data.is_ugoira && files.len() < expected {
