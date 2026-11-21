@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Download, Plus } from "lucide-react";
 
 import { CMD, call, isAppError } from "../lib/ipc";
@@ -18,12 +18,32 @@ function seededShuffle<T>(items: T[], seed: number): T[] {
   return list;
 }
 
-function RemoteThumb({ url, alt }: { url: string; alt: string }) {
+export function RemoteThumb({ url, alt }: { url: string; alt: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
   const [src, setSrc] = useState(() => (url ? thumbCache.get(url) ?? "" : ""));
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!url) return undefined;
+    const el = containerRef.current;
+    if (!el) return undefined;
+    if (thumbCache.has(url)) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [url]);
+
+  useEffect(() => {
+    if (!url || !visible) return undefined;
     const cached = thumbCache.get(url);
     if (cached) {
       setSrc(cached);
@@ -43,20 +63,17 @@ function RemoteThumb({ url, alt }: { url: string; alt: string }) {
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, visible]);
 
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt={alt}
-        className="h-full w-full object-cover"
-      />
-    );
-  }
   return (
-    <div className="flex h-full items-center justify-center text-micro text-text-3">
-      {failed ? "缩略图不可用" : url ? "加载中…" : "无缩略图"}
+    <div ref={containerRef} className="h-full w-full">
+      {src ? (
+        <img src={src} alt={alt} className="h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full items-center justify-center text-micro text-text-3">
+          {failed ? "缩略图不可用" : url ? (visible ? "加载中…" : "缩略图") : "无缩略图"}
+        </div>
+      )}
     </div>
   );
 }

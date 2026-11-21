@@ -230,7 +230,7 @@ export function Sidebar() {
                 : action === "sync"
                   ? "同步作品元数据（标题 / 作者 / 标签 / R18 / AI）；Shift+点击 = 全量重同步"
                   : action === "subs"
-                    ? "检查所有启用的订阅（收藏 / 作者），下载新作品并入库"
+                    ? "检查所有启用的订阅（Pixiv 收藏 / 作者），下载新作品并入库"
                     : action === "repair"
                       ? "校验每件作品的图片数是否和 Pixiv 页数一致，缺页的补下载"
                       : label
@@ -341,7 +341,7 @@ export function Sidebar() {
         <div className="mt-2 flex max-h-[240px] flex-col gap-1 overflow-y-auto">
           {subResults?.map((row) => (
             <p key={`${row.kind}:${row.pixiv_user_id}`} className="text-micro text-text-2">
-              {row.kind === "author" ? "作者" : "收藏"} ·{" "}
+              {row.kind === "author" ? "作者" : "Pixiv 收藏"} ·{" "}
               {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found}
               {row.repaired > 0 ? ` · 补缺 ${row.repaired}` : ""} · 下载 {row.downloaded}
               {row.failed > 0 ? ` · 失败 ${row.failed}` : ""}

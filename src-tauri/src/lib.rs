@@ -88,6 +88,7 @@ pub fn run() {
             commands::pixiv_favorites::sync_pixiv_favorites,
             commands::pixiv_search::search_pixiv_authors,
             commands::pixiv_search::search_pixiv_illusts,
+            commands::pixiv_search::list_pixiv_author_illusts,
             commands::pixiv_search::search_pixiv_tags,
             commands::pixiv_search::fetch_remote_thumbnail,
             commands::pixiv_search::download_pixiv_illust,

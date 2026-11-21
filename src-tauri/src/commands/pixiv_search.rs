@@ -71,6 +71,32 @@ pub async fn download_pixiv_illust(pixiv_id: i64) -> AppResult<usize> {
     .await
 }
 
+/// 作者页「展示线上全部」：按 Pixiv 用户 ID 拉取线上作品（最多 1000 件）。
+#[tauri::command]
+pub async fn list_pixiv_author_illusts(pixiv_user_id: i64) -> AppResult<Vec<RemoteIllust>> {
+    let client = PixivClient::from_settings()?;
+    let mut items = Vec::new();
+    let mut next: Option<String> = None;
+    loop {
+        let (page, next_url) = client
+            .user_illusts_remote(pixiv_user_id, next.as_deref())
+            .await?;
+        if page.is_empty() {
+            break;
+        }
+        items.extend(page);
+        if items.len() >= 1000 {
+            items.truncate(1000);
+            break;
+        }
+        match next_url {
+            Some(url) => next = Some(url),
+            None => break,
+        }
+    }
+    Ok(items)
+}
+
 /// 通过后端带 Referer 拉取 Pixiv 缩略图，返回 data URL；WebView 直接请求 pximg 会被拒。
 #[tauri::command]
 pub async fn fetch_remote_thumbnail(url: String) -> AppResult<String> {

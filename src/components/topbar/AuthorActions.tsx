@@ -64,8 +64,8 @@ export function AuthorActions() {
       bumpData();
       flash(
         report.cancelled
-          ? "收藏同步已取消"
-          : `已同步 ${report.total} 件收藏（公开 ${report.public} · 私密 ${report.private}）`,
+          ? "Pixiv 收藏同步已取消"
+          : `已同步 ${report.total} 件 Pixiv 收藏（公开 ${report.public} · 私密 ${report.private}）`,
       );
     } catch (reason: unknown) {
       flash(isAppError(reason) ? reason.message : String(reason));
@@ -89,7 +89,7 @@ export function AuthorActions() {
         disabled={syncing}
         title="读取你 Pixiv 账号的公开 + 私密收藏，只在本机记录作品 ID，用来筛选作者"
       >
-        {syncing ? "同步中…" : "同步收藏"}
+        {syncing ? "同步中…" : "同步 Pixiv 收藏"}
       </TopbarButton>
       {notice && (
         <span className="max-w-[220px] truncate text-micro text-text-3" title={notice}>

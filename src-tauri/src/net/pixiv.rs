@@ -479,6 +479,74 @@ impl PixivClient {
         Ok(parse_illust_list(&body))
     }
 
+    /// 作者页「展示线上全部」用：取作者作品的一页，带缩略图 / 标签。
+    pub async fn user_illusts_remote(
+        &self,
+        user_id: i64,
+        next_url: Option<&str>,
+    ) -> AppResult<(Vec<RemoteIllust>, Option<String>)> {
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let url = next_url
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{API_BASE}/v1/user/illusts"));
+        let mut request = self
+            .http
+            .get(&url)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .header("Accept-Language", "zh-CN")
+            .bearer_auth(token);
+        if next_url.is_none() {
+            request = request.query(&[
+                ("user_id", user_id.to_string()),
+                ("type", "illust".to_string()),
+            ]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| AppError::internal(format!("请求作者作品失败：{error}")))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::not_found("该用户不存在"));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作者作品列表无法解析：{error}")))?;
+        let items = body
+            .get("illusts")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(remote_illust_from_json)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let next = body
+            .get("next_url")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        Ok((items, next))
+    }
+
     /// 该作者最新一件作品的 ID（没有作品或请求失败时为 None）。
     ///
     /// 作者订阅默认只追新：订阅时用它记下起点，之后的检查只处理比它新的作品。
@@ -1150,6 +1218,56 @@ impl PixivClient {
 /// 把列表接口（公开收藏 / 用户作品）的响应体拆成「条目 + 下一页地址」。
 ///
 /// 两个接口的 `illusts` 结构与 `next_url` 字段完全一致，解析只写一份。
+fn remote_illust_from_json(illust: &Value) -> Option<RemoteIllust> {
+    Some(RemoteIllust {
+        pixiv_id: illust.get("id").and_then(Value::as_i64)?,
+        title: illust
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        author_name: illust
+            .pointer("/user/name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        author_id: illust.pointer("/user/id").and_then(Value::as_i64).unwrap_or(0),
+        page_count: illust.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+        thumbnail: illust
+            .pointer("/image_urls/square_medium")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        is_gif: illust
+            .get("illustType")
+            .and_then(Value::as_i64)
+            .map(|kind| kind == 2)
+            .unwrap_or(false),
+        ai_type: illust
+            .get("illustAiType")
+            .and_then(Value::as_i64)
+            .unwrap_or(1),
+        create_date: illust
+            .get("createDate")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        tags: illust
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| {
+                        tag.get("name")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
 fn parse_illust_list(body: &Value) -> (Vec<IllustRef>, Option<String>) {
     let illusts = body
         .get("illusts")

@@ -42,11 +42,11 @@ export function Gallery() {
           title={
             favoritesSynced
               ? "只看 Pixiv 收藏里的作品"
-              : "还没同步收藏，先按订阅前就有的作品筛选"
+              : "还没同步 Pixiv 收藏，先按订阅前就有的作品筛选"
           }
           onClick={() => setOnlyCollected((value) => !value)}
         >
-          仅看收藏
+          仅看 Pixiv 收藏
         </button>
         <button
           type="button"

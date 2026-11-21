@@ -10,12 +10,12 @@ import type { Sub, SubKind, SubPreview, SubResult } from "../types/ipc";
 type KindFilter = "all" | SubKind;
 
 const KIND_LABEL: Record<SubKind, string> = {
-  bookmark: "收藏",
+  bookmark: "Pixiv 收藏",
   author: "作者",
 };
 
 const KIND_HINT: Record<SubKind, string> = {
-  bookmark: "检查时拉取对方的公开收藏，发现新作品就自动下载。",
+  bookmark: "检查时拉取对方的公开 Pixiv 收藏，发现新作品就自动下载。",
   author: "检查时拉取该作者的作品列表，新作品自动下载。",
 };
 
@@ -278,7 +278,7 @@ export function Subs() {
         <EmptyState
           icon={Bell}
           title="还没有订阅"
-          hint="在作者列表点「订阅」，或在这里订阅别人的公开收藏"
+          hint="在作者列表点「订阅」，或在这里订阅别人的公开 Pixiv 收藏"
         />
       ) : visible.length === 0 ? (
         <p className="py-8 text-center text-micro text-text-2">没有该类型的订阅</p>
@@ -325,7 +325,7 @@ export function Subs() {
                   title={
                     row.kind === "author"
                       ? "检查该作者的作品并下载新作品"
-                      : "检查该用户的公开收藏并下载新作品"
+                      : "检查该用户的公开 Pixiv 收藏并下载新作品"
                   }
                   onClick={() => checkOne(row)}
                 >
@@ -389,7 +389,7 @@ export function Subs() {
         {preview && (
           <p className="mt-3 text-micro text-text-2">
             {preview.name.trim() ? `@${preview.name.trim()}` : `用户 ${preview.target_pixiv_id}`}
-            {preview.kind === "bookmark" ? ` · 收藏 ${preview.total_bookmarks ?? "未知"} 件` : ""}
+            {preview.kind === "bookmark" ? ` · Pixiv 收藏 ${preview.total_bookmarks ?? "未知"} 件` : ""}
           </p>
         )}
         {previewError && <p className="mt-2 text-micro text-danger">{previewError}</p>}
@@ -427,7 +427,7 @@ export function Subs() {
         <p>
           将取消对「
           {removeTarget ? displayName(removeTarget.name, removeTarget.target_pixiv_id) : ""}
-          」的{removeTarget?.kind === "author" ? "作者" : "收藏"}订阅。已下载的作品会保留。
+          」的{removeTarget?.kind === "author" ? "作者" : "Pixiv 收藏"}订阅。已下载的作品会保留。
         </p>
       </Dialog>
 

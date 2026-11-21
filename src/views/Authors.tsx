@@ -7,6 +7,7 @@ import { Dialog } from "../components/dialog/Dialog";
 import { ArtworkList } from "../components/wall/ArtworkList";
 import { CMD, call, isAppError } from "../lib/ipc";
 import { useUi } from "../stores/ui";
+import { RemoteAuthorView } from "./RemoteAuthorView";
 import type {
   AuthorRow,
   FavoriteSyncStatus,
@@ -226,6 +227,13 @@ function AuthorDetail({
   onBack: () => void;
 }) {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [online, setOnline] = useState(false);
+
+  if (online) {
+    return (
+      <RemoteAuthorView author={author} onBack={() => setOnline(false)} />
+    );
+  }
 
   return (
     <ArtworkList
@@ -236,20 +244,30 @@ function AuthorDetail({
       }}
       heading={author.name}
       headerExtra={
-        <button
-          type="button"
-          className="tri-btn"
-          data-active={onlyCollected}
-          disabled={!favoritesSynced}
-          title={
-            favoritesSynced
-              ? "只显示你在 Pixiv 收藏的作品"
-              : "先点「同步收藏」后才能按 Pixiv 收藏筛选"
-          }
-          onClick={onToggleCollected}
-        >
-          仅看收藏
-        </button>
+        <>
+          <button
+            type="button"
+            className="tri-btn"
+            onClick={() => setOnline(true)}
+            title="从 Pixiv 拉取该作者的线上全部作品"
+          >
+            展示线上全部
+          </button>
+          <button
+            type="button"
+            className="tri-btn"
+            data-active={onlyCollected}
+            disabled={!favoritesSynced}
+            title={
+              favoritesSynced
+                ? "只显示你在 Pixiv 收藏的作品"
+                : "先点「同步 Pixiv 收藏」后才能按 Pixiv 收藏筛选"
+            }
+            onClick={onToggleCollected}
+          >
+            仅看 Pixiv 收藏
+          </button>
+        </>
       }
       tagBar={
         <AuthorTagBar
@@ -523,11 +541,11 @@ export function Authors() {
           title={
             favoritesSynced
               ? "只看本地作品在 Pixiv 收藏里的作者"
-              : "只看订阅前就在库里的作者；先「同步收藏」可改为按 Pixiv 收藏筛选"
+              : "只看订阅前就在库里的作者；先「同步 Pixiv 收藏」可改为按 Pixiv 收藏筛选"
           }
           onClick={() => setOnlyCollected((value) => !value)}
         >
-          仅看收藏
+          仅看 Pixiv 收藏
         </button>
         <button
           type="button"
@@ -572,7 +590,7 @@ export function Authors() {
           <EmptyState
             icon={Users}
             title="没有符合筛选的作者"
-            hint="取消「仅看收藏」或「仅看已订阅」查看全部"
+            hint="取消「仅看 Pixiv 收藏」或「仅看已订阅」查看全部"
           />
         ) : (
           <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">

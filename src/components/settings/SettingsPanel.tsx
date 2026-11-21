@@ -478,7 +478,7 @@ export function SettingsPanel() {
                     />
                   </label>
                   <p className="text-micro text-text-3">
-                    token 只保存在本机 settings.json；同步元数据、「订阅列表」下载和「同步收藏」都需要它。
+                    token 只保存在本机 settings.json；同步元数据、「订阅列表」下载和「同步 Pixiv 收藏」都需要它。
                   </p>
 
                   <div className="flex items-center gap-3">

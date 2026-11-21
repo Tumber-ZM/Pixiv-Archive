@@ -8,7 +8,7 @@ const TITLES: Record<string, string> = {
   scan: "正在扫描",
   sync: "同步元数据",
   subs: "更新订阅",
-  favorites: "同步收藏",
+  favorites: "同步 Pixiv 收藏",
   repair: "校验图片",
   avatars: "更新作者头像",
 };
