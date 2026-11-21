@@ -101,6 +101,7 @@ pub struct RemoteIllust {
     pub is_gif: bool,
     pub ai_type: i64,
     pub create_date: String,
+    pub is_favorited: bool,
     pub tags: Vec<String>,
 }
 
@@ -1065,6 +1066,10 @@ impl PixivClient {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string(),
+                    is_favorited: illust
+                        .get("isBookmarked")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     tags: illust
                         .get("tags")
                         .and_then(Value::as_array)
@@ -1252,6 +1257,10 @@ fn remote_illust_from_json(illust: &Value) -> Option<RemoteIllust> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        is_favorited: illust
+            .get("isBookmarked")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         tags: illust
             .get("tags")
             .and_then(Value::as_array)

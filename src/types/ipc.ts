@@ -27,6 +27,8 @@ export interface ArtworkCard {
   ai_type: number;
   /** 是否至少在一个本地收藏里 */
   is_favorited: boolean;
+  /** 是否在 Pixiv 收藏里（只读） */
+  is_pixiv_favorited: boolean;
   cover_path: string | null;
   cover_image_id: number | null;
   /** 封面原始宽高，瀑布流据此预估卡片高度 */
@@ -122,6 +124,8 @@ export interface TagRow {
   count: number;
   /** 该标签下随机一张作品的缩略图 */
   cover_path: string | null;
+  /** 封面作品是否在 Pixiv 收藏里（只读） */
+  pixiv_favorited: boolean;
 }
 
 /** 订阅类型：对方的公开收藏 / 该作者发布的作品。 */
@@ -250,6 +254,7 @@ export interface RemoteIllust {
   is_gif: boolean;
   ai_type: number;
   create_date: string;
+  is_favorited: boolean;
   tags: string[];
 }
 

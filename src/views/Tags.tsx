@@ -439,6 +439,7 @@ export function Tags() {
       translated_name: randomTag?.name === name ? randomTag.label : null,
       count: randomTag?.name === name ? randomTag.count : 0,
       cover_path: null,
+      pixiv_favorited: false,
     };
   });
   const displayRows = [

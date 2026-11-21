@@ -207,6 +207,7 @@ pub fn list_tags_filtered_with(
             translated_name,
             count,
             cover_path: None,
+            pixiv_favorited: false,
         });
     }
     Ok(out)
@@ -424,6 +425,7 @@ pub fn list_author_tags(author_id: i64) -> AppResult<Vec<TagRow>> {
             translated_name,
             count,
             cover_path: None,
+            pixiv_favorited: false,
         });
     }
     Ok(out)
@@ -451,8 +453,20 @@ pub fn list_tag_previews(
                        JOIN artworks w2 ON w2.id = at2.artwork_id
                        WHERE at2.tag_id = t.id
                          AND COALESCE(w2.pixiv_status, 'active') <> 'deleted'
-                       ORDER BY COALESCE(w2.origin, 'local') <> 'author_sub', i.id
-                       LIMIT 1) AS cover
+                       ORDER BY COALESCE(w2.origin, 'local') <> 'author_sub', at2.artwork_id
+                       LIMIT 1) AS cover,
+                      EXISTS(
+                        SELECT 1 FROM pixiv_favorites pf
+                        WHERE pf.pixiv_id = (
+                          SELECT w3.pixiv_id
+                          FROM artwork_tags at3
+                          JOIN artworks w3 ON w3.id = at3.artwork_id
+                          WHERE at3.tag_id = t.id
+                            AND COALESCE(w3.pixiv_status, 'active') <> 'deleted'
+                          ORDER BY COALESCE(w3.origin, 'local') <> 'author_sub', at3.artwork_id
+                          LIMIT 1
+                        )
+                      ) AS pixiv_favorited
                FROM tags t
                JOIN artwork_tags at ON at.tag_id = t.id
                JOIN artworks w ON w.id = at.artwork_id
@@ -485,18 +499,20 @@ pub fn list_tag_previews(
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, Option<String>>(4)?,
+                row.get::<_, i64>(5)? != 0,
             ))
         },
     )?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, name, translated_name, count, cover_path) = row?;
+        let (id, name, translated_name, count, cover_path, pixiv_favorited) = row?;
         out.push(TagRow {
             id,
             name,
             translated_name,
             count,
             cover_path,
+            pixiv_favorited,
         });
     }
     Ok(out)

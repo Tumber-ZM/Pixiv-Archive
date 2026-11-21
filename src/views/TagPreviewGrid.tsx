@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { Heart } from "lucide-react";
 
 import { CMD, call } from "../lib/ipc";
 import { useUi } from "../stores/ui";
@@ -161,6 +162,20 @@ export function TagPreviewGrid({
                   已选
                 </span>
               )}
+              <span
+                className="pixiv-heart"
+                data-active={tag.pixiv_favorited}
+                title={
+                  tag.pixiv_favorited
+                    ? "预览作品已在 Pixiv 收藏"
+                    : "预览作品不在 Pixiv 收藏"
+                }
+              >
+                <Heart
+                  size={11}
+                  fill={tag.pixiv_favorited ? "currentColor" : "none"}
+                />
+              </span>
             </button>
           );
         })}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Download } from "lucide-react";
+import { ArrowLeft, Download, Heart } from "lucide-react";
 
 import { CMD, call, isAppError } from "../lib/ipc";
 import { SORT_LABELS, useUi } from "../stores/ui";
@@ -242,6 +242,20 @@ export function RemoteAuthorView({ author, onBack }: Props) {
                       本地
                     </span>
                   )}
+                  <span
+                    className="pixiv-heart"
+                    data-active={item.is_favorited}
+                    title={
+                      item.is_favorited
+                        ? "已在 Pixiv 收藏"
+                        : "不在 Pixiv 收藏"
+                    }
+                  >
+                    <Heart
+                      size={11}
+                      fill={item.is_favorited ? "currentColor" : "none"}
+                    />
+                  </span>
                 </div>
                 <div className="p-2">
                   <p className="truncate text-label text-text" title={item.title}>

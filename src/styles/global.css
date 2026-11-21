@@ -486,6 +486,52 @@ a {
   opacity: 1;
 }
 
+/* 常驻收藏标记：书签=本地收藏，爱心=Pixiv 收藏 */
+.wall-favorite-marks {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.wall-mark,
+.pixiv-heart {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  opacity: 0.55;
+}
+
+.wall-mark[data-active="true"],
+.pixiv-heart[data-active="true"] {
+  opacity: 1;
+}
+
+.wall-mark-heart[data-active="true"],
+.pixiv-heart[data-active="true"] {
+  color: #ff9fb2;
+}
+
+.wall-mark-bookmark[data-active="true"] {
+  color: var(--color-accent);
+}
+
+.pixiv-heart {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  z-index: 2;
+  pointer-events: none;
+}
+
 .wall-action {
   display: flex;
   align-items: center;

@@ -30,6 +30,8 @@ pub struct ArtworkCard {
     pub ai_type: i64,
     /// 是否至少在一个本地收藏里
     pub is_favorited: bool,
+    /// 是否在 Pixiv 收藏里（只读）
+    pub is_pixiv_favorited: bool,
     pub cover_path: Option<String>,
     pub cover_image_id: Option<i64>,
     /// 封面原始宽高，用于瀑布流按比例预估卡片高度
@@ -139,6 +141,8 @@ pub struct TagRow {
     pub count: i64,
     /// 该标签下随机一张作品的缩略图，用于标签画廊的封面
     pub cover_path: Option<String>,
+    /// 封面作品是否在 Pixiv 收藏里（只读）
+    pub pixiv_favorited: bool,
 }
 
 /// 标签组合。`tags` 存标签原名；后续标签组合订阅引用 `id`。

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, Plus } from "lucide-react";
+import { ArrowLeft, Download, Heart, Plus } from "lucide-react";
 
 import { CMD, call, isAppError } from "../lib/ipc";
 import { SORT_LABELS, useUi } from "../stores/ui";
@@ -262,6 +262,20 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
                   />
                   <span className="badge absolute bottom-2 right-2">
                     {item.page_count}P
+                  </span>
+                  <span
+                    className="pixiv-heart"
+                    data-active={item.is_favorited}
+                    title={
+                      item.is_favorited
+                        ? "已在 Pixiv 收藏"
+                        : "不在 Pixiv 收藏"
+                    }
+                  >
+                    <Heart
+                      size={11}
+                      fill={item.is_favorited ? "currentColor" : "none"}
+                    />
                   </span>
                 </div>
                 <div className="p-2">
