@@ -51,6 +51,8 @@ pub struct SubProgress {
     pub total: usize,
     /// 本次检查已经下载入库的作品数
     pub imported: usize,
+    /// 该订阅还没下完的队列总量（跨多次检查累计）
+    pub backlog: usize,
     pub message: String,
 }
 
@@ -100,13 +102,21 @@ fn kind_label(kind: SubKind) -> &'static str {
     }
 }
 
-fn emit(app: &AppHandle, current: usize, total: usize, imported: usize, message: &str) {
+fn emit(
+    app: &AppHandle,
+    current: usize,
+    total: usize,
+    imported: usize,
+    backlog: usize,
+    message: &str,
+) {
     let _ = app.emit(
         SUB_PROGRESS_EVENT,
         &SubProgress {
             current,
             total,
             imported,
+            backlog,
             message: message.to_string(),
         },
     );
@@ -244,6 +254,7 @@ async fn run_checks(
             index,
             total,
             0,
+            0,
             &format!("{}「{}」：读取列表…", kind_label(*kind), result.name),
         );
 
@@ -304,6 +315,7 @@ async fn run_checks(
         total,
         total,
         downloaded,
+        0,
         if cancelled {
             "订阅检查已取消"
         } else {
@@ -409,6 +421,7 @@ async fn check_one(
             pages,
             0,
             result.downloaded,
+            0,
             &format!(
                 "{}「{}」：第 {} 页，已发现 {} 件待处理",
                 kind_label(kind),
@@ -467,6 +480,7 @@ async fn check_one(
             0,
             queued_total,
             result.downloaded,
+            backlog,
             &format!(
                 "{}「{}」：本地待下载 {} 件，本次处理 {} 件",
                 kind_label(kind),
@@ -486,6 +500,7 @@ async fn check_one(
             idx + 1,
             queued_total,
             result.downloaded,
+            backlog,
             &format!(
                 "{}「{}」：下载 {}/{}（PID {}）",
                 kind_label(kind),

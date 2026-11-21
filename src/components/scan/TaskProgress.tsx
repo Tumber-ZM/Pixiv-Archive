@@ -116,6 +116,7 @@ export function TaskProgress() {
       <p className="mt-2 text-micro text-text-2">
         {countText}
         {showDone ? ` · ${doneLabel} ${task.imported}` : ""}
+        {task.kind === "subs" && task.backlog ? ` · 待下载 ${task.backlog}` : ""}
       </p>
       <p className="mt-0.5 truncate-1 text-micro text-text-3">
         {cancelling ? "正在停止当前下载，已完成的进度会保留…" : task.message}

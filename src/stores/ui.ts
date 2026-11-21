@@ -34,6 +34,8 @@ export interface ScanTask {
   current: number;
   total: number;
   imported: number;
+  /** 订阅下载：该订阅还没下完的队列总量 */
+  backlog?: number;
   message: string;
   /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 / 校验图片 / 更新头像 */
   kind?: "scan" | "sync" | "subs" | "favorites" | "repair" | "avatars";
