@@ -24,6 +24,7 @@ const TAG_ROW_HEIGHT = 36;
 // 本地标签初始固定 1 行，避免异步加载完成后把下面的图片区顶下去
 const DEFAULT_ROWS = 1;
 const MORE_ROWS = 4;
+type LocalRowsMode = "collapsed" | "more" | "all";
 
 /** 当前正在看的标签。跳转只需要名字，不必带完整 TagRow。 */
 interface CurrentTag {
@@ -67,8 +68,8 @@ export function Tags() {
   const [deleteTarget, setDeleteTarget] = useState<TagCombo | null>(null);
   const [expandedCombos, setExpandedCombos] = useState<Set<number>>(new Set());
 
-  const [visibleRows, setVisibleRows] = useState(DEFAULT_ROWS);
-  const [hasOverflow, setHasOverflow] = useState(false);
+  const [localMode, setLocalMode] = useState<LocalRowsMode>("collapsed");
+  const [totalRows, setTotalRows] = useState(0);
   const tagBoxRef = useRef<HTMLDivElement>(null);
 
   const [remoteTags, setRemoteTags] = useState<RemoteTag[]>([]);
@@ -135,9 +136,9 @@ export function Tags() {
     };
   }, [q, dataEpoch, onlyCollected, onlySubscribed, favoritesSynced]);
 
-  // 换搜索词 / 筛选条件时回到 2 行
+  // 换搜索词 / 筛选条件时回到 1 行
   useEffect(() => {
-    setVisibleRows(DEFAULT_ROWS);
+    setLocalMode("collapsed");
   }, [q, onlyCollected, onlySubscribed]);
 
   const loadCombos = async () => {
@@ -243,23 +244,21 @@ export function Tags() {
     setRemoteExpanded(false);
   }, [q]);
 
-  // 标签按钮云是否有被 1 行裁掉的内容
+  // 标签按钮云总共有多少行（用于决定「展开更多 / 展开全部」）
   useEffect(() => {
     const el = tagBoxRef.current;
     if (!el) {
-      setHasOverflow(false);
+      setTotalRows(0);
       return undefined;
     }
     const update = () => {
-      setHasOverflow(
-        !q.trim() && el.scrollHeight > visibleRows * TAG_ROW_HEIGHT + 1,
-      );
+      setTotalRows(Math.max(1, Math.ceil(el.scrollHeight / TAG_ROW_HEIGHT)));
     };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [rows, visibleRows, q, loading, error]);
+  }, [rows, priorityTags, randomTag, localMode, q, loading, error]);
 
   const labelFor = (name: string) => {
     const row = rows.find((item) => item.name === name);
@@ -698,28 +697,66 @@ export function Tags() {
       {/* 标签按钮云 */}
       <div className="mt-5">
         <div className="flex h-7 items-center gap-2">
-          <span className="section-label w-[88px] shrink-0">标签</span>
-          {!searching && hasOverflow && (
-            <button
-              type="button"
-              className="section-more"
-              onClick={() => setVisibleRows((value) => value + MORE_ROWS)}
-              title={`每次多展开 ${MORE_ROWS} 行`}
-            >
-              <ChevronDown size={10} />
-              展开更多（{MORE_ROWS} 行）
-            </button>
-          )}
-          {!searching && visibleRows > DEFAULT_ROWS && (
-            <button
-              type="button"
-              className="section-more"
-              onClick={() => setVisibleRows(DEFAULT_ROWS)}
-              title="收起本地标签"
-            >
-              <ChevronUp size={10} />
-              收起
-            </button>
+          <span className="section-label">标签</span>
+          {!searching && totalRows > DEFAULT_ROWS && (
+            totalRows > MORE_ROWS ? (
+              <>
+                {localMode === "collapsed" && (
+                  <button
+                    type="button"
+                    className="section-more"
+                    onClick={() => setLocalMode("more")}
+                    title={`展开到 ${MORE_ROWS} 行`}
+                  >
+                    <ChevronDown size={10} />
+                    展开更多
+                  </button>
+                )}
+                {localMode !== "all" && (
+                  <button
+                    type="button"
+                    className="section-more"
+                    onClick={() => setLocalMode("all")}
+                    title="展开全部本地标签"
+                  >
+                    <ChevronDown size={10} />
+                    展开（全部）
+                  </button>
+                )}
+                {localMode !== "collapsed" && (
+                  <button
+                    type="button"
+                    className="section-more"
+                    onClick={() => setLocalMode("collapsed")}
+                    title="收起本地标签"
+                  >
+                    <ChevronUp size={10} />
+                    收起
+                  </button>
+                )}
+              </>
+            ) : (
+              <button
+                type="button"
+                className="section-more"
+                onClick={() =>
+                  setLocalMode(localMode === "all" ? "collapsed" : "all")
+                }
+                title={localMode === "all" ? "收起本地标签" : "展开全部本地标签"}
+              >
+                {localMode === "all" ? (
+                  <>
+                    <ChevronUp size={10} />
+                    收起
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={10} />
+                    展开
+                  </>
+                )}
+              </button>
+            )
           )}
           <span className="min-w-0 truncate text-micro text-text-3">
             {q.trim()
@@ -754,14 +791,16 @@ export function Tags() {
           <>
             <div
               ref={tagBoxRef}
-              className={`flex flex-wrap content-start gap-2 ${searching ? "" : "overflow-hidden"}`}
+              className={`flex flex-wrap content-start gap-2 ${searching || localMode === "all" ? "" : "overflow-hidden"}`}
               style={
-                searching
+                searching || localMode === "all"
                   ? undefined
                   : {
-                      maxHeight: visibleRows * TAG_ROW_HEIGHT,
+                      maxHeight:
+                        (localMode === "more" ? MORE_ROWS : DEFAULT_ROWS) *
+                        TAG_ROW_HEIGHT,
                       minHeight:
-                        visibleRows === DEFAULT_ROWS
+                        localMode === "collapsed"
                           ? TAG_ROW_HEIGHT
                           : undefined,
                     }
@@ -807,7 +846,7 @@ export function Tags() {
       {/* Pixiv 上的标签：固定一行高度，异步返回时不会顶动下面的图片区 */}
       <div className="mt-4">
         <div className="flex h-7 items-center gap-2">
-          <span className="section-label w-[88px] shrink-0">Pixiv 的标签</span>
+          <span className="section-label">Pixiv 的标签</span>
           {!remoteLoading &&
             !remoteError &&
             remoteTags.length > 0 &&
