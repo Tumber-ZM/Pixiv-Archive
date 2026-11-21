@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE TABLE IF NOT EXISTS download_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pixiv_id INTEGER NOT NULL UNIQUE,
+    -- 这条队列属于哪种订阅（local = 收藏/手动，author_sub = 作者订阅），
+    -- 避免作者订阅检查时消费掉别的订阅排队的作品、并把来源标错
+    origin TEXT DEFAULT 'local',
     status TEXT NOT NULL DEFAULT 'pending',
     attempts INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
@@ -195,6 +198,18 @@ pub fn ensure_bookmark_subs_cols(conn: &rusqlite::Connection) -> crate::error::A
     if has_bid && !has_pid {
         conn.execute(
             "ALTER TABLE bookmark_subs RENAME COLUMN last_bid TO last_pid",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// 老库的下载队列没有 `origin`：补上，存量队列都按 local（收藏/手动）处理。
+pub fn ensure_download_queue_cols(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
+    let columns = table_columns(conn, "download_queue")?;
+    if !columns.iter().any(|c| c == "origin") {
+        conn.execute(
+            "ALTER TABLE download_queue ADD COLUMN origin TEXT DEFAULT 'local'",
             [],
         )?;
     }

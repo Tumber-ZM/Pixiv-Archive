@@ -24,6 +24,7 @@ export const CMD = {
   addSub: "add_sub",
   removeSub: "remove_sub",
   toggleSubAuto: "toggle_sub_auto",
+  resetSubBaseline: "reset_sub_baseline",
   previewSub: "preview_sub",
   pixivFavoritesStatus: "pixiv_favorites_status",
   syncPixivFavorites: "sync_pixiv_favorites",

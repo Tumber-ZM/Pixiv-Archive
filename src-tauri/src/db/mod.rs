@@ -55,6 +55,7 @@ fn init_with(path: &Path, full: bool) -> AppResult<Connection> {
     conn.execute_batch(schema::SCHEMA_SQL)?;
     schema::ensure_columns(&conn)?;
     schema::ensure_bookmark_subs_cols(&conn)?;
+    schema::ensure_download_queue_cols(&conn)?;
     schema::drop_legacy_tables(&conn)?;
     if full {
         schema::ensure_unique_indexes(&conn)?;
@@ -139,6 +140,12 @@ mod tests {
         assert!(columns.iter().any(|c| c == "sync_error"), "artworks 缺 sync_error");
         assert!(columns.iter().any(|c| c == "ai_type"), "artworks 缺 ai_type");
         assert!(columns.iter().any(|c| c == "origin"), "artworks 缺 origin");
+
+        let queue_columns = schema::table_columns(&conn, "download_queue").unwrap();
+        assert!(
+            queue_columns.iter().any(|c| c == "origin"),
+            "download_queue 缺 origin"
+        );
     }
 
     #[test]

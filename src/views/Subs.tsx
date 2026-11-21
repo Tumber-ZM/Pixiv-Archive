@@ -78,6 +78,7 @@ export function Subs() {
   const [preview, setPreview] = useState<SubPreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Sub | null>(null);
+  const [backfillTarget, setBackfillTarget] = useState<Sub | null>(null);
   const [busy, setBusy] = useState(false);
   // 正在检查的订阅（`kind:target`），同一时间只允许一个
   const [checking, setChecking] = useState<string | null>(null);
@@ -222,6 +223,26 @@ export function Subs() {
     }
   };
 
+  // 补全历史：把起点重置为 0，再走一次普通检查（会翻到列表末尾）
+  const startBackfill = async () => {
+    if (!backfillTarget) return;
+    const row = backfillTarget;
+    setBusy(true);
+    try {
+      await call<Sub>(CMD.resetSubBaseline, {
+        kind: row.kind,
+        targetPixivId: row.target_pixiv_id,
+      });
+      setBackfillTarget(null);
+      setRefreshKey((key) => key + 1);
+      await checkOne(row);
+    } catch (reason: unknown) {
+      setError(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="px-6 py-4">
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -284,6 +305,18 @@ export function Subs() {
                 </div>
 
                 <Switch on={row.auto_download} onToggle={() => toggleAuto(row)} />
+
+                {row.kind === "author" && (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={checking !== null}
+                    title="重新扫描该作者的全部历史作品（已入库的会跳过）"
+                    onClick={() => setBackfillTarget(row)}
+                  >
+                    补全
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -395,6 +428,23 @@ export function Subs() {
           将取消对「
           {removeTarget ? displayName(removeTarget.name, removeTarget.target_pixiv_id) : ""}
           」的{removeTarget?.kind === "author" ? "作者" : "收藏"}订阅。已下载的作品会保留。
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={backfillTarget !== null}
+        title="补全历史作品"
+        confirmLabel="补全"
+        busy={busy}
+        onCancel={() => setBackfillTarget(null)}
+        onConfirm={startBackfill}
+      >
+        <p>
+          将重新扫描「
+          {backfillTarget
+            ? displayName(backfillTarget.name, backfillTarget.target_pixiv_id)
+            : ""}
+          」的全部历史作品，已入库的会自动跳过。作品多时可能比较久，可以在右下角取消。
         </p>
       </Dialog>
 

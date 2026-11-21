@@ -453,6 +453,21 @@ pub fn toggle_sub_auto(kind: String, target_pixiv_id: i64) -> AppResult<Sub> {
     toggle_sub_auto_with(&conn, kind, target_pixiv_id)
 }
 
+/// 把作者订阅的起点重置为 0：下次检查会扫描该作者的全部历史作品。
+#[tauri::command]
+pub fn reset_sub_baseline(kind: String, target_pixiv_id: i64) -> AppResult<Sub> {
+    let kind = parse_kind(&kind)?;
+    if kind != SubKind::Author {
+        return Err(AppError::invalid("只有作者订阅可以补全历史"));
+    }
+    let conn = open_library()?;
+    conn.execute(
+        "UPDATE subs SET baseline_pid = 0 WHERE kind = ?1 AND target_pixiv_id = ?2",
+        rusqlite::params![kind.as_str(), target_pixiv_id],
+    )?;
+    sub_of(&conn, kind, target_pixiv_id)
+}
+
 #[tauri::command]
 pub async fn preview_sub(kind: String, target_pixiv_id: i64) -> AppResult<SubPreview> {
     let kind = parse_kind(&kind)?;

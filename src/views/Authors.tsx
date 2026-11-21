@@ -3,6 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { Bell, Users } from "lucide-react";
 
 import { EmptyState } from "../components/common/EmptyState";
+import { Dialog } from "../components/dialog/Dialog";
 import { ArtworkList } from "../components/wall/ArtworkList";
 import { CMD, call, isAppError } from "../lib/ipc";
 import { useUi } from "../stores/ui";
@@ -11,6 +12,7 @@ import type {
   FavoriteSyncReport,
   FavoriteSyncStatus,
   Sub,
+  SubResult,
 } from "../types/ipc";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -154,6 +156,9 @@ export function Authors() {
   // Pixiv 收藏概况（同步过才按收藏筛选，没同步时退回「订阅前就有」的口径）
   const [favoriteStatus, setFavoriteStatus] = useState<FavoriteSyncStatus | null>(null);
   const [syncingFavorites, setSyncingFavorites] = useState(false);
+  // 订阅确认：作者卡上点「订阅」先问是否补全历史
+  const [subscribeTarget, setSubscribeTarget] = useState<AuthorRow | null>(null);
+  const [subscribeBackfill, setSubscribeBackfill] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,36 +198,72 @@ export function Authors() {
   }, [refreshKey]);
 
   // 在作者卡上订阅/退订：作者订阅默认只追新，新作品等「订阅更新」时下载
-  const toggleSubscribe = async (row: AuthorRow) => {
+  const removeSubscription = async (row: AuthorRow) => {
     if (pendingSub !== null) return;
     setPendingSub(row.pixiv_user_id);
     setNotice(null);
     try {
-      if (row.subscribed) {
-        await call<boolean>(CMD.removeSub, {
-          kind: "author",
-          targetPixivId: row.pixiv_user_id,
-        });
-        setRows((prev) =>
-          prev.map((item) => (item.id === row.id ? { ...item, subscribed: false } : item)),
-        );
-        setNotice(`已退订「${row.name}」`);
-      } else {
-        await call<Sub>(CMD.addSub, {
-          kind: "author",
-          targetPixivId: row.pixiv_user_id,
-          backfill: false,
-        });
-        setRows((prev) =>
-          prev.map((item) => (item.id === row.id ? { ...item, subscribed: true } : item)),
-        );
-        setNotice(`已订阅「${row.name}」，新作品会在「订阅更新」时下载`);
-      }
+      await call<boolean>(CMD.removeSub, {
+        kind: "author",
+        targetPixivId: row.pixiv_user_id,
+      });
+      setRows((prev) =>
+        prev.map((item) => (item.id === row.id ? { ...item, subscribed: false } : item)),
+      );
+      setNotice(`已退订「${row.name}」`);
       setTimeout(() => setNotice(null), 4000);
     } catch (reason: unknown) {
       setNotice(isAppError(reason) ? reason.message : String(reason));
     } finally {
       setPendingSub(null);
+    }
+  };
+
+  const confirmSubscribe = async () => {
+    const row = subscribeTarget;
+    if (!row || pendingSub !== null) return;
+    setPendingSub(row.pixiv_user_id);
+    setNotice(null);
+    try {
+      await call<Sub>(CMD.addSub, {
+        kind: "author",
+        targetPixivId: row.pixiv_user_id,
+        backfill: subscribeBackfill,
+      });
+      setRows((prev) =>
+        prev.map((item) => (item.id === row.id ? { ...item, subscribed: true } : item)),
+      );
+      setSubscribeTarget(null);
+
+      if (subscribeBackfill) {
+        // 勾了补全就顺手跑一次检查，把该作者的历史作品拉进来
+        setScanTask({
+          current: 0,
+          total: 0,
+          imported: 0,
+          message: "准备补全该作者的作品…",
+          kind: "subs",
+        });
+        const result = await call<SubResult>(CMD.checkSub, {
+          kind: "author",
+          targetPixivId: row.pixiv_user_id,
+          full: true,
+        });
+        bumpData();
+        setRefreshKey((key) => key + 1);
+        setNotice(
+          `已订阅「${row.name}」：新增 ${result.new_found} · 下载 ${result.downloaded}` +
+            (result.failed > 0 ? ` · 失败 ${result.failed}` : ""),
+        );
+      } else {
+        setNotice(`已订阅「${row.name}」，只下载新作品；可在订阅列表点「补全」下载历史`);
+      }
+      setTimeout(() => setNotice(null), 8000);
+    } catch (reason: unknown) {
+      setNotice(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setPendingSub(null);
+      setScanTask(null);
     }
   };
 
@@ -415,13 +456,45 @@ export function Authors() {
                 key={row.id}
                 row={row}
                 onOpen={() => setCurrent(row)}
-                onToggleSubscribe={() => toggleSubscribe(row)}
+                onToggleSubscribe={() => {
+                  if (row.subscribed) {
+                    void removeSubscription(row);
+                  } else {
+                    setSubscribeTarget(row);
+                    setSubscribeBackfill(false);
+                  }
+                }}
                 pending={pendingSub === row.pixiv_user_id}
               />
             ))}
           </div>
         )}
       </div>
+
+      <Dialog
+        open={subscribeTarget !== null}
+        title="订阅作者"
+        confirmLabel="订阅"
+        busy={pendingSub !== null}
+        onCancel={() => setSubscribeTarget(null)}
+        onConfirm={confirmSubscribe}
+      >
+        <p className="text-body text-text">{subscribeTarget?.name}</p>
+        <label className="mt-3 flex items-start gap-2 text-micro text-text-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={subscribeBackfill}
+            onChange={(event) => setSubscribeBackfill(event.currentTarget.checked)}
+          />
+          <span>
+            补全该作者已有作品
+            <span className="mt-0.5 block text-micro text-text-3">
+              勾选后会立即扫描并下载该作者的全部历史作品，可能很多；不勾选只收录订阅之后发布的新作品。
+            </span>
+          </span>
+        </label>
+      </Dialog>
     </div>
   );
 }

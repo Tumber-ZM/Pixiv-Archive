@@ -385,10 +385,10 @@ async fn check_one(
 
     // 2. 入队：本次发现的与上次失败的都在队列里，一起消费
     for item in &collected {
-        download::enqueue(conn, item.pixiv_id)?;
+        download::enqueue(conn, item.pixiv_id, origin)?;
     }
 
-    let queued = download::pending_queue(conn, download::QUEUE_BATCH)?;
+    let queued = download::pending_queue(conn, download::QUEUE_BATCH, origin)?;
     let queued_total = queued.len();
     for (idx, pixiv_id) in queued.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {

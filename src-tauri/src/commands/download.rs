@@ -533,24 +533,28 @@ pub fn import_downloaded(
 pub const QUEUE_BATCH: i64 = 500;
 
 /// 把作品加入下载队列（已存在则忽略）。
-pub fn enqueue(conn: &Connection, pixiv_id: i64) -> AppResult<()> {
+///
+/// `origin` 用来区分队列属于收藏/手动还是作者订阅：检查某个订阅时只消费
+/// 自己那一种，否则作者订阅会把别人排队的作品下载下来、还把来源标错。
+pub fn enqueue(conn: &Connection, pixiv_id: i64, origin: &str) -> AppResult<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO download_queue (pixiv_id) VALUES (?1)",
-        [pixiv_id],
+        "INSERT OR IGNORE INTO download_queue (pixiv_id, origin) VALUES (?1, ?2)",
+        params![pixiv_id, origin],
     )?;
     Ok(())
 }
 
-/// 取出可以立即处理的作品：`pending` 或已到重试时间的 `failed`。
-pub fn pending_queue(conn: &Connection, limit: i64) -> AppResult<Vec<i64>> {
+/// 取出该来源下可以立即处理的作品：`pending` 或已到重试时间的 `failed`。
+pub fn pending_queue(conn: &Connection, limit: i64, origin: &str) -> AppResult<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT pixiv_id FROM download_queue
          WHERE status IN ('pending', 'failed')
            AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
+           AND COALESCE(origin, 'local') = ?2
          ORDER BY id ASC
          LIMIT ?1",
     )?;
-    let rows = stmt.query_map([limit], |row| row.get::<_, i64>(0))?;
+    let rows = stmt.query_map(params![limit, origin], |row| row.get::<_, i64>(0))?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row?);

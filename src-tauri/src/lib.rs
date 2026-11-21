@@ -64,6 +64,7 @@ pub fn run() {
             commands::browse::preview_sub,
             commands::browse::refresh_author_avatars,
             commands::browse::remove_sub,
+            commands::browse::reset_sub_baseline,
             commands::browse::toggle_sub_auto,
             commands::download::regenerate_thumbnails,
             commands::favorites::add_to_favorite,
