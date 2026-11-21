@@ -97,6 +97,7 @@ pub struct RemoteIllust {
     pub author_name: String,
     pub author_id: i64,
     pub page_count: i64,
+    pub thumbnail: String,
     pub tags: Vec<String>,
 }
 
@@ -899,6 +900,15 @@ impl PixivClient {
 
     /// `/v1/search/illust`：本地作品搜不到时，去 Pixiv 上找工作。
     pub async fn search_illusts(&self, word: &str) -> AppResult<Vec<RemoteIllust>> {
+        self.search_illusts_sorted(word, "date_desc").await
+    }
+
+    /// 指定排序（date_desc / popular_desc）的作品搜索。
+    pub async fn search_illusts_sorted(
+        &self,
+        word: &str,
+        sort: &str,
+    ) -> AppResult<Vec<RemoteIllust>> {
         let word = word.trim();
         if word.is_empty() {
             return Ok(Vec::new());
@@ -911,7 +921,7 @@ impl PixivClient {
             .query(&[
                 ("word", word),
                 ("search_target", "partial_match_for_tags"),
-                ("sort", "date_desc"),
+                ("sort", sort),
                 ("filter", "for_android"),
             ])
             .bearer_auth(token)
@@ -965,6 +975,11 @@ impl PixivClient {
                         .to_string(),
                     author_id: illust.pointer("/user/id").and_then(Value::as_i64).unwrap_or(0),
                     page_count: illust.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+                    thumbnail: illust
+                        .pointer("/image_urls/square_medium")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
                     tags: illust
                         .get("tags")
                         .and_then(Value::as_array)

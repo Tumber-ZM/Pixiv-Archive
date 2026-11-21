@@ -21,13 +21,24 @@ pub async fn search_pixiv_authors(word: String) -> AppResult<Vec<RemoteAuthor>> 
 
 /// 本地作品搜不到时，去 Pixiv 上搜作品。
 #[tauri::command]
-pub async fn search_pixiv_illusts(word: String) -> AppResult<Vec<RemoteIllust>> {
+pub async fn search_pixiv_illusts(
+    word: String,
+    sort: Option<String>,
+) -> AppResult<Vec<RemoteIllust>> {
     let word = word.trim();
     if word.is_empty() {
         return Ok(Vec::new());
     }
     let client = PixivClient::from_settings()?;
-    client.search_illusts(word).await
+    let sort = sort.as_deref().unwrap_or("date_desc");
+    if sort == "popular_desc" {
+        match client.search_illusts_sorted(word, "popular_desc").await {
+            Ok(items) if !items.is_empty() => return Ok(items),
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+    client.search_illusts_sorted(word, "date_desc").await
 }
 
 /// Pixiv 上的标签：有搜索词时聚合远端作品结果的标签，没有词时取热门标签。
@@ -58,4 +69,67 @@ pub async fn download_pixiv_illust(pixiv_id: i64) -> AppResult<usize> {
         &cancel,
     )
     .await
+}
+
+/// 通过后端带 Referer 拉取 Pixiv 缩略图，返回 data URL；WebView 直接请求 pximg 会被拒。
+#[tauri::command]
+pub async fn fetch_remote_thumbnail(url: String) -> AppResult<String> {
+    if !url.starts_with("https://i.pximg.net/") {
+        return Err(AppError::new("INVALID", "不支持的缩略图地址"));
+    }
+    let response = reqwest::Client::new()
+        .get(&url)
+        .header("Referer", "https://www.pixiv.net/")
+        .header("User-Agent", "PixivArchive/2.0")
+        .send()
+        .await
+        .map_err(|error| AppError::new("NETWORK", format!("无法加载 Pixiv 缩略图：{error}")))?;
+    if !response.status().is_success() {
+        return Err(AppError::internal(format!(
+            "Pixiv 缩略图返回 HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_string();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| AppError::new("NETWORK", format!("读取 Pixiv 缩略图失败：{error}")))?;
+    if bytes.is_empty() || bytes.len() > 4 * 1024 * 1024 {
+        return Err(AppError::internal("Pixiv 缩略图大小异常"));
+    }
+    Ok(format!(
+        "data:{content_type};base64,{}",
+        base64_encode(&bytes)
+    ))
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity((input.len() + 2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        output.push(TABLE[((n >> 18) & 63) as usize] as char);
+        output.push(TABLE[((n >> 12) & 63) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
 }

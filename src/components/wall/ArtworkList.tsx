@@ -128,7 +128,10 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
     const timer = window.setTimeout(() => {
       setRemoteLoading(true);
       setRemoteError(null);
-      call<RemoteIllust[]>(CMD.searchPixivIllusts, { word: debouncedQ.trim() })
+      call<RemoteIllust[]>(CMD.searchPixivIllusts, {
+        word: debouncedQ.trim(),
+        sort: "date_desc",
+      })
         .then((list) => {
           if (cancelled) return;
           setRemoteItems(list);

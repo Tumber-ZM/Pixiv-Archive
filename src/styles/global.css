@@ -691,6 +691,19 @@ a {
   border-color: var(--color-warn);
 }
 
+/* 组合横条：高度压到和筛选按钮一致，避免把第一行撑歪 */
+.combo-box {
+  min-height: 33px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.combo-box .tri-btn {
+  height: 27px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .tag-pick[data-source="pixiv"] {
   border-style: dashed;
 }

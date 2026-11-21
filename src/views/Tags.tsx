@@ -17,6 +17,7 @@ import { ArtworkList } from "../components/wall/ArtworkList";
 import { CMD, call, isAppError } from "../lib/ipc";
 import { useUi } from "../stores/ui";
 import type { FavoriteSyncStatus, RemoteTag, TagCombo, TagRow } from "../types/ipc";
+import { RemoteTagView } from "./RemoteTagView";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const TAG_ROW_HEIGHT = 36;
@@ -37,6 +38,7 @@ export function Tags() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [current, setCurrent] = useState<CurrentTag | null>(null);
+  const [remoteCurrent, setRemoteCurrent] = useState<RemoteTag | null>(null);
 
   const [onlyCollected, setOnlyCollected] = useState(false);
   const [onlySubscribed, setOnlySubscribed] = useState(false);
@@ -339,6 +341,13 @@ export function Tags() {
     tagBoxRef.current?.scrollIntoView({ block: "nearest" });
   };
 
+  const addRemoteTagToCombo = (tag: RemoteTag) => {
+    setRandomActive(false);
+    setSelectedTags((prev) =>
+      prev.includes(tag.name) ? prev : [...prev, tag.name],
+    );
+  };
+
   const togglePin = async (combo: TagCombo) => {
     setComboMenu(null);
     try {
@@ -380,6 +389,17 @@ export function Tags() {
       setComboBusy(false);
     }
   };
+
+  if (remoteCurrent) {
+    return (
+      <RemoteTagView
+        tag={remoteCurrent}
+        onBack={() => setRemoteCurrent(null)}
+        onAdd={() => addRemoteTagToCombo(remoteCurrent)}
+        inCombo={selectedTags.includes(remoteCurrent.name)}
+      />
+    );
+  }
 
   if (current) {
     return (
@@ -491,7 +511,7 @@ export function Tags() {
         )}
 
         {/* 已保存的标签组合：和筛选同一行，宽度随内容增长 */}
-        <div className="relative ml-auto flex w-fit max-w-full flex-wrap items-center gap-2 rounded-card border border-line bg-surface px-2 py-1">
+        <div className="combo-box relative flex w-fit max-w-full flex-wrap items-center gap-2 rounded-card border border-line bg-surface px-2">
           <button
             type="button"
             className="order-1 flex items-center gap-1.5 text-label text-text"
@@ -679,32 +699,26 @@ export function Tags() {
       <div className="mt-5">
         <div className="flex h-7 items-center gap-2">
           <span className="section-label w-[88px] shrink-0">标签</span>
-          {!searching && (hasOverflow || visibleRows > DEFAULT_ROWS) && (
+          {!searching && hasOverflow && (
             <button
               type="button"
               className="section-more"
-              onClick={() =>
-                visibleRows > DEFAULT_ROWS
-                  ? setVisibleRows(DEFAULT_ROWS)
-                  : setVisibleRows((value) => value + MORE_ROWS)
-              }
-              title={
-                visibleRows > DEFAULT_ROWS
-                  ? "收起本地标签"
-                  : `每次多展开 ${MORE_ROWS} 行`
-              }
+              onClick={() => setVisibleRows((value) => value + MORE_ROWS)}
+              title={`每次多展开 ${MORE_ROWS} 行`}
             >
-              {visibleRows > DEFAULT_ROWS ? (
-                <>
-                  <ChevronUp size={10} />
-                  收起
-                </>
-              ) : (
-                <>
-                  <ChevronDown size={10} />
-                  展开
-                </>
-              )}
+              <ChevronDown size={10} />
+              展开更多（{MORE_ROWS} 行）
+            </button>
+          )}
+          {!searching && visibleRows > DEFAULT_ROWS && (
+            <button
+              type="button"
+              className="section-more"
+              onClick={() => setVisibleRows(DEFAULT_ROWS)}
+              title="收起本地标签"
+            >
+              <ChevronUp size={10} />
+              收起
             </button>
           )}
           <span className="min-w-0 truncate text-micro text-text-3">
@@ -847,18 +861,15 @@ export function Tags() {
             }
           >
             {remoteTags.map((tag) => {
-              const selected = selectedTags.includes(tag.name);
               const label = tag.translated_name ?? tag.name;
               return (
                 <button
                   key={tag.name}
                   type="button"
                   className="tag-pick"
-                  data-active={selected}
                   data-source="pixiv"
-                  aria-pressed={selected}
-                  onClick={() => handleTagClick(tag.name)}
-                  title={`点击选中 / 取消 Pixiv 标签 #${label}`}
+                  onClick={() => setRemoteCurrent(tag)}
+                  title={`查看 Pixiv 线上作品 #${label}`}
                 >
                   <span className="tag-pick-label"># {label}</span>
                   {tag.count > 0 && (
