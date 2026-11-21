@@ -249,6 +249,7 @@ export interface RemoteIllust {
   thumbnail: string;
   is_gif: boolean;
   ai_type: number;
+  create_date: string;
   tags: string[];
 }
 

@@ -1,11 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Download, Plus } from "lucide-react";
 
 import { CMD, call, isAppError } from "../lib/ipc";
-import { useUi } from "../stores/ui";
+import { SORT_LABELS, useUi } from "../stores/ui";
 import type { RemoteIllust, RemoteTag } from "../types/ipc";
 
 const thumbCache = new Map<string, string>();
+
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  const list = [...items];
+  let state = seed >>> 0 || 1;
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    const j = state % (i + 1);
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
+}
 
 function RemoteThumb({ url, alt }: { url: string; alt: string }) {
   const [src, setSrc] = useState(() => (url ? thumbCache.get(url) ?? "" : ""));
@@ -70,21 +81,55 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
   const ai = useUi((state) => state.ai);
   const gif = useUi((state) => state.gif);
   const deletedOnly = useUi((state) => state.deletedOnly);
+  const sort = useUi((state) => state.sort);
+  const order = useUi((state) => state.order);
+  const shuffleToken = useUi((state) => state.shuffleToken);
   const label = tag.translated_name ?? tag.name;
 
-  const visibleItems = items.filter((item) => {
-    const isR18 = item.tags.some((name) => name === "R-18" || name === "R-18G");
-    if (r18 === "hide" && isR18) return false;
-    if (r18 === "only" && !isR18) return false;
-    const isAi =
-      item.ai_type === 2 ||
-      item.tags.some((name) => /^ai(イラスト|生成|画像)?$/i.test(name.trim()));
-    if (ai === "hide" && isAi) return false;
-    if (ai === "only" && !isAi) return false;
-    if (gif === "hide" && item.is_gif) return false;
-    if (gif === "only" && !item.is_gif) return false;
-    return true;
-  });
+  const visibleItems = useMemo(
+    () =>
+      items.filter((item) => {
+        const isR18 = item.tags.some(
+          (name) => name === "R-18" || name === "R-18G",
+        );
+        if (r18 === "hide" && isR18) return false;
+        if (r18 === "only" && !isR18) return false;
+        const isAi =
+          item.ai_type === 2 ||
+          item.tags.some((name) =>
+            /^ai(イラスト|生成|画像)?$/i.test(name.trim()),
+          );
+        if (ai === "hide" && isAi) return false;
+        if (ai === "only" && !isAi) return false;
+        if (gif === "hide" && item.is_gif) return false;
+        if (gif === "only" && !item.is_gif) return false;
+        return true;
+      }),
+    [items, r18, ai, gif],
+  );
+
+  const orderedItems = useMemo(() => {
+    if (sort === "random") {
+      return seededShuffle(
+        visibleItems,
+        (shuffleToken || 1) + (order === "asc" ? 1 : 0),
+      );
+    }
+    const list = [...visibleItems];
+    list.sort((a, b) => {
+      if (sort === "title") return a.title.localeCompare(b.title, "ja");
+      if (sort === "pixiv_id") return a.pixiv_id - b.pixiv_id;
+      if (sort === "create_date") {
+        const compare = (a.create_date || "").localeCompare(b.create_date || "");
+        return compare === 0 ? a.pixiv_id - b.pixiv_id : compare;
+      }
+      // 线上没有本地「添加时间」，这一项沿用 Pixiv 搜索顺序
+      return 0;
+    });
+    if (sort !== "first_seen" && order === "asc") list.reverse();
+    if (sort === "first_seen" && order === "asc") list.reverse();
+    return list;
+  }, [visibleItems, sort, order, shuffleToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,7 +188,10 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
         <div className="min-w-0">
           <h2 className="truncate text-heading text-text"># {label}</h2>
           <p className="text-micro text-text-3">
-            Pixiv 线上结果 · 优先按热门排序 · {label === tag.name ? tag.name : `原始标签 ${tag.name}`}
+            Pixiv 线上结果 ·{" "}
+            {sort === "first_seen" ? "线上搜索顺序" : SORT_LABELS[sort]}
+            {sort !== "random" ? (order === "asc" ? " ↑" : " ↓") : ""} ·{" "}
+            {label === tag.name ? tag.name : `原始标签 ${tag.name}`}
             {items.length > 0 && ` · 显示 ${visibleItems.length}/${items.length}`}
           </p>
         </div>
@@ -185,7 +233,7 @@ export function RemoteTagView({ tag, onBack, onAdd, inCombo }: Props) {
       ) : (
         <>
           <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))]">
-            {visibleItems.map((item) => (
+            {orderedItems.map((item) => (
               <div
                 key={item.pixiv_id}
                 className="overflow-hidden rounded-card border border-line bg-surface"
