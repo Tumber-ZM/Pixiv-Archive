@@ -37,7 +37,7 @@ export function Tags() {
   const [error, setError] = useState<string | null>(null);
   const [current, setCurrent] = useState<CurrentTag | null>(null);
 
-  const [onlyCollected, setOnlyCollected] = useState(true);
+  const [onlyCollected, setOnlyCollected] = useState(false);
   const [onlySubscribed, setOnlySubscribed] = useState(false);
   const [favoriteStatus, setFavoriteStatus] = useState<FavoriteSyncStatus | null>(null);
   const favoritesSynced = (favoriteStatus?.count ?? 0) > 0;

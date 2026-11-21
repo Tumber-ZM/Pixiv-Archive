@@ -150,7 +150,7 @@ pub fn list_tags_with(
 #[allow(clippy::too_many_arguments)]
 pub fn list_tags_filtered_with(
     conn: &Connection,
-    data_dir: &Path,
+    _data_dir: &Path,
     q: Option<&str>,
     limit: u32,
     favorited_only: bool,
@@ -159,35 +159,25 @@ pub fn list_tags_filtered_with(
 ) -> AppResult<Vec<TagRow>> {
     let pattern = like_pattern(q);
 
-    let sql = "WITH ranked AS (
-                   SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage
-                   FROM tags t
-                   JOIN artwork_tags at ON at.tag_id = t.id
-                   JOIN artworks w ON w.id = at.artwork_id
-                   WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
-                     AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
-                     AND (?3 = 0 OR EXISTS (
-                           SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = w.pixiv_id))
-                     AND (?4 = 0 OR COALESCE(w.origin, 'local') <> 'author_sub')
-                     AND (?5 = 0 OR EXISTS (
-                           SELECT 1 FROM authors au
-                             JOIN subs s ON s.kind = 'author'
-                                        AND s.target_pixiv_id = au.pixiv_user_id
-                            WHERE au.id = w.author_id))
-                   GROUP BY t.id
-                   HAVING COUNT(at.artwork_id) > 0
-                   ORDER BY usage DESC, t.name
-                   LIMIT ?2
-               )
-               SELECT r.id, r.name, r.translated_name, r.usage,
-                 (SELECT w.pixiv_id
-                    FROM artwork_tags at2
-                    JOIN artworks w ON w.id = at2.artwork_id
-                   WHERE at2.tag_id = r.id
-                     AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
-                   ORDER BY RANDOM() LIMIT 1) AS cover_pixiv_id
-               FROM ranked r
-               ORDER BY r.usage DESC, r.name";
+    // 标签云只需要名字 / 数量，不再为每个标签随机取封面（几千个标签会很慢）。
+    let sql = "SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage
+               FROM tags t
+               JOIN artwork_tags at ON at.tag_id = t.id
+               JOIN artworks w ON w.id = at.artwork_id
+               WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
+                 AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+                 AND (?3 = 0 OR EXISTS (
+                       SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = w.pixiv_id))
+                 AND (?4 = 0 OR COALESCE(w.origin, 'local') <> 'author_sub')
+                 AND (?5 = 0 OR EXISTS (
+                       SELECT 1 FROM authors au
+                         JOIN subs s ON s.kind = 'author'
+                                    AND s.target_pixiv_id = au.pixiv_user_id
+                        WHERE au.id = w.author_id))
+               GROUP BY t.id
+               HAVING COUNT(at.artwork_id) > 0
+               ORDER BY usage DESC, t.name
+               LIMIT ?2";
 
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(
@@ -199,33 +189,24 @@ pub fn list_tags_filtered_with(
             i64::from(subscribed_only)
         ],
         |row| {
-            let cover_pixiv_id: Option<i64> = row.get(4)?;
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
-                cover_pixiv_id,
             ))
         },
     )?;
 
     let mut out = Vec::new();
     for row in rows {
-        let (id, name, translated_name, count, cover_pixiv_id) = row?;
-        // 封面统一走 400px 缩略图，不直接引原图
-        let cover_path = cover_pixiv_id.and_then(|pixiv_id| {
-            let candidate = data_dir.join("thumbnails").join(format!("{pixiv_id}.jpg"));
-            candidate
-                .is_file()
-                .then(|| candidate.to_string_lossy().to_string())
-        });
+        let (id, name, translated_name, count) = row?;
         out.push(TagRow {
             id,
             name,
             translated_name,
             count,
-            cover_path,
+            cover_path: None,
         });
     }
     Ok(out)
@@ -383,12 +364,12 @@ pub fn list_tags(
 ) -> AppResult<Vec<TagRow>> {
     let conn = open_library()?;
     let data_dir = paths::data_dir()?;
-    // 标签可能上千个，先按使用次数截断再取封面
+    // 标签云要显示全部标签（本地现在有两千多个），不再按 300 截断
     list_tags_filtered_with(
         &conn,
         &data_dir,
         q.as_deref(),
-        300,
+        10_000,
         favorited_only.unwrap_or(false),
         collected_only.unwrap_or(false),
         subscribed_only.unwrap_or(false),
