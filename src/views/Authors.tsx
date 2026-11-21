@@ -13,6 +13,7 @@ import type {
   RemoteAuthor,
   Sub,
   SubResult,
+  TagRow,
 } from "../types/ipc";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -136,6 +137,131 @@ function AuthorCard({
 /** 已订阅的作者置顶；同一组内保持后端原有的作品数排序。 */
 function pinSubscribed(rows: AuthorRow[]): AuthorRow[] {
   return [...rows].sort((a, b) => Number(b.subscribed) - Number(a.subscribed));
+}
+
+function AuthorTagBar({
+  authorId,
+  selected,
+  onChange,
+}: {
+  authorId: number;
+  selected: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const dataEpoch = useUi((state) => state.dataEpoch);
+  const [tags, setTags] = useState<TagRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    call<TagRow[]>(CMD.listAuthorTags, { authorId })
+      .then((rows) => {
+        if (!cancelled) setTags(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setTags([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authorId, dataEpoch]);
+
+  if (loading || tags.length === 0) return null;
+
+  const toggle = (name: string) => {
+    onChange(
+      selected.includes(name)
+        ? selected.filter((tag) => tag !== name)
+        : [...selected, name],
+    );
+  };
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      <span className="section-label">标签</span>
+      {tags.map((tag) => {
+        const label = tag.translated_name ?? tag.name;
+        return (
+          <button
+            key={tag.id}
+            type="button"
+            className="tag-pick"
+            data-active={selected.includes(tag.name)}
+            onClick={() => toggle(tag.name)}
+            title={`筛选该作者下带 #${label} 的作品`}
+          >
+            <span className="tag-pick-label"># {label}</span>
+            <span className="tag-pick-count">{tag.count}</span>
+          </button>
+        );
+      })}
+      {selected.length > 0 && (
+        <button
+          type="button"
+          className="text-micro text-text-3 hover:text-text"
+          onClick={() => onChange([])}
+        >
+          清除标签
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AuthorDetail({
+  author,
+  onlyCollected,
+  favoritesSynced,
+  onToggleCollected,
+  onBack,
+}: {
+  author: AuthorRow;
+  onlyCollected: boolean;
+  favoritesSynced: boolean;
+  onToggleCollected: () => void;
+  onBack: () => void;
+}) {
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  return (
+    <ArtworkList
+      extraQuery={{
+        author_id: author.id,
+        ...(onlyCollected && favoritesSynced ? { favorited_only: true } : {}),
+        ...(selectedTags.length > 0 ? { tags_all: selectedTags } : {}),
+      }}
+      heading={author.name}
+      headerExtra={
+        <button
+          type="button"
+          className="tri-btn"
+          data-active={onlyCollected}
+          disabled={!favoritesSynced}
+          title={
+            favoritesSynced
+              ? "只显示你在 Pixiv 收藏的作品"
+              : "先点「同步收藏」后才能按 Pixiv 收藏筛选"
+          }
+          onClick={onToggleCollected}
+        >
+          仅看收藏
+        </button>
+      }
+      tagBar={
+        <AuthorTagBar
+          authorId={author.id}
+          selected={selectedTags}
+          onChange={setSelectedTags}
+        />
+      }
+      onClearExtra={() => setSelectedTags([])}
+      onBack={onBack}
+    />
+  );
 }
 
 export function Authors() {
@@ -366,28 +492,12 @@ export function Authors() {
   // 视图内切到该作者的作品，不再单独做作者信息头部
   if (current) {
     return (
-      <ArtworkList
-        extraQuery={{
-          author_id: current.id,
-          favorited_only: onlyCollected && favoritesSynced ? true : undefined,
-        }}
-        heading={current.name}
-        headerExtra={
-          <button
-            type="button"
-            className="tri-btn"
-            data-active={onlyCollected}
-            disabled={!favoritesSynced}
-            title={
-              favoritesSynced
-                ? "只显示你在 Pixiv 收藏的作品"
-                : "先点「同步收藏」后才能按 Pixiv 收藏筛选"
-            }
-            onClick={() => setOnlyCollected((value) => !value)}
-          >
-            仅看收藏
-          </button>
-        }
+      <AuthorDetail
+        key={current.id}
+        author={current}
+        onlyCollected={onlyCollected}
+        favoritesSynced={favoritesSynced}
+        onToggleCollected={() => setOnlyCollected((value) => !value)}
         onBack={() => setCurrent(null)}
       />
     );

@@ -377,6 +377,42 @@ pub fn list_tags(
 }
 
 #[tauri::command]
+pub fn list_author_tags(author_id: i64) -> AppResult<Vec<TagRow>> {
+    let conn = open_library()?;
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage
+         FROM tags t
+         JOIN artwork_tags at ON at.tag_id = t.id
+         JOIN artworks w ON w.id = at.artwork_id
+         WHERE w.author_id = ?1
+           AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+         GROUP BY t.id
+         ORDER BY usage DESC, t.name ASC
+         LIMIT 500",
+    )?;
+    let rows = stmt.query_map([author_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, name, translated_name, count) = row?;
+        out.push(TagRow {
+            id,
+            name,
+            translated_name,
+            count,
+            cover_path: None,
+        });
+    }
+    Ok(out)
+}
+
+#[tauri::command]
 pub fn get_author_avatar(author_id: i64) -> AppResult<Option<String>> {
     let conn = open_library()?;
     let data_dir = paths::data_dir()?;

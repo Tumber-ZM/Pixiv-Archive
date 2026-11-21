@@ -61,6 +61,7 @@ pub fn run() {
             commands::browse::list_authors,
             commands::browse::list_subs,
             commands::browse::list_tags,
+            commands::browse::list_author_tags,
             commands::tag_combos::list_tag_combos,
             commands::tag_combos::save_tag_combo,
             commands::tag_combos::rename_tag_combo,

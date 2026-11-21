@@ -30,6 +30,10 @@ interface ArtworkListProps {
   remoteSearch?: boolean;
   /** 忽略顶栏搜索词（标签页的图片区只按勾选标签过滤） */
   ignoreQuery?: boolean;
+  /** 标题栏下方额外内容（作者页的标签云） */
+  tagBar?: ReactNode;
+  /** 清除额外筛选（作者页标签） */
+  onClearExtra?: () => void;
 }
 
 /**
@@ -38,7 +42,7 @@ interface ArtworkListProps {
  * 无限滚动：每批 60 条，底部哨兵进入视口就取下一批并追加。
  * 筛选条件变化会清空累积结果、退回第 1 批——否则新旧条件的结果会混在一起。
  */
-export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChanged, remoteSearch, ignoreQuery }: ArtworkListProps) {
+export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChanged, remoteSearch, ignoreQuery, tagBar, onClearExtra }: ArtworkListProps) {
   const q = useUi((state) => state.q);
   const sort = useUi((state) => state.sort);
   const order = useUi((state) => state.order);
@@ -53,6 +57,10 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
   const setSettingsOpen = useUi((state) => state.setSettingsOpen);
   const bumpData = useUi((state) => state.bumpData);
   const setScanTask = useUi((state) => state.setScanTask);
+  const clearAllFilters = () => {
+    clearFilters();
+    onClearExtra?.();
+  };
   const dataEpoch = useUi((state) => state.dataEpoch);
 
   const [debouncedQ, setDebouncedQ] = useState(q);
@@ -402,12 +410,14 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
           {headerExtra}
           {filtered && <span className="text-micro text-text-2">{summary}</span>}
           {filtered && (
-            <button type="button" className="quiet-link" onClick={clearFilters}>
+            <button type="button" className="quiet-link" onClick={clearAllFilters}>
               清除筛选
             </button>
           )}
         </div>
       )}
+
+      {tagBar}
 
       {loading && items.length === 0 ? (
         <SkeletonGrid />
@@ -415,7 +425,7 @@ export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChange
         filtered ? (
           <div>
             <EmptyState title="没有符合条件的作品" hint="换个关键词，或清除筛选条件">
-              <button type="button" className="btn mt-2" onClick={clearFilters}>
+              <button type="button" className="btn mt-2" onClick={clearAllFilters}>
                 清除筛选
               </button>
             </EmptyState>
