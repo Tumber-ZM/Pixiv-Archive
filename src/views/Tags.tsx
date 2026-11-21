@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Bookmark,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   Pin,
+  Plus,
+  RotateCcw,
   Save,
   X,
 } from "lucide-react";
@@ -52,6 +55,8 @@ export function Tags() {
   const [comboName, setComboName] = useState("");
   const [comboBusy, setComboBusy] = useState(false);
   const [comboError, setComboError] = useState<string | null>(null);
+  const [combosOpen, setCombosOpen] = useState(true);
+  const [saveOpen, setSaveOpen] = useState(false);
   const [comboMenu, setComboMenu] = useState<{
     x: number;
     y: number;
@@ -199,16 +204,24 @@ export function Tags() {
   useEffect(() => {
     const handler = () => {
       if (!randomTag) return;
+      const adding = !selectedTags.includes(randomTag.name);
       setRandomActive(false);
       setSelectedTags((prev) =>
-        prev.includes(randomTag.name)
-          ? prev.filter((tag) => tag !== randomTag.name)
-          : [...prev, randomTag.name],
+        adding
+          ? [...prev, randomTag.name]
+          : prev.filter((tag) => tag !== randomTag.name),
+      );
+      setPriorityTags((prev) =>
+        adding
+          ? prev.includes(randomTag.name)
+            ? prev
+            : [randomTag.name, ...prev]
+          : prev.filter((tag) => tag !== randomTag.name),
       );
     };
     window.addEventListener("pa-tags-toggle-random", handler);
     return () => window.removeEventListener("pa-tags-toggle-random", handler);
-  }, [randomTag]);
+  }, [randomTag, selectedTags]);
 
   // Pixiv 标签默认只显示一行
   useEffect(() => {
@@ -263,8 +276,16 @@ export function Tags() {
     if (randomTag?.name === name) {
       // 黄色随机标签：点击加入组合并变蓝；再点取消，黄色候选保留
       setRandomActive(false);
+      const adding = !selectedTags.includes(name);
       setSelectedTags((prev) =>
         prev.includes(name) ? prev.filter((tag) => tag !== name) : [...prev, name],
+      );
+      setPriorityTags((prev) =>
+        adding
+          ? prev.includes(name)
+            ? prev
+            : [name, ...prev]
+          : prev.filter((tag) => tag !== name),
       );
       return;
     }
@@ -290,7 +311,7 @@ export function Tags() {
   };
 
   const saveCombo = async () => {
-    if (!selectedTags.length || comboBusy) return;
+    if (!selectedTags.length || comboBusy) return false;
     setComboBusy(true);
     setComboError(null);
     try {
@@ -300,11 +321,19 @@ export function Tags() {
       });
       setComboName("");
       await loadCombos();
+      return true;
     } catch (reason: unknown) {
       setComboError(isAppError(reason) ? reason.message : String(reason));
+      return false;
     } finally {
       setComboBusy(false);
     }
+  };
+
+  const focusTagSearch = () => {
+    const input = document.querySelector<HTMLInputElement>("header input");
+    input?.focus();
+    tagBoxRef.current?.scrollIntoView({ block: "nearest" });
   };
 
   const togglePin = async (combo: TagCombo) => {
@@ -457,46 +486,22 @@ export function Tags() {
             清除筛选
           </button>
         )}
-        <span className="mx-1 h-4 w-px bg-line" aria-hidden />
-        <span
-          className="text-micro text-text-3"
-          title="勾选下方标签组成组合；保存后右键可重命名 / 删除 / 置顶"
-        >
-          标签组合
-        </span>
+      </div>
+
+      {/* 已保存的标签组合 */}
+      <div className="relative mt-3 rounded-card border border-line bg-surface px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="tri-btn tri-btn-accent inline-flex items-center gap-1"
-            disabled={selectedTags.length === 0 || comboBusy}
-            onClick={saveCombo}
-            title="把当前勾选的标签保存成组合"
+            className="flex items-center gap-1.5 text-label text-text"
+            onClick={() => setCombosOpen((value) => !value)}
+            title={combosOpen ? "收起已保存的标签组合" : "展开已保存的标签组合"}
           >
-            <Save size={12} />
-            保存该组标签
+            <Bookmark size={13} />
+            已保存的标签组合
+            {combosOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
           </button>
-          <div className="w-[160px]">
-            <input
-              className="line-input"
-              placeholder="组合名称（可留空）"
-              value={comboName}
-              maxLength={30}
-              onChange={(event) => setComboName(event.currentTarget.value)}
-            />
-          </div>
-          {selectedTags.length > 0 && (
-            <button
-              type="button"
-              className="text-micro text-text-3 hover:text-text"
-              onClick={() => {
-                setSelectedTags([]);
-                setPriorityTags([]);
-                setRandomActive(false);
-              }}
-            >
-              清空
-            </button>
-          )}
-          <span className="text-micro text-text-3">此次组合：</span>
+          <span className="h-4 w-px bg-line" aria-hidden />
           {selectedTags.length === 0 ? (
             <span className="text-micro text-text-3">未选择标签</span>
           ) : (
@@ -514,12 +519,95 @@ export function Tags() {
               </button>
             ))
           )}
+          <button
+            type="button"
+            className="tag-pick"
+            onClick={focusTagSearch}
+            title="到标签区搜索并添加标签"
+          >
+            <Plus size={10} />
+            添加标签
+          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-micro text-text-3 hover:text-text disabled:opacity-40"
+              disabled={selectedTags.length === 0}
+              onClick={() => {
+                setSelectedTags([]);
+                setPriorityTags([]);
+                setRandomActive(false);
+              }}
+            >
+              清空
+              <RotateCcw size={11} />
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                className="tri-btn tri-btn-accent inline-flex items-center gap-1"
+                disabled={selectedTags.length === 0 || comboBusy}
+                onClick={() => setSaveOpen((value) => !value)}
+                title="把当前标签保存成组合"
+              >
+                <Save size={12} />
+                保存为组合
+                <ChevronDown size={10} />
+              </button>
+              {saveOpen && (
+                <div className="absolute right-0 top-full z-30 mt-1 w-[240px] rounded-card border border-line bg-surface p-2 shadow-lg">
+                  <input
+                    className="line-input"
+                    placeholder="组合名称（可留空）"
+                    value={comboName}
+                    maxLength={30}
+                    autoFocus
+                    onChange={(event) => setComboName(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !comboBusy) {
+                        void saveCombo().then((ok) => {
+                          if (ok) setSaveOpen(false);
+                        });
+                      }
+                    }}
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      className="tri-btn"
+                      onClick={() => setSaveOpen(false)}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="tri-btn tri-btn-accent"
+                      disabled={comboBusy}
+                      onClick={async () => {
+                        const ok = await saveCombo();
+                        if (ok) setSaveOpen(false);
+                      }}
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
         {comboError && <p className="mt-1 text-micro text-danger">{comboError}</p>}
+      </div>
 
-        {combos.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {combos.map((combo) => {
+        {combosOpen && (
+          <div className="mt-2 border-t border-line pt-2">
+            {combos.length === 0 ? (
+              <p className="text-micro text-text-3">
+                还没有保存的标签组合。选好标签后点「保存为组合」。
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {combos.map((combo) => {
               const expanded = expandedCombos.has(combo.id);
               const active = sameTags(selectedTags, combo.tags);
               return (
@@ -577,7 +665,9 @@ export function Tags() {
                   )}
                 </div>
               );
-            })}
+                })}
+              </div>
+            )}
           </div>
         )}
 
