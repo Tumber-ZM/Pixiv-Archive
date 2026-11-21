@@ -191,7 +191,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     r18 !== "all" ? `R18 ${TRI_LABELS[r18]}` : null,
     ai !== "all" ? `AI ${TRI_LABELS[ai]}` : null,
     gif !== "all" ? `GIF ${TRI_LABELS[gif]}` : null,
-    deletedOnly ? "仅已删除" : null,
+    deletedOnly ? "仅已隐藏" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -236,7 +236,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     setScanTask({ current: 0, total: ids.length, imported: 0, message: "同步元数据…", kind: "sync" });
     try {
       const report = await call<SyncReport>(CMD.syncArtworks, { artworkIds: ids });
-      setSyncNotice(`成功 ${report.synced} · 已删除 ${report.deleted} · 失败 ${report.failed}`);
+      setSyncNotice(`成功 ${report.synced} · 已隐藏 ${report.deleted} · 失败 ${report.failed}`);
       setSelected(new Set());
       refresh();
     } catch (reason: unknown) {

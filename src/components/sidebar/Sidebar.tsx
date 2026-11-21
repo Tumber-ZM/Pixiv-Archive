@@ -306,7 +306,7 @@ export function Sidebar() {
       >
         <p className="text-body text-text">本次待同步 {syncReport?.total ?? 0} 件</p>
         <p className="mt-2 text-micro text-text-2">
-          成功 {syncReport?.synced ?? 0} · 已删除 {syncReport?.deleted ?? 0} · 失败{" "}
+          成功 {syncReport?.synced ?? 0} · 已隐藏 {syncReport?.deleted ?? 0} · 失败{" "}
           {syncReport?.failed ?? 0}
         </p>
         {syncReport?.auth_error && (

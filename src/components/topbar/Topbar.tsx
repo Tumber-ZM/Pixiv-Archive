@@ -111,8 +111,9 @@ export function Topbar() {
         className="tri-btn"
         data-active={deletedOnly}
         onClick={toggleDeletedOnly}
+        title="显示在 Pixiv 上已删除或设为非公开的作品"
       >
-        已删除
+        已隐藏
       </button>
 
       <button

@@ -46,6 +46,8 @@ pub struct IllustData {
     pub author_avatar: Option<String>,
     pub create_date: Option<String>,
     pub page_count: i64,
+    /// Pixiv 的 `visible`：false = 已删除或非公开，图片地址会返回 limit_unknown 占位图
+    pub visible: bool,
     pub width: Option<i64>,
     pub height: Option<i64>,
     /// Pixiv：1 = 非 AI，2 = AI。缺失按 1 处理，避免误标
@@ -1115,6 +1117,7 @@ fn parse_illust(illust: &Value) -> IllustData {
             .get("page_count")
             .and_then(Value::as_i64)
             .unwrap_or(1),
+        visible: illust.get("visible").and_then(Value::as_bool).unwrap_or(true),
         width: illust.get("width").and_then(Value::as_i64),
         height: illust.get("height").and_then(Value::as_i64),
         ai_type: illust.get("illust_ai_type").and_then(Value::as_i64).unwrap_or(1),

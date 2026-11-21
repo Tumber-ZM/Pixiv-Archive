@@ -38,17 +38,26 @@ pub fn list_authors_with(
     let pattern = like_pattern(q);
 
     let sql = "SELECT au.id, au.pixiv_user_id, au.name, COUNT(a.id) AS artwork_count, au.profile_image,
-                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id ORDER BY w.id DESC LIMIT 1) AS c1,
-                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id ORDER BY w.id DESC LIMIT 1 OFFSET 1) AS c2,
-                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id ORDER BY w.id DESC LIMIT 1 OFFSET 2) AS c3,
+                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id
+                         AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+                       ORDER BY w.id DESC LIMIT 1) AS c1,
+                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id
+                         AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+                       ORDER BY w.id DESC LIMIT 1 OFFSET 1) AS c2,
+                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id
+                         AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+                       ORDER BY w.id DESC LIMIT 1 OFFSET 2) AS c3,
                       EXISTS(SELECT 1 FROM subs s WHERE s.kind = 'author' AND s.target_pixiv_id = au.pixiv_user_id) AS subscribed,
                       EXISTS(SELECT 1 FROM artworks w WHERE w.author_id = au.id
+                             AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
                              AND COALESCE(w.origin, 'local') <> 'author_sub') AS collected,
                       EXISTS(SELECT 1 FROM artworks w
                                JOIN pixiv_favorites pf ON pf.pixiv_id = w.pixiv_id
-                              WHERE w.author_id = au.id) AS favorited
+                              WHERE w.author_id = au.id
+                                AND COALESCE(w.pixiv_status, 'active') <> 'deleted') AS favorited
                FROM authors au
                LEFT JOIN artworks a ON a.author_id = au.id
+                 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'
                WHERE (?1 IS NULL OR au.name LIKE ?1 ESCAPE '\\')
                GROUP BY au.id
                HAVING COUNT(a.id) > 0
@@ -138,6 +147,7 @@ pub fn list_tags_with(
                    JOIN artwork_tags at ON at.tag_id = t.id
                    JOIN artworks w ON w.id = at.artwork_id
                    WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
+                     AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
                    GROUP BY t.id
                    HAVING COUNT(at.artwork_id) > 0
                    ORDER BY usage DESC, t.name
@@ -148,6 +158,7 @@ pub fn list_tags_with(
                     FROM artwork_tags at2
                     JOIN artworks w ON w.id = at2.artwork_id
                    WHERE at2.tag_id = r.id
+                     AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
                    ORDER BY RANDOM() LIMIT 1) AS cover_pixiv_id
                FROM ranked r
                ORDER BY r.usage DESC, r.name";

@@ -78,8 +78,12 @@ pub fn build_filter(query: &ListQuery) -> Filter {
         _ => {}
     }
 
+    // deleted 同时代表「已删除」和 Pixiv 上 visible=false 的非公开作品：
+    // 默认隐藏，只有勾了「已删除」筛选才显示。
     if query.deleted_only.unwrap_or(false) {
         clauses.push("a.pixiv_status = 'deleted'".to_string());
+    } else {
+        clauses.push("COALESCE(a.pixiv_status, 'active') <> 'deleted'".to_string());
     }
     if let Some(author_id) = query.author_id {
         clauses.push("a.author_id = ?".to_string());
@@ -216,7 +220,10 @@ mod tests {
     #[test]
     fn all_filters_off_still_excludes_local_files() {
         let filter = build_filter(&ListQuery::default());
-        assert_eq!(filter.where_sql, "a.pixiv_id > 0");
+        assert_eq!(
+            filter.where_sql,
+            "a.pixiv_id > 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'"
+        );
         assert!(filter.params.is_empty());
     }
 
@@ -226,7 +233,10 @@ mod tests {
             scope: Some("local".to_string()),
             ..Default::default()
         });
-        assert_eq!(filter.where_sql, "a.pixiv_id < 0");
+        assert_eq!(
+            filter.where_sql,
+            "a.pixiv_id < 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'"
+        );
     }
 
     #[test]

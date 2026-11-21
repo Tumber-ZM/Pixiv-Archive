@@ -140,7 +140,9 @@ export function ViewerInfo({
           {detail.ai_type === 2 && <span className="badge badge-ai">AI</span>}
           {detail.is_gif && <span className="badge badge-gif">GIF</span>}
           {detail.pixiv_status === "deleted" && (
-            <span className="badge badge-deleted">已删除</span>
+            <span className="badge badge-deleted" title="Pixiv 上已删除或非公开">
+              已隐藏
+            </span>
           )}
         </div>
 
@@ -217,7 +219,7 @@ export function ViewerInfo({
             <MetaRow label="发布" value={formatDate(detail.create_date)} />
             <MetaRow
               label="状态"
-              value={detail.pixiv_status === "deleted" ? "已删除" : "活跃"}
+              value={detail.pixiv_status === "deleted" ? "已隐藏（删除或非公开）" : "活跃"}
             />
             <MetaRow label="首次扫描" value={formatDate(detail.first_seen)} />
             <MetaRow label="最后同步" value={formatDate(detail.last_synced)} />

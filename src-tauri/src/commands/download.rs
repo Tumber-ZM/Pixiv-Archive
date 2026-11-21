@@ -587,6 +587,19 @@ pub async fn fetch_and_import(
     data: &IllustData,
     origin: &str,
 ) -> AppResult<usize> {
+    // Pixiv 对已删除/非公开作品返回 visible=false，图片地址是 limit_unknown 占位图。
+    // 这种作品不下载、不入库；已经在库里的标记为隐藏（deleted），列表默认不显示。
+    if !data.visible {
+        conn.execute(
+            "UPDATE artworks SET
+                pixiv_status = 'deleted', last_synced = datetime('now'),
+                sync_error = NULL, sync_error_kind = NULL, next_retry_at = NULL
+             WHERE pixiv_id = ?1",
+            [data.pixiv_id],
+        )?;
+        return Ok(0);
+    }
+
     let files = download_illust(client, data, source_root).await?;
     // 和远端页数核对：缺页时不入库，队列保留重试（已下载的页留在磁盘上）
     let expected = data.page_count.max(1) as usize;
@@ -682,6 +695,7 @@ mod tests {
             author_avatar: None,
             create_date: None,
             page_count: 2,
+            visible: true,
             width: None,
             height: None,
             ai_type: 1,
