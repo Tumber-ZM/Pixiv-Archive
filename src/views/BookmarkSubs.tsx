@@ -1,0 +1,300 @@
+import { useEffect, useState } from "react";
+import { Bookmark, Plus } from "lucide-react";
+
+import { Dialog } from "../components/dialog/Dialog";
+import { EmptyState } from "../components/common/EmptyState";
+import { CMD, call, isAppError } from "../lib/ipc";
+import type { BookmarkSub, SubPreview, SubResult } from "../types/ipc";
+
+function formatTime(raw: string | null): string {
+  if (!raw) return "从未检查";
+  return raw.replace("T", " ").slice(0, 16);
+}
+
+/** 自动下载开关（`06-界面规格.md` §7） */
+function Switch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={onToggle}
+      className="inline-flex items-center gap-2"
+      style={{ color: on ? "var(--color-accent)" : "var(--color-text-3)" }}
+    >
+      <span
+        className="inline-block h-3 w-3 rounded-full border"
+        style={{
+          borderColor: "currentColor",
+          background: on ? "currentColor" : "transparent",
+        }}
+      />
+      <span className="text-micro">自动下载</span>
+    </button>
+  );
+}
+
+export function BookmarkSubs() {
+  const [rows, setRows] = useState<BookmarkSub[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [userId, setUserId] = useState("");
+  const [preview, setPreview] = useState<SubPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<BookmarkSub | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState<number | null>(null);
+  const [checkResult, setCheckResult] = useState<SubResult | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    call<BookmarkSub[]>(CMD.listBookmarkSubs)
+      .then((data) => {
+        if (cancelled) return;
+        setRows(data);
+        setError(null);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(isAppError(reason) ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  const doPreview = async () => {
+    const id = Number(userId.trim());
+    if (!Number.isInteger(id) || id <= 0) {
+      setPreviewError("请输入正的 Pixiv 用户 ID");
+      setPreview(null);
+      return;
+    }
+    setPreviewError(null);
+    try {
+      // T08 之前后端返回本地占位（用户名未知、收藏数未知）
+      const data = await call<SubPreview>(CMD.previewBookmarkSub, { pixivUserId: id });
+      setPreview(data);
+    } catch (reason: unknown) {
+      setPreview(null);
+      setPreviewError(isAppError(reason) ? reason.message : String(reason));
+    }
+  };
+
+  const subscribe = async () => {
+    const id = Number(userId.trim());
+    setBusy(true);
+    try {
+      await call<BookmarkSub>(CMD.addBookmarkSub, { pixivUserId: id, checkNow: false });
+      setAddOpen(false);
+      setUserId("");
+      setPreview(null);
+      setRefreshKey((key) => key + 1);
+    } catch (reason: unknown) {
+      setPreviewError(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleAuto = async (row: BookmarkSub) => {
+    try {
+      await call<BookmarkSub>(CMD.toggleBookmarkSubAuto, { pixivUserId: row.pixiv_user_id });
+      setRefreshKey((key) => key + 1);
+    } catch (reason: unknown) {
+      setError(isAppError(reason) ? reason.message : String(reason));
+    }
+  };
+
+  const unsubscribe = async () => {
+    if (!removeTarget) return;
+    setBusy(true);
+    try {
+      await call<boolean>(CMD.removeBookmarkSub, { pixivUserId: removeTarget.pixiv_user_id });
+      setRemoveTarget(null);
+      setRefreshKey((key) => key + 1);
+    } catch (reason: unknown) {
+      setError(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 检查单个订阅：拉公开收藏 → 下载新作品 → 入库/缩略图/元数据（后端一条龙）
+  const checkOne = async (row: BookmarkSub) => {
+    setChecking(row.pixiv_user_id);
+    setCheckError(null);
+    try {
+      const result = await call<SubResult>(CMD.checkBookmarkSub, {
+        pixivUserId: row.pixiv_user_id,
+        full: false,
+      });
+      setCheckResult(result);
+      setRefreshKey((key) => key + 1);
+    } catch (reason: unknown) {
+      setCheckError(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setChecking(null);
+    }
+  };
+
+  return (
+    <div className="px-6 py-4">
+      <div className="mb-4 flex h-10 items-center">
+        <span className="text-body text-text">订阅列表</span>
+        <button
+          type="button"
+          className="btn ml-auto inline-flex items-center gap-2"
+          onClick={() => setAddOpen(true)}
+        >
+          <Plus size={14} />
+          订阅收藏
+        </button>
+      </div>
+
+      {error ? (
+        <EmptyState title="加载失败" hint={error} />
+      ) : loading ? (
+        <p className="py-8 text-center text-micro text-text-2">加载中…</p>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Bookmark}
+          title="还没有订阅"
+          hint="订阅他人的公开收藏后，新作品会自动下载归档"
+        />
+      ) : (
+        <div className="flex flex-col">
+          {rows.map((row) => (
+            <div
+              key={row.pixiv_user_id}
+              className="flex h-[88px] items-center gap-4 border-b border-line"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate-1 text-body text-text">
+                  {row.name ?? `未知用户 ${row.pixiv_user_id}`}
+                </p>
+                <p className="mt-1 text-micro text-text-2">
+                  上次检查：{formatTime(row.last_checked)}
+                  {row.last_result ? ` · ${row.last_result}` : ""}
+                </p>
+              </div>
+
+              <Switch on={row.auto_download} onToggle={() => toggleAuto(row)} />
+
+              <button
+                type="button"
+                className="btn"
+                disabled={checking !== null}
+                title="检查该用户的公开收藏并下载新作品"
+                onClick={() => checkOne(row)}
+              >
+                {checking === row.pixiv_user_id ? "检查中…" : "检查"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => setRemoveTarget(row)}
+              >
+                退订
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog
+        open={addOpen}
+        title="订阅收藏"
+        confirmLabel="订阅"
+        busy={busy || !preview}
+        onCancel={() => {
+          setAddOpen(false);
+          setUserId("");
+          setPreview(null);
+          setPreviewError(null);
+        }}
+        onConfirm={subscribe}
+      >
+        <div className="flex items-end gap-2">
+          <input
+            className="line-input"
+            placeholder="对方 Pixiv 用户 ID"
+            value={userId}
+            onChange={(event) => {
+              setUserId(event.currentTarget.value);
+              setPreview(null);
+              setPreviewError(null);
+            }}
+            autoFocus
+          />
+          <button type="button" className="btn shrink-0" onClick={doPreview}>
+            查询
+          </button>
+        </div>
+
+        {preview && (
+          <p className="mt-3 text-micro text-text-2">
+            @{preview.name} ·
+            收藏 {preview.total_bookmarks ?? "未知"} 件
+          </p>
+        )}
+        {previewError && <p className="mt-2 text-micro text-danger">{previewError}</p>}
+        {!preview && !previewError && (
+          <p className="mt-2 text-micro text-text-3">先查询确认用户，再订阅。</p>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={removeTarget !== null}
+        title="退订"
+        danger
+        busy={busy}
+        confirmLabel="退订"
+        onCancel={() => setRemoveTarget(null)}
+        onConfirm={unsubscribe}
+      >
+        <p>
+          将取消对「{removeTarget?.name ?? removeTarget?.pixiv_user_id}」的订阅。
+          已下载的作品会保留。
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={checkResult !== null}
+        title="检查完成"
+        confirmLabel="知道了"
+        onCancel={() => setCheckResult(null)}
+        onConfirm={() => setCheckResult(null)}
+      >
+        <p className="text-body text-text">
+          {checkResult?.name || `用户 ${checkResult?.pixiv_user_id ?? ""}`}
+        </p>
+        <p className="mt-2 text-micro text-text-2">
+          新增 {checkResult?.new_found ?? 0} · 下载 {checkResult?.downloaded ?? 0} · 失败{" "}
+          {checkResult?.failed ?? 0} · 翻页 {checkResult?.pages_scanned ?? 0}
+          {checkResult?.caught_up ? " · 已追平" : ""}
+        </p>
+        {checkResult?.error && (
+          <p className="mt-2 text-micro text-danger">{checkResult.error}</p>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={checkError !== null}
+        title="检查失败"
+        confirmLabel="知道了"
+        onCancel={() => setCheckError(null)}
+        onConfirm={() => setCheckError(null)}
+      >
+        <p className="text-micro text-danger">{checkError}</p>
+      </Dialog>
+    </div>
+  );
+}

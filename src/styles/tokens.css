@@ -1,0 +1,169 @@
+/* ==========================================================================
+   Pixiv Archive Desktop — 设计令牌（唯一真源）
+   --------------------------------------------------------------------------
+   风格：日系清新风（Japanese Fresh）+ 白盒美术馆网格 + Notion 密度
+   规则：字重只有 200/300（角标 400）；边框只有 1px 30%；
+        没有阴影；过渡 500ms（数据刷新除外）。
+
+   ⚠️ 所有颜色、字号、间距只在本文件定义。
+      组件里禁止出现颜色字面量、禁止粗体字重、禁止投影效果。
+   ========================================================================== */
+
+:root {
+  /* ── 颜色：浅色（默认） ────────────────────────────────── */
+  --color-paper: #fafaf8;
+  --color-surface: #ffffff;
+  --color-surface-2: #f4f4ef;
+  --color-surface-3: #ecebe5;
+
+  --color-text: #4a4a46;
+  --color-text-2: #8a8a83;
+  --color-text-3: #b0b0a8;
+
+  --color-line: rgba(212, 212, 207, 0.30);
+  --color-line-hover: rgba(212, 212, 207, 0.60);
+
+  --color-accent: #64b5f6;
+  --color-accent-soft: rgba(100, 181, 246, 0.12);
+
+  --color-mint: #98d8c8;
+  --color-mint-soft: rgba(152, 216, 200, 0.18);
+  --color-sakura: #ffb7c5;
+  --color-mist: #b8d4e3;
+
+  /* design.md 未定义，图库必需的四色（全部降饱和） */
+  --color-danger: #c96a6a;
+  --color-danger-soft: rgba(201, 106, 106, 0.12);
+  --color-warn: #c9a227;
+  --color-ai: #9b8ac4;
+  --color-ai-soft: rgba(155, 138, 196, 0.12);
+
+  --color-overlay: rgba(74, 74, 70, 0.18);
+
+  /* 图片覆盖层：与主题无关。白字必须压在暗底上才可读，
+     所以这两个值不随浅色/深色切换。 */
+  --color-scrim: rgba(10, 10, 9, 0.78);
+  --color-on-scrim: #ffffff;
+  /* 覆盖层上的描边（与遮罩配套，不随主题） */
+  --color-scrim-line: rgba(255, 255, 255, 0.28);
+
+  /* ── 字体 ──────────────────────────────────────────────── */
+  --font-sans: "Inter", "Hiragino Sans", "PingFang SC", "Microsoft YaHei",
+    system-ui, -apple-system, sans-serif;
+
+  /* ── 字号 / 字重 / 行高 / 字距 ─────────────────────────── */
+  --text-display: 32px;      --fw-display: 200;   --lh-display: 1.3;  --ls-display: 0.02em;
+  --text-heading: 26px;      --fw-heading: 300;   --lh-heading: 1.4;  --ls-heading: 0;
+  --text-subheading: 20px;   --fw-subheading: 300;--lh-subheading: 1.5; --ls-subheading: 0;
+  --text-body-lg: 16px;      --fw-body-lg: 300;   --lh-body-lg: 1.9;  --ls-body-lg: 0;
+  --text-body: 14px;         --fw-body: 300;      --lh-body: 1.9;     --ls-body: 0;
+  --text-label: 12px;        --fw-label: 300;     --lh-label: 1.6;    --ls-label: 0.1em;
+  --text-micro: 11px;        --fw-micro: 300;     --lh-micro: 1.5;    --ls-micro: 0.05em;
+  --text-badge: 10px;        --fw-badge: 400;     --lh-badge: 1.2;    --ls-badge: 0.04em;
+
+  /* ── 间距（8 的倍数 + 4px 半档） ───────────────────────── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+  --s-10: 128px;
+  --s-11: 160px;
+
+  /* ── 圆角 ──────────────────────────────────────────────── */
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-input: 8px;
+  --radius-thumb: 6px;
+  --radius-badge: 4px;
+  --radius-full: 999px;
+
+  /* ── 布局尺寸 ──────────────────────────────────────────── */
+  --sidebar-w: 224px;
+  --sidebar-w-collapsed: 60px;
+  --topbar-h: 64px;
+  --viewer-info-w: 320px;
+  --content-max: 960px;
+  --grid-gap: 16px;
+  --grid-min: 200px;
+
+  /* ── 动效 ──────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+  --dur-hover: 500ms;
+  --dur-overlay: 400ms;
+  --dur-progress: 200ms;
+  --dur-instant: 0ms;
+
+  color-scheme: light;
+}
+
+/* ── 颜色：深色「墨纸」（不用纯黑，不加重阴影） ──────────── */
+[data-theme="dark"] {
+  --color-paper: #1b1b19;
+  --color-surface: #232321;
+  --color-surface-2: #2b2b29;
+  --color-surface-3: #34342f;
+
+  --color-text: #e6e4df;
+  --color-text-2: #a8a59e;
+  --color-text-3: #7a7873;
+
+  --color-line: rgba(212, 212, 207, 0.12);
+  --color-line-hover: rgba(212, 212, 207, 0.24);
+
+  --color-accent: #8ecdf8;
+  --color-accent-soft: rgba(142, 205, 248, 0.14);
+
+  --color-mint: #7fc4b2;
+  --color-mint-soft: rgba(127, 196, 178, 0.16);
+  --color-sakura: #e8a0ae;
+  --color-mist: #9dbfd0;
+
+  --color-danger: #d98a8a;
+  --color-danger-soft: rgba(217, 138, 138, 0.14);
+  --color-warn: #d4b545;
+  --color-ai: #a89ad0;
+  --color-ai-soft: rgba(168, 154, 208, 0.16);
+
+  --color-overlay: rgba(10, 10, 9, 0.55);
+
+  /* 深底细字易发散：正文不用 200 */
+  --fw-display: 300;
+  --fw-heading: 300;
+
+  color-scheme: dark;
+}
+
+/* ── 查看器专用变量 ────────────────────────────────────────
+   跟随全局主题：浅色用纸白，深色用比画布更暗的墨黑（#141413），
+   让图片在深色下四周更沉。 */
+.pa-viewer,
+[data-viewer] {
+  --viewer-bg: var(--color-paper);
+  --viewer-panel: var(--color-surface);
+  --viewer-text: var(--color-text);
+  --viewer-text-2: var(--color-text-2);
+  --viewer-line: var(--color-line);
+}
+
+[data-theme="dark"] .pa-viewer,
+[data-theme="dark"] [data-viewer] {
+  --viewer-bg: #141413;
+  --viewer-panel: #1b1b19;
+  --viewer-text: #e6e4df;
+  --viewer-text-2: #a8a59e;
+  --viewer-line: rgba(212, 212, 207, 0.12);
+}
+
+/* ── 减少动效偏好 ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-hover: 0ms;
+    --dur-overlay: 0ms;
+    --dur-progress: 0ms;
+  }
+}

@@ -1,0 +1,321 @@
+use std::collections::HashSet;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use rusqlite::Connection;
+use tauri::{AppHandle, Emitter, State};
+
+use super::download;
+use super::task::TaskCancel;
+use crate::db;
+use crate::error::{AppError, AppResult};
+use crate::net::pixiv::{BookmarkIllust, PixivClient};
+use crate::platform::paths;
+
+pub const SUB_PROGRESS_EVENT: &str = "sub-progress";
+const MAX_PAGES: usize = 100;
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct SubResult {
+    pub pixiv_user_id: i64,
+    pub name: String,
+    /// 收藏列表里发现、库里还没有的作品数
+    pub new_found: usize,
+    pub downloaded: usize,
+    pub failed: usize,
+    pub pages_scanned: usize,
+    /// 快速模式下「整页都已入库」提前停止
+    pub caught_up: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SubProgress {
+    pub current: usize,
+    pub total: usize,
+    pub message: String,
+}
+
+fn open_library() -> AppResult<Connection> {
+    let path = paths::db_path()?;
+    let data_dir = paths::data_dir()?;
+    std::fs::create_dir_all(&data_dir)?;
+    if !path.is_file() {
+        db::init(&path)?;
+        return db::open(&path);
+    }
+    db::open(&path)
+}
+
+fn known_pixiv_ids(conn: &Connection) -> AppResult<HashSet<i64>> {
+    let mut stmt = conn.prepare("SELECT pixiv_id FROM artworks WHERE pixiv_id > 0")?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let mut known = HashSet::new();
+    for row in rows {
+        known.insert(row?);
+    }
+    Ok(known)
+}
+
+fn emit(app: &AppHandle, current: usize, total: usize, message: &str) {
+    let _ = app.emit(
+        SUB_PROGRESS_EVENT,
+        &SubProgress {
+            current,
+            total,
+            message: message.to_string(),
+        },
+    );
+}
+
+/// 检查单个收藏订阅（`full` = 翻遍全部收藏页）。
+#[tauri::command]
+pub async fn check_bookmark_sub(
+    app: AppHandle,
+    state: State<'_, TaskCancel>,
+    pixiv_user_id: i64,
+    full: Option<bool>,
+) -> AppResult<SubResult> {
+    let Some(cancel) = state.begin("download") else {
+        return Err(AppError::invalid("已有任务在运行"));
+    };
+    let outcome = run_checks(&app, vec![pixiv_user_id], full.unwrap_or(false), &cancel).await;
+    state.end("download");
+    let mut results = outcome?;
+    results
+        .pop()
+        .ok_or_else(|| AppError::internal("检查没有返回结果"))
+}
+
+/// 「订阅更新」：检查所有 `auto_download = 1` 的订阅。
+#[tauri::command]
+pub async fn check_all_bookmark_subs(
+    app: AppHandle,
+    state: State<'_, TaskCancel>,
+    full: Option<bool>,
+) -> AppResult<Vec<SubResult>> {
+    let ids: Vec<i64> = {
+        let conn = open_library()?;
+        let mut stmt = conn.prepare(
+            "SELECT pixiv_user_id FROM bookmark_subs WHERE auto_download = 1 \
+             ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        rows.filter_map(Result::ok).collect()
+    };
+
+    if ids.is_empty() {
+        return Err(AppError::invalid(
+            "还没有启用中的收藏订阅，先在「收藏订阅」里添加并开启自动下载",
+        ));
+    }
+
+    let Some(cancel) = state.begin("download") else {
+        return Err(AppError::invalid("已有任务在运行"));
+    };
+    let outcome = run_checks(&app, ids, full.unwrap_or(false), &cancel).await;
+    state.end("download");
+    outcome
+}
+
+async fn run_checks(
+    app: &AppHandle,
+    user_ids: Vec<i64>,
+    full: bool,
+    cancel: &Arc<AtomicBool>,
+) -> AppResult<Vec<SubResult>> {
+    let client = PixivClient::from_settings()?;
+    let source_root = crate::commands::settings::image_source_dir()?
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| AppError::invalid("还没有设置图片目录（设置 → 基础）"))?;
+    let data_dir = paths::data_dir()?;
+
+    let mut conn = open_library()?;
+    let mut known = known_pixiv_ids(&conn)?;
+    let total = user_ids.len();
+    let mut results = Vec::with_capacity(total);
+
+    for (index, user_id) in user_ids.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let mut result = SubResult {
+            pixiv_user_id: *user_id,
+            ..Default::default()
+        };
+        result.name = conn
+            .query_row(
+                "SELECT COALESCE(name, '') FROM bookmark_subs WHERE pixiv_user_id = ?1",
+                [user_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        emit(app, index, total, &format!("检查订阅 {}/{}", index + 1, total));
+
+        let outcome = check_one(
+            &client,
+            &mut conn,
+            &mut known,
+            &data_dir,
+            &source_root,
+            user_id,
+            full,
+            app,
+            index,
+            total,
+            cancel,
+            &mut result,
+        )
+        .await;
+
+        let auth_failed = matches!(&outcome, Err(error) if error.code == "AUTH");
+        if let Err(error) = outcome {
+            result.error = Some(error.message);
+        }
+
+        let summary = format!(
+            "新增 {} · 下载 {} · 失败 {}",
+            result.new_found, result.downloaded, result.failed
+        );
+        let _ = conn.execute(
+            "UPDATE bookmark_subs SET last_checked = datetime('now'), last_result = ?1 \
+             WHERE pixiv_user_id = ?2",
+            rusqlite::params![summary, user_id],
+        );
+
+        results.push(result);
+        if auth_failed {
+            break;
+        }
+    }
+
+    emit(app, total, total, "订阅检查完成");
+    Ok(results)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn check_one(
+    client: &PixivClient,
+    conn: &mut Connection,
+    known: &mut HashSet<i64>,
+    data_dir: &Path,
+    source_root: &Path,
+    user_id: &i64,
+    full: bool,
+    app: &AppHandle,
+    index: usize,
+    total: usize,
+    cancel: &Arc<AtomicBool>,
+    result: &mut SubResult,
+) -> AppResult<()> {
+    // 1. 翻收藏列表，收集库里没有的
+    let mut next_url: Option<String> = None;
+    let mut collected: Vec<BookmarkIllust> = Vec::new();
+    let mut pages = 0usize;
+
+    while pages < MAX_PAGES {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let (illusts, next) = client.user_bookmarks_public(*user_id, next_url.as_deref()).await?;
+        pages += 1;
+        if illusts.is_empty() {
+            break;
+        }
+
+        let mut page_all_known = true;
+        for item in &illusts {
+            if known.contains(&item.pixiv_id) {
+                continue;
+            }
+            page_all_known = false;
+            known.insert(item.pixiv_id);
+            collected.push(item.clone());
+        }
+
+        let Some(next) = next else {
+            break;
+        };
+        // 快速模式：整页都已入库 → 已追平（收藏按时间倒序，新收藏在最前）
+        if !full && page_all_known {
+            result.caught_up = true;
+            break;
+        }
+        next_url = Some(next);
+    }
+
+    result.pages_scanned = pages;
+    result.new_found = collected.len();
+    collected.sort_by_key(|item| item.pixiv_id); // 旧 → 新
+
+    // 2. 入队：本次发现的与上次失败的都在队列里，一起消费
+    for item in &collected {
+        download::enqueue(conn, item.pixiv_id)?;
+    }
+
+    let queued = download::pending_queue(conn, download::QUEUE_BATCH)?;
+    let queued_total = queued.len();
+    for (idx, pixiv_id) in queued.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        emit(
+            app,
+            index,
+            total,
+            &format!(
+                "下载收藏作品 {}/{}（PID {}）",
+                idx + 1,
+                queued_total,
+                pixiv_id
+            ),
+        );
+
+        match client.illust_detail(*pixiv_id).await {
+            Ok(data) => {
+                // 头像要在入库前判断：apply_illust 会把 profile_image 更新成新地址
+                let stored_avatar: Option<String> = conn
+                    .query_row(
+                        "SELECT profile_image FROM authors WHERE pixiv_user_id = ?1",
+                        [data.author_id],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+                let _ = download::ensure_avatar(
+                    client,
+                    data_dir,
+                    data.author_id,
+                    data.author_avatar.as_deref(),
+                    stored_avatar.as_deref(),
+                )
+                .await;
+                match download::fetch_and_import(client, conn, data_dir, source_root, &data).await {
+                    Ok(_) => {
+                        download::complete_queue_item(conn, *pixiv_id)?;
+                        result.downloaded += 1;
+                    }
+                    Err(error) => {
+                        download::fail_queue_item(conn, *pixiv_id, &error.message)?;
+                        result.failed += 1;
+                        eprintln!("下载作品 {pixiv_id} 失败：{}", error.message);
+                    }
+                }
+            }
+            Err(error) if error.code == "AUTH" => return Err(error),
+            Err(error) if error.code == "NOT_FOUND" => {
+                // Pixiv 上已删除：移出队列，不再重试
+                download::complete_queue_item(conn, *pixiv_id)?;
+                result.failed += 1;
+            }
+            Err(error) => {
+                download::fail_queue_item(conn, *pixiv_id, &error.message)?;
+                result.failed += 1;
+            }
+        }
+    }
+
+    Ok(())
+}

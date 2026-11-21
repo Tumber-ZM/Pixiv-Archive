@@ -1,0 +1,54 @@
+[package]
+name = "pixiv-archive-desktop"
+version = "2.0.0"
+description = "Pixiv local archive browser"
+authors = ["you"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "pixiv_archive_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "default-tls"] }
+tokio = { version = "1", features = ["time", "fs", "sync"] }
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+walkdir = "2"
+sha2 = "0.10"
+md-5 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+gif = "0.13"
+# 只开启实际会遇到的图片格式，避免把整棵 codec 树都编译进来（编译时间会翻倍）
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+
+
+# 本机 MSVC 14.44 编译 bundled SQLite 时，cl.exe 带 `-Z7` 会报
+# D8050（cannot execute 'c1.dll': failed to get command line into debug records）。
+# 关闭 C 侧调试信息即可绕过；Rust 侧符号仍然保留，调试不受影响。
+[profile.dev]
+debug = false
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

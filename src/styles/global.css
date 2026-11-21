@@ -1,0 +1,740 @@
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── 字体：Inter 200/300 随包分发，Windows 的雅黑没有 200 字重 ── */
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/Inter-200.woff2") format("woff2");
+  font-weight: 200;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/Inter-300.woff2") format("woff2");
+  font-weight: 300;
+  font-display: swap;
+}
+
+/* ── reset ─────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  font-weight: var(--fw-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  background: none;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
+
+/* ── 基础类（`05-设计系统.md` §7）─────────────────────────
+   规则：字重只有 200/300（角标 400）、边框只有 1px 30%、
+   没有阴影、过渡 500ms。数据刷新不加过渡。 */
+
+/* 主按钮：无填充，只有 1px 边框 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 20px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-btn);
+  color: var(--color-text);
+  font-size: var(--text-body);
+  font-weight: var(--fw-body);
+  line-height: var(--lh-body);
+  background: transparent;
+  transition: border-color var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+
+.btn:hover {
+  border-color: var(--color-line-hover);
+}
+
+.btn:disabled {
+  color: var(--color-text-3);
+  border-color: var(--color-line);
+  cursor: default;
+}
+
+.btn-danger {
+  color: var(--color-danger);
+  border-color: var(--color-danger-soft);
+}
+
+.btn-danger:hover {
+  border-color: var(--color-danger);
+}
+
+/* 唯一允许的实心按钮：批量操作条里的「删除」，破坏性且需要显眼 */
+.btn-danger-solid {
+  color: var(--color-danger);
+  border-color: var(--color-danger-soft);
+  background: var(--color-danger-soft);
+}
+
+.btn-danger-solid:hover {
+  border-color: var(--color-danger);
+}
+
+/* 图标按钮 32×32 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-btn);
+  color: var(--color-text-2);
+  background: transparent;
+  transition: background var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+
+.icon-btn:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+/* 底线输入：只有下边框，聚焦只变颜色不加外环 */
+.line-input {
+  width: 100%;
+  padding: 6px 2px;
+  border: none;
+  border-bottom: 1px solid var(--color-line);
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-body);
+  font-weight: var(--fw-body);
+  color: var(--color-text);
+  transition: border-color var(--dur-hover) var(--ease);
+}
+
+.line-input::placeholder {
+  color: var(--color-text-3);
+}
+
+.line-input:focus {
+  outline: none;
+  border-bottom-color: var(--color-accent);
+}
+
+/* 静默链接：文字 + 下方 1px 线 */
+.quiet-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--color-line);
+  color: var(--color-text-2);
+  font-size: var(--text-label);
+  font-weight: var(--fw-label);
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease);
+}
+
+.quiet-link:hover {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* 侧栏项：激活态用左侧 2px 竖线，不填充背景 */
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-btn);
+  color: var(--color-text-2);
+  font-size: var(--text-body);
+  font-weight: var(--fw-body);
+  background: transparent;
+  transition: background var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+
+.nav-item:hover {
+  background: var(--color-surface-2);
+}
+
+.nav-item[data-active="true"] {
+  color: var(--color-text);
+}
+
+.nav-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 18px;
+  margin-top: -9px;
+  background: var(--color-accent);
+}
+
+/* 三态筛选按钮 */
+.tri-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-btn);
+  color: var(--color-text-2);
+  font-size: var(--text-label);
+  font-weight: var(--fw-label);
+  background: transparent;
+  white-space: nowrap;
+  transition: border-color var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+
+.tri-btn:hover {
+  border-color: var(--color-line-hover);
+}
+
+.tri-btn[data-active="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent-soft);
+}
+
+/* 角标：全系统唯一允许 400 字重的地方 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  border-radius: var(--radius-badge);
+  font-size: var(--text-badge);
+  font-weight: var(--fw-badge);
+  line-height: var(--lh-badge);
+  letter-spacing: var(--ls-badge);
+}
+
+/* 角标用整块实色 + 高对比文字：半透明底压在任意缩略图上都会糊，
+   实色角标在任何图上都能一眼看见 */
+.badge-r18 {
+  color: var(--color-on-scrim);
+  background: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.badge-ai {
+  color: var(--color-on-scrim);
+  background: var(--color-ai);
+  border: 1px solid var(--color-ai);
+}
+
+.badge-gif {
+  color: var(--color-scrim);
+  background: var(--color-mint);
+  border: 1px solid var(--color-mint);
+}
+
+.badge-deleted {
+  color: var(--color-on-scrim);
+  background: var(--color-text-2);
+  border: 1px solid var(--color-text-2);
+}
+
+/* 本地文件：文件名里没有 Pixiv 作品 ID，只在「本地作品」视图出现 */
+.badge-local {
+  color: var(--color-scrim);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
+/* 分组小标题 */
+.group-label {
+  padding: 0 14px;
+  color: var(--color-text-3);
+  font-size: var(--text-micro);
+  font-weight: var(--fw-micro);
+  line-height: var(--lh-micro);
+  letter-spacing: var(--ls-micro);
+}
+
+/* ── 画廊网格（`05-设计系统.md` §5）───────────────────────
+   1440×900 视口下（侧栏 224 + 内容 ~1216）应落在 5–6 列。 */
+.grid-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--grid-gap);
+}
+
+@media (max-width: 1280px) {
+  .grid-wall {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .grid-wall {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  }
+}
+
+/* 卡片 hover 只描边，不位移不缩放 */
+.wall-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  outline: 1px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-hover) var(--ease);
+  /* 视口外的卡片跳过布局与绘制，否则一页 60 张滚动时会掉帧、
+     并在快速滚动时出现断层空白 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 268px;
+}
+
+.wall-card:hover {
+  outline-color: var(--color-line-hover);
+}
+
+.wall-card[data-selected="true"] {
+  outline-color: var(--color-accent);
+}
+
+/* 单行截断 */
+.truncate-1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 瀑布流布局（延续旧项目 .wall / .tile）─────────────────
+   分列由 JS 完成（WallGrid），这里只负责卡片本身：
+   图片按原始比例铺满，列宽由父容器 flex 平均分配。 */
+.wall-tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  break-inside: avoid;
+  cursor: pointer;
+  border-radius: var(--radius-thumb);
+  overflow: hidden;
+  background: var(--color-surface-2);
+  outline: 1px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-hover) var(--ease);
+  /* 瀑布流列布局下手写虚拟滚动会错位，用浏览器原生窗口化：
+     auto 记住上次渲染高度，避免滚动条跳动 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+
+.wall-tile:hover {
+  outline-color: var(--color-line-hover);
+}
+
+.wall-tile[data-selected="true"] {
+  outline-color: var(--color-accent);
+}
+
+.wall-tile img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.wall-tile-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  color: var(--color-text-3);
+  font-size: var(--text-micro);
+}
+
+/* 标题：默认隐藏，指针悬停才浮出（旧项目 .tile-title 的行为） */
+.wall-tile-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 28px 10px 8px;
+  font-size: var(--text-label);
+  font-weight: var(--fw-label);
+  color: var(--color-on-scrim);
+  background: linear-gradient(transparent, var(--color-scrim));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-hover) var(--ease);
+}
+
+.wall-tile:hover .wall-tile-title,
+.wall-tile:focus-visible .wall-tile-title {
+  opacity: 1;
+}
+
+/* ── 卡片复选框 ──────────────────────────────────────────
+   右上角浮层里的一个 flex 子项（与收藏/删除按钮同一排），
+   默认隐藏、悬停出现；选中时常显并变强调色。 */
+.wall-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-scrim-line);
+  border-radius: var(--radius-badge);
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  opacity: 0;
+  transition: opacity var(--dur-hover) var(--ease),
+    background var(--dur-hover) var(--ease),
+    border-color var(--dur-hover) var(--ease);
+}
+
+.wall-card:hover .wall-check,
+.wall-tile:hover .wall-check,
+.wall-card:focus-within .wall-check,
+.wall-tile:focus-visible .wall-check,
+.wall-check[data-checked="true"] {
+  opacity: 1;
+}
+
+.wall-check[data-checked="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* 卡片快捷按钮：悬停与复选框一起出现，位于其左侧 */
+.wall-actions {
+  opacity: 0;
+  transition: opacity var(--dur-hover) var(--ease);
+}
+
+.wall-card:hover .wall-actions,
+.wall-tile:hover .wall-actions,
+.wall-card:focus-within .wall-actions,
+.wall-tile:focus-visible .wall-actions {
+  opacity: 1;
+}
+
+.wall-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-scrim-line);
+  border-radius: var(--radius-badge);
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  transition: background var(--dur-hover) var(--ease),
+    border-color var(--dur-hover) var(--ease);
+}
+
+.wall-action:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.wall-action-danger:hover {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* ── 标签画廊（参考图二）─────────────────────────────────
+   每格是一张该标签下的随机作品，标签名压在图片底部。 */
+.tag-tile {
+  position: relative;
+  display: block;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: var(--radius-thumb);
+  background: var(--color-surface-2);
+  text-align: left;
+  outline: 1px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-hover) var(--ease);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
+}
+
+.tag-tile:hover {
+  outline-color: var(--color-line-hover);
+}
+
+.tag-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tag-tile-label {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 28px 10px 9px;
+  background: linear-gradient(transparent, var(--color-scrim));
+  color: var(--color-on-scrim);
+  font-size: var(--text-label);
+  font-weight: var(--fw-label);
+  line-height: 1.35;
+}
+
+.tag-tile-label em {
+  font-style: normal;
+  opacity: 0.72;
+  font-size: var(--text-micro);
+}
+
+.tag-tile-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-tile-count {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 5px;
+  border-radius: var(--radius-badge);
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  font-size: var(--text-micro);
+  font-weight: var(--fw-micro);
+}
+
+/* ── 作者列表卡片（参考图一）─────────────────────────────
+   顶部一条 3 张作品封面，下方是头像与作者名。 */
+.author-card {
+  display: block;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  outline: 1px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--dur-hover) var(--ease);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
+
+.author-card:hover {
+  outline-color: var(--color-line-hover);
+}
+
+/* ── 右键菜单 ────────────────────────────────────────────
+   无阴影，靠 1px 线与底色分层（05-设计系统.md 全局规则）。 */
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  padding: var(--s-1);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-btn);
+  background: var(--color-surface);
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-badge);
+  text-align: left;
+  font-size: var(--text-label);
+  font-weight: var(--fw-label);
+  line-height: var(--lh-label);
+  color: var(--color-text);
+  background: transparent;
+}
+
+.ctx-item:hover:not(:disabled) {
+  background: var(--color-surface-2);
+}
+
+.ctx-item[data-danger="true"] {
+  color: var(--color-danger);
+}
+
+.ctx-item:disabled {
+  color: var(--color-text-3);
+  cursor: default;
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: var(--s-1) 6px;
+  background: var(--color-line);
+}
+
+/* 查看器图片两侧的翻页按钮：常显半透明，悬停变实 */
+.viewer-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--color-scrim-line);
+  border-radius: var(--radius-full);
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  opacity: 0.5;
+  transition: opacity var(--dur-hover) var(--ease);
+}
+
+.viewer-nav:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.viewer-nav:disabled {
+  opacity: 0.12;
+}
+
+/* 查看器描述里的富文本：段落间距、链接下划线，字重仍守 200/300 */
+.viewer-rich {
+  font-size: var(--text-micro);
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.viewer-rich p {
+  margin: 0 0 6px;
+}
+
+.viewer-rich a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.viewer-rich strong,
+.viewer-rich b {
+  font-weight: var(--fw-label);
+}
+
+.viewer-rich em,
+.viewer-rich i {
+  font-style: italic;
+}
+
+/* 查看器左栏的标签/收藏夹按钮 */
+.viewer-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border: 1px solid var(--viewer-line);
+  border-radius: var(--radius-full);
+  color: var(--viewer-text-2);
+  font-size: var(--text-micro);
+  font-weight: var(--fw-micro);
+  background: transparent;
+  transition: color var(--dur-hover) var(--ease),
+    border-color var(--dur-hover) var(--ease);
+}
+
+.viewer-chip:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* 页数角标：与 R18/AI/GIF 同一行，用最低层级的灰 */
+.badge-page {
+  color: var(--color-text-2);
+  background: var(--color-surface-2);
+}
+
+/* 安全模式：全局模糊图片。
+   作用于所有 <img>，卡片缩略图与查看器大图一并生效；
+   lucide 图标是内联 SVG，不受影响。 */
+[data-safe-mode="true"] img {
+  filter: blur(24px);
+}
+
+/* 页码按钮：当前页 accent 文字 + 1px accent 边框 */
+.page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  color: var(--color-text-2);
+  font-size: var(--text-label);
+  font-weight: var(--fw-label);
+  background: transparent;
+  transition: border-color var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
+}
+
+.page-btn:hover:not(:disabled) {
+  border-color: var(--color-line-hover);
+}
+
+.page-btn:disabled {
+  color: var(--color-text-3);
+  cursor: default;
+}
+
+.page-btn[data-active="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
