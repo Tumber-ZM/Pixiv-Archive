@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Columns3, LayoutGrid, Search, Shuffle } from "lucid
 
 import { SORT_LABELS, TRI_LABELS, useUi, type SortKey } from "../../stores/ui";
 import { AuthorActions } from "./AuthorActions";
+import { TopbarButton } from "./TopbarButton";
 
 const SORT_KEYS = Object.keys(SORT_LABELS) as SortKey[];
 
@@ -65,26 +66,24 @@ export function Topbar() {
 
       {isLibraryView && (
         <>
-      <button
-        type="button"
-        className="tri-btn inline-flex items-center gap-1"
+      <TopbarButton
         onClick={requestShuffle}
         title="随机打乱一次；排序下拉框保持不变"
+        className="inline-flex items-center gap-1"
       >
         <Shuffle size={12} />
         随机
-      </button>
+      </TopbarButton>
 
       <div className="relative" ref={menuRef}>
-        <button
-          type="button"
-          className="tri-btn inline-flex items-center gap-1"
+        <TopbarButton
           onClick={() => setMenuOpen((open) => !open)}
-          aria-expanded={menuOpen}
+          ariaExpanded={menuOpen}
+          className="inline-flex items-center gap-1"
         >
           排序：{SORT_LABELS[sort]}
           {order === "desc" ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
-        </button>
+        </TopbarButton>
 
         {menuOpen && (
           <div className="absolute left-0 top-full z-20 mt-2 w-44 rounded-btn border border-line bg-surface p-1">
@@ -110,39 +109,22 @@ export function Topbar() {
         )}
       </div>
 
-      <button
-        type="button"
-        className="tri-btn"
-        data-active={r18 !== "all"}
-        onClick={() => cycleTri("r18")}
-      >
+      <TopbarButton active={r18 !== "all"} onClick={() => cycleTri("r18")}>
         R18：{TRI_LABELS[r18]}
-      </button>
-      <button
-        type="button"
-        className="tri-btn"
-        data-active={ai !== "all"}
-        onClick={() => cycleTri("ai")}
-      >
+      </TopbarButton>
+      <TopbarButton active={ai !== "all"} onClick={() => cycleTri("ai")}>
         AI：{TRI_LABELS[ai]}
-      </button>
-      <button
-        type="button"
-        className="tri-btn"
-        data-active={gif !== "all"}
-        onClick={() => cycleTri("gif")}
-      >
+      </TopbarButton>
+      <TopbarButton active={gif !== "all"} onClick={() => cycleTri("gif")}>
         GIF：{TRI_LABELS[gif]}
-      </button>
-      <button
-        type="button"
-        className="tri-btn"
-        data-active={deletedOnly}
+      </TopbarButton>
+      <TopbarButton
+        active={deletedOnly}
         onClick={toggleDeletedOnly}
         title="显示在 Pixiv 上已删除或设为非公开的作品"
       >
         已隐藏
-      </button>
+      </TopbarButton>
 
       <button
         type="button"

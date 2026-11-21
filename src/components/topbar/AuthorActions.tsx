@@ -3,6 +3,7 @@ import { useState } from "react";
 import { CMD, call, isAppError } from "../../lib/ipc";
 import { useUi } from "../../stores/ui";
 import type { FavoriteSyncReport } from "../../types/ipc";
+import { TopbarButton } from "./TopbarButton";
 
 /**
  * 作者列表的两个维护动作。放在顶栏搜索框后面，和原来的 .btn 按钮形式一致。
@@ -76,24 +77,20 @@ export function AuthorActions() {
 
   return (
     <>
-      <button
-        type="button"
-        className="btn shrink-0"
+      <TopbarButton
         onClick={refreshAvatars}
         disabled={refreshing}
         title="用作者 ID 从 Pixiv 重新获取并覆盖本地头像"
       >
         {refreshing ? "更新中…" : "更新作者头像"}
-      </button>
-      <button
-        type="button"
-        className="btn shrink-0"
+      </TopbarButton>
+      <TopbarButton
         onClick={syncFavorites}
         disabled={syncing}
         title="读取你 Pixiv 账号的公开 + 私密收藏，只在本机记录作品 ID，用来筛选作者"
       >
         {syncing ? "同步中…" : "同步收藏"}
-      </button>
+      </TopbarButton>
       {notice && (
         <span className="max-w-[220px] truncate text-micro text-text-3" title={notice}>
           {notice}
