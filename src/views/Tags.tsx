@@ -2,13 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Pin,
   Save,
-  Tag as TagIcon,
   X,
 } from "lucide-react";
 
-import { EmptyState } from "../components/common/EmptyState";
 import { ContextMenu, type MenuItem } from "../components/common/ContextMenu";
 import { Dialog } from "../components/dialog/Dialog";
 import { ArtworkList } from "../components/wall/ArtworkList";
@@ -18,7 +17,8 @@ import type { FavoriteSyncStatus, RemoteTag, TagCombo, TagRow } from "../types/i
 
 const SEARCH_DEBOUNCE_MS = 300;
 const TAG_ROW_HEIGHT = 36;
-const DEFAULT_ROWS = 2;
+// 本地标签初始固定 1 行，避免异步加载完成后把下面的图片区顶下去
+const DEFAULT_ROWS = 1;
 const MORE_ROWS = 4;
 
 /** 当前正在看的标签。跳转只需要名字，不必带完整 TagRow。 */
@@ -195,7 +195,10 @@ export function Tags() {
   // Pixiv 标签默认只显示一行
   useEffect(() => {
     const el = remoteBoxRef.current;
-    if (!el) return undefined;
+    if (!el) {
+      setRemoteHasOverflow(false);
+      return undefined;
+    }
     const update = () => {
       setRemoteHasOverflow(el.scrollHeight > TAG_ROW_HEIGHT + 1);
     };
@@ -203,16 +206,19 @@ export function Tags() {
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [remoteTags, remoteExpanded, remoteFor]);
+  }, [remoteTags, remoteExpanded, remoteFor, remoteLoading, remoteError]);
 
   useEffect(() => {
     setRemoteExpanded(false);
   }, [q]);
 
-  // 标签按钮云是否有被 2 行裁掉的内容
+  // 标签按钮云是否有被 1 行裁掉的内容
   useEffect(() => {
     const el = tagBoxRef.current;
-    if (!el) return undefined;
+    if (!el) {
+      setHasOverflow(false);
+      return undefined;
+    }
     const update = () => {
       setHasOverflow(
         !q.trim() && el.scrollHeight > visibleRows * TAG_ROW_HEIGHT + 1,
@@ -222,7 +228,7 @@ export function Tags() {
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [rows, visibleRows, q]);
+  }, [rows, visibleRows, q, loading, error]);
 
   const labelFor = (name: string) => {
     const row = rows.find((item) => item.name === name);
@@ -556,31 +562,80 @@ export function Tags() {
 
       {/* 标签按钮云 */}
       <div className="mt-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-micro text-text-3">标签</span>
+        <div className="flex h-7 items-center gap-2">
+          <span className="section-label">标签</span>
           <span className="text-micro text-text-3">
             {q.trim()
               ? `搜索「${q.trim()}」的本地结果 · ${rows.length} 个`
               : `按本地数量排序 · ${rows.length} 个`}
           </span>
+          {searching ? (
+            <span className="ml-auto text-micro text-text-3">全部搜索结果</span>
+          ) : (
+            (hasOverflow || visibleRows > DEFAULT_ROWS) && (
+              <button
+                type="button"
+                className="section-more ml-1"
+                onClick={() =>
+                  visibleRows > DEFAULT_ROWS
+                    ? setVisibleRows(DEFAULT_ROWS)
+                    : setVisibleRows((value) => value + MORE_ROWS)
+                }
+                title={
+                  visibleRows > DEFAULT_ROWS
+                    ? "收起本地标签"
+                    : `每次多展开 ${MORE_ROWS} 行`
+                }
+              >
+                {visibleRows > DEFAULT_ROWS ? (
+                  <>
+                    <ChevronUp size={10} />
+                    收起
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={10} />
+                    展开
+                  </>
+                )}
+              </button>
+            )
+          )}
         </div>
 
         {error ? (
-          <EmptyState title="加载失败" hint={error} />
+          <div
+            className="flex h-9 items-center overflow-hidden text-micro text-text-2"
+            title={error}
+          >
+            <span className="truncate">加载失败：{error}</span>
+          </div>
         ) : loading ? (
-          <p className="py-6 text-center text-micro text-text-2">加载中…</p>
+          <div className="flex h-9 items-center text-micro text-text-2">
+            加载中…
+          </div>
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={TagIcon}
-            title="没有找到标签"
-            hint={q.trim() ? "换个关键词，或调整筛选条件" : "先同步元数据，或调整筛选条件"}
-          />
+          <div className="flex h-9 items-center text-micro text-text-2">
+            {q.trim()
+              ? "没有找到标签，换个关键词或调整筛选条件"
+              : "还没有标签，先同步元数据"}
+          </div>
         ) : (
           <>
             <div
               ref={tagBoxRef}
-              className={`mt-2 flex flex-wrap gap-2 ${searching ? "" : "overflow-hidden"}`}
-              style={searching ? undefined : { maxHeight: visibleRows * TAG_ROW_HEIGHT }}
+              className={`flex flex-wrap content-start gap-2 ${searching ? "" : "overflow-hidden"}`}
+              style={
+                searching
+                  ? undefined
+                  : {
+                      maxHeight: visibleRows * TAG_ROW_HEIGHT,
+                      minHeight:
+                        visibleRows === DEFAULT_ROWS
+                          ? TAG_ROW_HEIGHT
+                          : undefined,
+                    }
+              }
             >
               {displayRows.map((row) => {
                 const label = row.translated_name ?? row.name;
@@ -609,90 +664,89 @@ export function Tags() {
                 );
               })}
             </div>
-            {!searching && (hasOverflow || visibleRows > DEFAULT_ROWS) && (
-              <div className="mt-2 flex items-center gap-3 text-micro">
-                {hasOverflow && (
-                  <button
-                    type="button"
-                    className="text-text-3 hover:text-text"
-                    onClick={() => setVisibleRows((value) => value + MORE_ROWS)}
-                  >
-                    展开更多（+{MORE_ROWS} 行）
-                  </button>
-                )}
-                {visibleRows > DEFAULT_ROWS && (
-                  <button
-                    type="button"
-                    className="text-text-3 hover:text-text"
-                    onClick={() => setVisibleRows(DEFAULT_ROWS)}
-                  >
-                    收起
-                  </button>
-                )}
-              </div>
-            )}
           </>
         )}
       </div>
 
-      {/* Pixiv 上的标签 */}
+      {/* Pixiv 上的标签：固定一行高度，异步返回时不会顶动下面的图片区 */}
       <div className="mt-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-micro text-text-3">Pixiv 的标签</span>
-          {remoteLoading && <span className="text-micro text-text-3">获取中…</span>}
-        </div>
-        {remoteError ? (
-          <p className="mt-2 text-micro text-text-2">
-            Pixiv 标签暂不可用：{remoteError}。本地标签不受影响。
-          </p>
-        ) : remoteLoading ? (
-          <p className="mt-2 text-micro text-text-2">
-            正在从 Pixiv 获取{q.trim() ? `「${q.trim()}」的` : "热门"}标签…
-          </p>
-        ) : remoteFor === q.trim() && remoteTags.length > 0 ? (
-          <>
-            <div
-              ref={remoteBoxRef}
-              className={`mt-2 flex flex-wrap gap-2 ${remoteExpanded ? "" : "overflow-hidden"}`}
-              style={
-                remoteExpanded ? undefined : { maxHeight: TAG_ROW_HEIGHT }
-              }
-            >
-              {remoteTags.map((tag) => {
-                const selected = selectedTags.includes(tag.name);
-                const label = tag.translated_name ?? tag.name;
-                return (
-                  <button
-                    key={tag.name}
-                    type="button"
-                    className="tag-pick"
-                    data-active={selected}
-                    data-source="pixiv"
-                    aria-pressed={selected}
-                    onClick={() => handleTagClick(tag.name)}
-                    title={`点击选中 / 取消 Pixiv 标签 #${label}`}
-                  >
-                    <span className="tag-pick-label"># {label}</span>
-                    {tag.count > 0 && (
-                      <span className="tag-pick-count">{tag.count}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            {(remoteHasOverflow || remoteExpanded) && (
+        <div className="flex h-7 items-center gap-2">
+          <span className="section-label">Pixiv 的标签</span>
+          {!remoteLoading &&
+            !remoteError &&
+            remoteTags.length > 0 &&
+            (remoteHasOverflow || remoteExpanded) && (
               <button
                 type="button"
-                className="mt-2 text-micro text-text-3 hover:text-text"
+                className="section-more ml-1"
                 onClick={() => setRemoteExpanded((value) => !value)}
+                title={remoteExpanded ? "收起 Pixiv 标签" : "展开 Pixiv 标签"}
               >
-                {remoteExpanded ? "收起" : "展开更多"}
+                {remoteExpanded ? (
+                  <>
+                    <ChevronUp size={10} />
+                    收起
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={10} />
+                    展开
+                  </>
+                )}
               </button>
             )}
-          </>
-        ) : remoteFor === q.trim() ? (
-          <p className="mt-2 text-micro text-text-2">Pixiv 上也没有找到相关标签。</p>
-        ) : null}
+        </div>
+        {remoteError ? (
+          <div
+            className="flex h-9 items-center overflow-hidden text-micro text-text-2"
+            title={remoteError}
+          >
+            <span className="truncate">无信息</span>
+          </div>
+        ) : remoteLoading || remoteFor !== q.trim() ? (
+          <div className="flex h-9 items-center text-micro text-text-2">
+            获取中…
+          </div>
+        ) : remoteTags.length === 0 ? (
+          <div className="flex h-9 items-center text-micro text-text-2">
+            无信息
+          </div>
+        ) : (
+          <div
+            ref={remoteBoxRef}
+            className={`flex flex-wrap content-start gap-2 ${remoteExpanded ? "" : "overflow-hidden"}`}
+            style={
+              remoteExpanded
+                ? undefined
+                : {
+                    maxHeight: TAG_ROW_HEIGHT,
+                    minHeight: TAG_ROW_HEIGHT,
+                  }
+            }
+          >
+            {remoteTags.map((tag) => {
+              const selected = selectedTags.includes(tag.name);
+              const label = tag.translated_name ?? tag.name;
+              return (
+                <button
+                  key={tag.name}
+                  type="button"
+                  className="tag-pick"
+                  data-active={selected}
+                  data-source="pixiv"
+                  aria-pressed={selected}
+                  onClick={() => handleTagClick(tag.name)}
+                  title={`点击选中 / 取消 Pixiv 标签 #${label}`}
+                >
+                  <span className="tag-pick-label"># {label}</span>
+                  {tag.count > 0 && (
+                    <span className="tag-pick-count">{tag.count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 图片区：勾选标签时按组合过滤；没勾选时看「默认状态」开关 */}

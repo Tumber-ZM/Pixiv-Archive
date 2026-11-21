@@ -577,6 +577,46 @@ a {
 
 /* ── 标签选择 / 组合 ───────────────────────────────────── */
 
+/* 分区标题：比正文更亮，并带一条 accent 竖线 */
+.section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: var(--text-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.section-label::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+
+/* 分区的展开/收起：小按钮，不和标题混在一起 */
+.section-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-badge);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.section-more:hover {
+  border-color: var(--color-line-hover);
+  color: var(--color-text);
+}
+
 .tag-pick {
   display: inline-flex;
   align-items: center;
