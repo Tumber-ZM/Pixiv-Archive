@@ -424,10 +424,10 @@ fn file_sha256(path: &Path) -> std::io::Result<String> {
 pub const ORIGIN_LOCAL: &str = "local";
 pub const ORIGIN_AUTHOR_SUB: &str = "author_sub";
 
-/// 把刚下载的文件写进库：作品行（缺则建）+ 图片行（按 sha256 去重）。
+/// 把刚下载的文件写进库：作品行（缺则建）+ 图片行（按作品/页去重）。
 ///
-/// 整段在一个事务里，中途失败不会留下「有作品行、没有图片行」的空壳。
-/// 缩略图不在热路径生成，交给后台队列，下载完成后异步补齐。
+/// 不再按 sha256 全局去重：同一张图可能被不同作品引用，按内容跳过会让
+/// 后一个作品变成「有作品行、没有图片」的空壳。
 pub fn import_downloaded(
     conn: &mut Connection,
     data_dir: &Path,
@@ -478,18 +478,9 @@ pub fn import_downloaded(
     let mut queued: Vec<(PathBuf, Option<PathBuf>, i64)> = Vec::new();
 
     for (file, hash) in files.iter().zip(hashes.iter()) {
-        let exists: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM images WHERE sha256 = ?1)",
-            [hash],
-            |row| row.get(0),
-        )?;
-        if exists {
-            continue;
-        }
-
         let size = thumbnails::probe_size(&file.path);
-        tx.execute(
-            "INSERT INTO images (artwork_id, page, path, width, height, sha256)
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO images (artwork_id, page, path, width, height, sha256)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 artwork_id,
@@ -500,6 +491,9 @@ pub fn import_downloaded(
                 hash
             ],
         )?;
+        if inserted == 0 {
+            continue;
+        }
         let image_id = tx.last_insert_rowid();
 
         // 只有封面需要缩略图；其它页只算感知哈希
@@ -594,7 +588,16 @@ pub async fn fetch_and_import(
     origin: &str,
 ) -> AppResult<usize> {
     let files = download_illust(client, data, source_root).await?;
-    // 空列表也调用一次：确保作品行存在（手动下过但没入库的情况也能补上）
+    // 和远端页数核对：缺页时不入库，队列保留重试（已下载的页留在磁盘上）
+    let expected = data.page_count.max(1) as usize;
+    if !data.is_ugoira && files.len() < expected {
+        return Err(AppError::internal(format!(
+            "作品 {} 只下载到 {}/{} 页，保留已下载部分，稍后重试",
+            data.pixiv_id,
+            files.len(),
+            expected
+        )));
+    }
     import_downloaded(conn, data_dir, data, &files, origin)?;
 
     let artwork_id: i64 = conn.query_row(

@@ -17,13 +17,14 @@ import {
   Sun,
   Tag,
   Users,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
 import { Dialog } from "../dialog/Dialog";
 import { CMD, call, isAppError } from "../../lib/ipc";
 import { useUi, type Theme, type ViewKey } from "../../stores/ui";
-import type { Stats, SubResult, SyncReport } from "../../types/ipc";
+import type { RepairReport, Stats, SubResult, SyncReport } from "../../types/ipc";
 
 const NAV: ReadonlyArray<{ key: ViewKey; label: string; Icon: LucideIcon }> = [
   { key: "gallery", label: "画廊", Icon: Images },
@@ -38,11 +39,12 @@ const NAV: ReadonlyArray<{ key: ViewKey; label: string; Icon: LucideIcon }> = [
 const ACTIONS: ReadonlyArray<{
   label: string;
   Icon: LucideIcon;
-  action?: "scan" | "sync" | "subs";
+  action?: "scan" | "sync" | "subs" | "repair";
 }> = [
   { label: "同步元数据", Icon: RefreshCw, action: "sync" },
   { label: "扫描图片", Icon: ScanLine, action: "scan" },
   { label: "订阅更新", Icon: Bell, action: "subs" },
+  { label: "校验图片", Icon: Wrench, action: "repair" },
 ];
 
 const THEME_META: Record<Theme, { label: string; Icon: LucideIcon }> = {
@@ -136,8 +138,39 @@ export function Sidebar() {
     }
   };
 
-  const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
-  // 折叠态要居中，但 .nav-item 自带 `padding: 0 14px`，utility 优先级盖不住，只能内联覆盖
+  const [repairRunning, setRepairRunning] = useState(false);
+  const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
+
+  // 「校验图片」：找出图片数少于远端页数的作品，缺什么补什么，齐全的不动
+  const runRepair = async () => {
+    if (repairRunning) return;
+    if (scanTask) {
+      setRepairError("有任务在运行，请等它结束再校验");
+      return;
+    }
+    setRepairRunning(true);
+    setRepairError(null);
+    setScanTask({
+      current: 0,
+      total: 0,
+      imported: 0,
+      message: "准备校验图片…",
+      kind: "repair",
+    });
+    try {
+      const report = await call<RepairReport>(CMD.repairIncompleteImages);
+      setRepairReport(report);
+      bumpData();
+    } catch (reason: unknown) {
+      setRepairError(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setRepairRunning(false);
+      setScanTask(null);
+    }
+  };
+
+  const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];  // 折叠态要居中，但 .nav-item 自带 `padding: 0 14px`，utility 优先级盖不住，只能内联覆盖
   const itemStyle = collapsed ? { justifyContent: "center", padding: 0 } : undefined;
 
   return (
@@ -188,7 +221,8 @@ export function Sidebar() {
             disabled={
               action === undefined ||
               (action === "sync" && syncing) ||
-              (action === "subs" && subRunning)
+              (action === "subs" && subRunning) ||
+              (action === "repair" && repairRunning)
             }
             title={
               action === "scan"
@@ -197,7 +231,9 @@ export function Sidebar() {
                   ? "同步作品元数据（标题 / 作者 / 标签 / R18 / AI）；Shift+点击 = 全量重同步"
                   : action === "subs"
                     ? "检查所有启用的订阅（收藏 / 作者），下载新作品并入库"
-                    : label
+                    : action === "repair"
+                      ? "校验每件作品的图片数是否和 Pixiv 页数一致，缺页的补下载"
+                      : label
             }
             onClick={
               action === "scan"
@@ -206,7 +242,9 @@ export function Sidebar() {
                   ? (event) => runSync(event.shiftKey)
                   : action === "subs"
                     ? runSubs
-                    : undefined
+                    : action === "repair"
+                      ? runRepair
+                      : undefined
             }
           >
             <Icon size={16} />
@@ -319,6 +357,32 @@ export function Sidebar() {
         onConfirm={() => setSubError(null)}
       >
         <p className="text-micro text-danger">{subError}</p>
+      </Dialog>
+
+      <Dialog
+        open={repairReport !== null}
+        title="校验完成"
+        confirmLabel="知道了"
+        onCancel={() => setRepairReport(null)}
+        onConfirm={() => setRepairReport(null)}
+      >
+        <p className="text-body text-text">
+          检查 {repairReport?.checked ?? 0} 件 · 补齐 {repairReport?.repaired ?? 0} 件
+          {repairReport?.failed ? ` · 失败 ${repairReport.failed}` : ""}
+        </p>
+        <p className="mt-2 text-micro text-text-2">
+          已经齐全的作品不会重新下载；缺页的只补缺失页。
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={repairError !== null}
+        title="校验失败"
+        confirmLabel="知道了"
+        onCancel={() => setRepairError(null)}
+        onConfirm={() => setRepairError(null)}
+      >
+        <p className="text-micro text-danger">{repairError}</p>
       </Dialog>
     </aside>
   );

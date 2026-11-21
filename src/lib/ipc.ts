@@ -44,6 +44,7 @@ export const CMD = {
   syncMetadata: "sync_metadata",
   checkSub: "check_sub",
   checkAllSubs: "check_all_subs",
+  repairIncompleteImages: "repair_incomplete_images",
   syncArtworks: "sync_artworks",
   regenerateThumbnails: "regenerate_thumbnails",
   importLegacy: "import_legacy",

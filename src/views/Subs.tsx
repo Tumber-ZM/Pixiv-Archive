@@ -460,8 +460,10 @@ export function Subs() {
           {displayName(checkResult?.name, checkResult?.pixiv_user_id ?? 0)}
         </p>
         <p className="mt-2 text-micro text-text-2">
-          新增 {checkResult?.new_found ?? 0} · 下载 {checkResult?.downloaded ?? 0} · 失败{" "}
-          {checkResult?.failed ?? 0} · 翻页 {checkResult?.pages_scanned ?? 0}
+          新增 {checkResult?.new_found ?? 0}
+          {checkResult?.repaired ? ` · 补缺 ${checkResult.repaired}` : ""} · 下载{" "}
+          {checkResult?.downloaded ?? 0} · 失败 {checkResult?.failed ?? 0} · 翻页{" "}
+          {checkResult?.pages_scanned ?? 0}
           {checkResult?.caught_up ? " · 已追平" : ""}
           {checkResult?.cancelled ? " · 已取消（剩余作品未处理）" : ""}
         </p>

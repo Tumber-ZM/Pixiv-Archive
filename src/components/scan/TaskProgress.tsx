@@ -9,6 +9,7 @@ const TITLES: Record<string, string> = {
   sync: "同步元数据",
   subs: "更新订阅",
   favorites: "同步收藏",
+  repair: "校验图片",
 };
 
 /**

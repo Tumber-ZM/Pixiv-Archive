@@ -35,8 +35,8 @@ export interface ScanTask {
   total: number;
   imported: number;
   message: string;
-  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 */
-  kind?: "scan" | "sync" | "subs" | "favorites";
+  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 / 校验图片 */
+  kind?: "scan" | "sync" | "subs" | "favorites" | "repair";
 }
 
 /** 任务完成后的收尾结果 */

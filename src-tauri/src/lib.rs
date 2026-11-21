@@ -92,6 +92,7 @@ pub fn run() {
             commands::settings::save_settings,
             commands::subs::check_all_subs,
             commands::subs::check_sub,
+            commands::subs::repair_incomplete_images,
             commands::sync::sync_artworks,
             commands::sync::sync_metadata,
             commands::task::cancel_task,

@@ -96,6 +96,23 @@ export default function App() {
       ),
     );
 
+    // 校验缺页并补下
+    track(
+      listen<{ current: number; total: number; message: string }>(
+        "repair-progress",
+        (event) => {
+          const payload = event.payload;
+          setScanTask({
+            current: payload.current,
+            total: payload.total,
+            imported: 0,
+            message: payload.message,
+            kind: "repair",
+          });
+        },
+      ),
+    );
+
     return () => {
       disposed = true;
       stops.splice(0).forEach((stop) => stop());

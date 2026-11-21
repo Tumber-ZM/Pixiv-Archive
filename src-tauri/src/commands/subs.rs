@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -15,7 +15,15 @@ use crate::net::pixiv::{IllustRef, PixivClient};
 use crate::platform::paths;
 
 pub const SUB_PROGRESS_EVENT: &str = "sub-progress";
+pub const REPAIR_PROGRESS_EVENT: &str = "repair-progress";
 const MAX_PAGES: usize = 100;
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct RepairReport {
+    pub checked: usize,
+    pub repaired: usize,
+    pub failed: usize,
+}
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct SubResult {
@@ -25,6 +33,8 @@ pub struct SubResult {
     pub name: String,
     /// 列表里发现、库里还没有的作品数
     pub new_found: usize,
+    /// 库里已有、但缺页需要补的作品数
+    pub repaired: usize,
     pub downloaded: usize,
     pub failed: usize,
     pub pages_scanned: usize,
@@ -61,6 +71,24 @@ fn known_pixiv_ids(conn: &Connection) -> AppResult<HashSet<i64>> {
         known.insert(row?);
     }
     Ok(known)
+}
+
+/// 每件作品已经入库的图片数：和远端 page_count 对比，判断要不要补页。
+fn local_page_counts(conn: &Connection) -> AppResult<HashMap<i64, i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.pixiv_id, COUNT(i.id)
+           FROM artworks a
+           LEFT JOIN images i ON i.artwork_id = a.id
+          WHERE a.pixiv_id > 0
+          GROUP BY a.id",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+    let mut counts = HashMap::new();
+    for row in rows {
+        let (pixiv_id, pages) = row?;
+        counts.insert(pixiv_id, pages);
+    }
+    Ok(counts)
 }
 
 fn emit(app: &AppHandle, current: usize, total: usize, message: &str) {
@@ -155,6 +183,7 @@ async fn run_checks(
 
     let mut conn = open_library()?;
     let mut known = known_pixiv_ids(&conn)?;
+    let local_pages = local_page_counts(&conn)?;
     let total = targets.len();
     let mut results = Vec::with_capacity(total);
     let mut cancelled = false;
@@ -206,6 +235,7 @@ async fn run_checks(
             &client,
             &mut conn,
             &mut known,
+            &local_pages,
             &data_dir,
             &source_root,
             *kind,
@@ -229,8 +259,8 @@ async fn run_checks(
             "已建立订阅起点".to_string()
         } else {
             format!(
-                "新增 {} · 下载 {} · 失败 {}",
-                result.new_found, result.downloaded, result.failed
+                "新增 {} · 补缺 {} · 下载 {} · 失败 {}",
+                result.new_found, result.repaired, result.downloaded, result.failed
             )
         };
         let _ = conn.execute(
@@ -272,6 +302,7 @@ async fn check_one(
     client: &PixivClient,
     conn: &mut Connection,
     known: &mut HashSet<i64>,
+    local_pages: &HashMap<i64, i64>,
     data_dir: &Path,
     source_root: &Path,
     kind: SubKind,
@@ -333,7 +364,7 @@ async fn check_one(
             break;
         }
 
-        let mut page_all_known = true;
+        let mut page_all_complete = true;
         let mut hit_baseline = false;
         for item in &illusts {
             newest_seen = newest_seen.max(item.pixiv_id);
@@ -344,11 +375,18 @@ async fn check_one(
                     continue;
                 }
             }
-            if known.contains(&item.pixiv_id) {
+            // 本地页数和远端 page_count 对得上才算齐全；缺页的已知作品也重新入队
+            let complete = local_pages
+                .get(&item.pixiv_id)
+                .map(|pages| *pages >= item.page_count)
+                .unwrap_or(false);
+            if complete {
                 continue;
             }
-            page_all_known = false;
-            known.insert(item.pixiv_id);
+            page_all_complete = false;
+            if !known.contains(&item.pixiv_id) {
+                known.insert(item.pixiv_id);
+            }
             collected.push(item.clone());
         }
 
@@ -361,9 +399,9 @@ async fn check_one(
             reached_end = true;
             break;
         };
-        // 快速模式：整页都已入库 → 已追平（作品按发布时间倒序，新作品在最前）。
+        // 快速模式：整页都已齐全 → 已追平（作品按发布时间倒序，新作品在最前）。
         // 补全模式例外：还要继续往后翻，否则会漏掉更早的作品。
-        if !full && !backfill && page_all_known {
+        if !full && !backfill && page_all_complete {
             result.caught_up = true;
             break;
         }
@@ -380,7 +418,12 @@ async fn check_one(
     }
 
     result.pages_scanned = pages;
-    result.new_found = collected.len();
+    // 已知但缺页的作品算「补缺」，不算新增
+    result.repaired = collected
+        .iter()
+        .filter(|item| local_pages.contains_key(&item.pixiv_id))
+        .count();
+    result.new_found = collected.len() - result.repaired;
     collected.sort_by_key(|item| item.pixiv_id); // 旧 → 新
 
     // 2. 入队：本次发现的与上次失败的都在队列里，一起消费
@@ -461,4 +504,93 @@ async fn check_one(
     }
 
     Ok(())
+}
+
+/// 校验本地作品：找出「图片数 < page_count」的作品，和远端详情核对后补齐缺页。
+///
+/// 已经齐全的作品不会下载；缺页但文件已在磁盘上的，只补图片记录、不重新下图。
+#[tauri::command]
+pub async fn repair_incomplete_images(
+    app: AppHandle,
+    state: State<'_, TaskCancel>,
+) -> AppResult<RepairReport> {
+    let Some(cancel) = state.begin("download") else {
+        return Err(AppError::invalid("已有任务在运行"));
+    };
+    let outcome = repair_inner(&app, &cancel).await;
+    state.end("download");
+    outcome
+}
+
+async fn repair_inner(app: &AppHandle, cancel: &Arc<AtomicBool>) -> AppResult<RepairReport> {
+    let client = PixivClient::from_settings()?;
+    let source_root = crate::commands::settings::image_source_dir()?
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| AppError::invalid("还没有设置图片目录（设置 → 基础）"))?;
+    let data_dir = paths::data_dir()?;
+    let mut conn = open_library()?;
+
+    let targets: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT a.pixiv_id, COALESCE(a.origin, 'local')
+               FROM artworks a
+              WHERE (SELECT COUNT(*) FROM images i WHERE i.artwork_id = a.id) < a.page_count
+                 OR NOT EXISTS (SELECT 1 FROM images i WHERE i.artwork_id = a.id)
+              ORDER BY a.id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.filter_map(Result::ok).collect()
+    };
+
+    let total = targets.len();
+    let mut report = RepairReport {
+        checked: total,
+        ..Default::default()
+    };
+
+    for (index, (pixiv_id, origin)) in targets.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let _ = app.emit(
+            REPAIR_PROGRESS_EVENT,
+            serde_json::json!({
+                "current": index + 1,
+                "total": total,
+                "message": format!("校验作品 {}/{}（PID {}）", index + 1, total, pixiv_id),
+            }),
+        );
+
+        let data = match client.illust_detail(*pixiv_id).await {
+            Ok(data) => data,
+            Err(error) => {
+                report.failed += 1;
+                eprintln!("校验作品 {pixiv_id} 失败：{}", error.message);
+                continue;
+            }
+        };
+
+        match download::fetch_and_import(
+            &client,
+            &mut conn,
+            &data_dir,
+            &source_root,
+            &data,
+            origin,
+        )
+        .await
+        {
+            Ok(_) => report.repaired += 1,
+            Err(error) => {
+                report.failed += 1;
+                eprintln!("补页 {pixiv_id} 失败：{}", error.message);
+            }
+        }
+    }
+
+    let _ = app.emit(
+        REPAIR_PROGRESS_EVENT,
+        serde_json::json!({ "current": total, "total": total, "message": "校验完成" }),
+    );
+    Ok(report)
 }
