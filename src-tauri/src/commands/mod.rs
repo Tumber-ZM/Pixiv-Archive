@@ -10,6 +10,7 @@ pub mod scanner;
 pub mod settings;
 pub mod subs;
 pub mod sync;
+pub mod tag_combos;
 pub mod task;
 pub mod thumbnails;
 pub mod update;

@@ -131,6 +131,7 @@ mod tests {
             "images",
             "pixiv_favorites",
             "subs",
+            "tag_combos",
             "tags",
         ] {
             assert!(tables.iter().any(|t| t == expected), "缺少表 {expected}");

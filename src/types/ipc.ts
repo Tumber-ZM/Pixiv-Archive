@@ -223,6 +223,14 @@ export interface SubResult {
   error: string | null;
 }
 
+/** 标签组合：后续标签组合订阅引用 id。 */
+export interface TagCombo {
+  id: number;
+  name: string;
+  tags: string[];
+  pinned: boolean;
+}
+
 /** Pixiv 远端作者搜索的一条结果。 */
 export interface RemoteAuthor {
   pixiv_user_id: number;

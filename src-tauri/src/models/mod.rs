@@ -141,6 +141,15 @@ pub struct TagRow {
     pub cover_path: Option<String>,
 }
 
+/// 标签组合。`tags` 存标签原名；后续标签组合订阅引用 `id`。
+#[derive(Debug, Clone, Serialize)]
+pub struct TagCombo {
+    pub id: i64,
+    pub name: String,
+    pub tags: Vec<String>,
+    pub pinned: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FavoriteRow {
     pub id: i64,

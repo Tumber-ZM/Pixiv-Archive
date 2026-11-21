@@ -560,6 +560,89 @@ a {
   font-weight: var(--fw-micro);
 }
 
+/* ── 标签选择 / 组合 ───────────────────────────────────── */
+
+.tag-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  min-height: 30px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-btn);
+  color: var(--color-text-2);
+  font-size: var(--text-label);
+  background: transparent;
+}
+
+.tag-pick[data-active="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent-soft);
+  background: var(--color-accent-soft);
+}
+
+.tag-pick input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.tag-pick-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.tag-pick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-pick-count {
+  color: var(--color-text-3);
+  font-size: var(--text-micro);
+}
+
+.tag-pick[data-active="true"] .tag-pick-count {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.combo-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 180px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-badge);
+  color: var(--color-text-2);
+  font-size: var(--text-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.combo-tag-x {
+  display: inline-flex;
+  color: var(--color-text-3);
+}
+
+.combo-tag-x:hover {
+  color: var(--color-text);
+}
+
+.combo-card[data-active="true"] {
+  border-color: var(--color-accent-soft);
+}
+
+
 /* ── 作者列表卡片（参考图一）─────────────────────────────
    顶部一条 3 张作品封面，下方是头像与作者名。 */
 .author-card {

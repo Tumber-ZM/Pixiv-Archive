@@ -133,11 +133,29 @@ pub fn list_authors_with(
 ///
 /// 封面子查询必须限定在已 LIMIT 的结果集内，否则几千个标签会各跑一次随机排序。
 /// 先用 CTE 排序截断，再对剩下的行取封面。
+#[cfg(test)]
 pub fn list_tags_with(
     conn: &Connection,
     data_dir: &Path,
     q: Option<&str>,
     limit: u32,
+) -> AppResult<Vec<TagRow>> {
+    list_tags_filtered_with(conn, data_dir, q, limit, false, false, false)
+}
+
+/// 带筛选的标签列表：
+/// - `favorited_only`：只统计 Pixiv 收藏里的作品
+/// - `collected_only`：没同步收藏时的兜底，只统计订阅前就有的作品
+/// - `subscribed_only`：只统计已订阅作者的作品
+#[allow(clippy::too_many_arguments)]
+pub fn list_tags_filtered_with(
+    conn: &Connection,
+    data_dir: &Path,
+    q: Option<&str>,
+    limit: u32,
+    favorited_only: bool,
+    collected_only: bool,
+    subscribed_only: bool,
 ) -> AppResult<Vec<TagRow>> {
     let pattern = like_pattern(q);
 
@@ -148,6 +166,14 @@ pub fn list_tags_with(
                    JOIN artworks w ON w.id = at.artwork_id
                    WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
                      AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+                     AND (?3 = 0 OR EXISTS (
+                           SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = w.pixiv_id))
+                     AND (?4 = 0 OR COALESCE(w.origin, 'local') <> 'author_sub')
+                     AND (?5 = 0 OR EXISTS (
+                           SELECT 1 FROM authors au
+                             JOIN subs s ON s.kind = 'author'
+                                        AND s.target_pixiv_id = au.pixiv_user_id
+                            WHERE au.id = w.author_id))
                    GROUP BY t.id
                    HAVING COUNT(at.artwork_id) > 0
                    ORDER BY usage DESC, t.name
@@ -164,16 +190,25 @@ pub fn list_tags_with(
                ORDER BY r.usage DESC, r.name";
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params![pattern.as_deref(), limit], |row| {
-        let cover_pixiv_id: Option<i64> = row.get(4)?;
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, i64>(3)?,
-            cover_pixiv_id,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        rusqlite::params![
+            pattern.as_deref(),
+            limit,
+            i64::from(favorited_only),
+            i64::from(collected_only),
+            i64::from(subscribed_only)
+        ],
+        |row| {
+            let cover_pixiv_id: Option<i64> = row.get(4)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)?,
+                cover_pixiv_id,
+            ))
+        },
+    )?;
 
     let mut out = Vec::new();
     for row in rows {
@@ -340,11 +375,24 @@ pub fn list_authors(q: Option<String>) -> AppResult<Vec<AuthorRow>> {
 }
 
 #[tauri::command]
-pub fn list_tags(q: Option<String>) -> AppResult<Vec<TagRow>> {
+pub fn list_tags(
+    q: Option<String>,
+    favorited_only: Option<bool>,
+    collected_only: Option<bool>,
+    subscribed_only: Option<bool>,
+) -> AppResult<Vec<TagRow>> {
     let conn = open_library()?;
     let data_dir = paths::data_dir()?;
     // 标签可能上千个，先按使用次数截断再取封面
-    list_tags_with(&conn, &data_dir, q.as_deref(), 300)
+    list_tags_filtered_with(
+        &conn,
+        &data_dir,
+        q.as_deref(),
+        300,
+        favorited_only.unwrap_or(false),
+        collected_only.unwrap_or(false),
+        subscribed_only.unwrap_or(false),
+    )
 }
 
 #[tauri::command]

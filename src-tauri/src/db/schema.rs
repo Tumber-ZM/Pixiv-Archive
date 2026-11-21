@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS app_meta (
     value TEXT
 );
 
+-- 标签组合：tags 是 JSON 数组（标签原名），后续「标签组合订阅」直接引用 id。
+CREATE TABLE IF NOT EXISTS tag_combos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tag_combos_pinned ON tag_combos(pinned, updated_at);
+
 CREATE INDEX IF NOT EXISTS idx_artworks_pixiv_id ON artworks(pixiv_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_author_id ON artworks(author_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_title ON artworks(title);
