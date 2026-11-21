@@ -1,4 +1,4 @@
-/// 8 张表 + 12 个索引，逐字照抄旧项目 `app/database.py`。
+/// 11 张表 + 12 个索引，逐字照抄旧项目 `app/database.py`。
 ///
 /// 与旧项目唯一的差别：`sync_error` 直接写进建表语句。
 /// 旧库是逐步 `ALTER TABLE` 演化来的，这里建表就带全，`columns.rs` 仍会为旧库补列。
@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS artworks (
     first_seen TEXT DEFAULT (datetime('now')),
     last_synced TEXT,
     local_path TEXT,
+    -- 作品来源：local = 扫描/收藏订阅等既有收藏，author_sub = 作者订阅下载
+    origin TEXT DEFAULT 'local',
     -- Pixiv illust_ai_type：1 = 非 AI，2 = AI 生成。存量与未同步行按 1 处理
     ai_type INTEGER DEFAULT 1,
     sync_error TEXT,
@@ -90,14 +92,33 @@ CREATE TABLE IF NOT EXISTS favorite_artworks (
     FOREIGN KEY (artwork_id) REFERENCES artworks(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS bookmark_subs (
-    pixiv_user_id INTEGER PRIMARY KEY,
+-- 订阅：kind = bookmark（对方公开收藏）/ author（该作者的作品）。
+-- 同一用户两种类型可以并存，所以主键是 (kind, target_pixiv_id)。
+-- baseline_pid 是作者订阅的起点：NULL = 还没建立，0 = 补全全部历史。
+CREATE TABLE IF NOT EXISTS subs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    target_pixiv_id INTEGER NOT NULL,
     name TEXT,
-    last_pid INTEGER,
+    baseline_pid INTEGER,
     auto_download INTEGER DEFAULT 1,
     last_checked TEXT,
     last_result TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE (kind, target_pixiv_id)
+);
+
+-- Pixiv 收藏的本地索引：只保存作品 ID，用于作者列表「仅看收藏」筛选。
+-- 数据来自用户自己账号的公开/私密收藏，不上传任何东西。
+CREATE TABLE IF NOT EXISTS pixiv_favorites (
+    pixiv_id INTEGER PRIMARY KEY,
+    favorited_at TEXT DEFAULT (datetime('now'))
+);
+
+-- 杂项元数据（如上次同步 Pixiv 收藏的时间）。
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_artworks_pixiv_id ON artworks(pixiv_id);
@@ -119,6 +140,14 @@ CREATE INDEX IF NOT EXISTS idx_favorite_artworks_artwork ON favorite_artworks(ar
 
 /// 旧库可能缺的列与过时的表，逐个补齐。
 /// 这里覆盖 `app/database.py` 的四个 `_migrate_*` 函数，缺一个就会在旧库上报错。
+pub fn table_exists(conn: &rusqlite::Connection, table: &str) -> crate::error::AppResult<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn table_columns(conn: &rusqlite::Connection, table: &str) -> crate::error::AppResult<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -149,6 +178,13 @@ pub fn ensure_columns(conn: &rusqlite::Connection) -> crate::error::AppResult<()
     if !columns.iter().any(|c| c == "next_retry_at") {
         conn.execute("ALTER TABLE artworks ADD COLUMN next_retry_at TEXT", [])?;
     }
+    // 存量作品都算「收藏」；作者订阅之后下载的才写 author_sub
+    if !columns.iter().any(|c| c == "origin") {
+        conn.execute(
+            "ALTER TABLE artworks ADD COLUMN origin TEXT DEFAULT 'local'",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -162,6 +198,25 @@ pub fn ensure_bookmark_subs_cols(conn: &rusqlite::Connection) -> crate::error::A
             [],
         )?;
     }
+    Ok(())
+}
+
+/// v2.1：收藏订阅泛化成 `subs`。老库的 `bookmark_subs` 一次性搬进新表。
+///
+/// 只有 `db::init` 发现库里还没有 `subs` 表时才调用，所以删掉的订阅不会
+/// 被旧表重新搬回来。旧表保留不删：万一退回旧版 exe，收藏订阅仍然能读。
+pub fn migrate_bookmark_subs(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
+    if !table_exists(conn, "bookmark_subs")? {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO subs
+             (kind, target_pixiv_id, name, auto_download, last_checked, last_result, created_at)
+         SELECT 'bookmark', pixiv_user_id, name, COALESCE(auto_download, 1),
+                last_checked, last_result, COALESCE(created_at, datetime('now'))
+           FROM bookmark_subs",
+        [],
+    )?;
     Ok(())
 }
 
@@ -196,6 +251,10 @@ pub fn ensure_unique_indexes(conn: &rusqlite::Connection) -> crate::error::AppRe
 
 /// 是否需要跑一次「有副作用」的迁移（用于迁移前备份数据库）。
 pub fn needs_migration(conn: &rusqlite::Connection) -> crate::error::AppResult<bool> {
+    // v2.1 的 subs 表：老库还没有它，要先把 bookmark_subs 搬进去，先备份
+    if !table_exists(conn, "subs")? {
+        return Ok(true);
+    }
     let columns = table_columns(conn, "artworks")?;
     if !columns.iter().any(|c| c == "sync_error_kind") {
         return Ok(true);

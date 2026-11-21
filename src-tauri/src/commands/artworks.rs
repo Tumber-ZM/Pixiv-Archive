@@ -145,7 +145,7 @@ pub fn stats_with(conn: &Connection) -> AppResult<Stats> {
     })?)
 }
 
-/// 详情：作品 + 标签 + 图片 + 所属收藏夹，查看器一次拿全。
+/// 详情：作品 + 标签 + 图片 + 所属本地收藏，查看器一次拿全。
 pub fn get_artwork_with(conn: &Connection, artwork_id: i64) -> AppResult<ArtworkDetail> {
     let mut detail = {
         let mut stmt = conn.prepare(
@@ -471,7 +471,7 @@ mod tests {
         )
         .unwrap();
 
-        // 默认查询（画廊、作者、标签、收藏夹都走它）看不到本地文件
+        // 默认查询（画廊、作者、标签、本地收藏都走它）看不到本地文件
         assert_eq!(count(&conn, ListQuery::default()), 6);
 
         // 本地作品视图只返回负数 ID
@@ -597,7 +597,7 @@ mod tests {
         assert!(card.is_gif);
         assert_eq!(card.page_count, 1);
         assert_eq!(card.pixiv_status, "active");
-        assert!(!card.is_favorited, "未加入收藏夹时应为 false");
+        assert!(!card.is_favorited, "未加入本地收藏时应为 false");
         assert!(card.cover_path.as_deref().unwrap().ends_with(".gif"));
     }
 

@@ -418,6 +418,12 @@ fn file_sha256(path: &Path) -> std::io::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// 作品来源：扫描/收藏订阅等既有收藏，与作者订阅下载分开。
+///
+/// 只用于「仅看收藏」筛选，不影响展示；作者订阅下载的作品记 `author_sub`。
+pub const ORIGIN_LOCAL: &str = "local";
+pub const ORIGIN_AUTHOR_SUB: &str = "author_sub";
+
 /// 把刚下载的文件写进库：作品行（缺则建）+ 图片行（按 sha256 去重）。
 ///
 /// 整段在一个事务里，中途失败不会留下「有作品行、没有图片行」的空壳。
@@ -427,6 +433,7 @@ pub fn import_downloaded(
     data_dir: &Path,
     data: &IllustData,
     files: &[DownloadedFile],
+    origin: &str,
 ) -> AppResult<i64> {
     let thumbnails_dir = data_dir.join("thumbnails");
     std::fs::create_dir_all(&thumbnails_dir)?;
@@ -443,13 +450,14 @@ pub fn import_downloaded(
     let tx = conn.transaction()?;
 
     tx.execute(
-        "INSERT OR IGNORE INTO artworks (pixiv_id, title, page_count, local_path)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR IGNORE INTO artworks (pixiv_id, title, page_count, local_path, origin)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             data.pixiv_id,
             data.title,
             data.page_count.max(1),
-            files.first().map(|file| file.path.to_string_lossy().to_string())
+            files.first().map(|file| file.path.to_string_lossy().to_string()),
+            origin
         ],
     )?;
 
@@ -579,10 +587,11 @@ pub async fn fetch_and_import(
     data_dir: &Path,
     source_root: &Path,
     data: &IllustData,
+    origin: &str,
 ) -> AppResult<usize> {
     let files = download_illust(client, data, source_root).await?;
     // 空列表也调用一次：确保作品行存在（手动下过但没入库的情况也能补上）
-    import_downloaded(conn, data_dir, data, &files)?;
+    import_downloaded(conn, data_dir, data, &files, origin)?;
 
     let artwork_id: i64 = conn.query_row(
         "SELECT id FROM artworks WHERE pixiv_id = ?1",

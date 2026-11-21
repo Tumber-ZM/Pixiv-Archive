@@ -37,7 +37,7 @@ pub fn build_filter(query: &ListQuery) -> Filter {
     let mut params: Vec<Value> = Vec::new();
 
     // 本地图片（文件名里没有 Pixiv ID，入库时派生了负数 ID）默认不进画廊，
-    // 也不进作者/标签/收藏夹视图；只有「本地作品」页显式传 scope=local
+    // 也不进作者/标签/本地收藏视图；只有「本地作品」页显式传 scope=local
     match query.scope.as_deref() {
         Some("local") => clauses.push("a.pixiv_id < 0".to_string()),
         _ => clauses.push("a.pixiv_id > 0".to_string()),

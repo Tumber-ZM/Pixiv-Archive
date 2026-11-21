@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 
 import { useUi, type ViewKey } from "../../stores/ui";
 import { Authors } from "../../views/Authors";
-import { BookmarkSubs } from "../../views/BookmarkSubs";
+import { Subs } from "../../views/Subs";
 import { Favorites } from "../../views/Favorites";
 import { Gallery } from "../../views/Gallery";
 import { Local } from "../../views/Local";
@@ -16,7 +16,7 @@ const VIEWS: Record<ViewKey, ComponentType> = {
   authors: Authors,
   tags: Tags,
   favorites: Favorites,
-  bookmarkSubs: BookmarkSubs,
+  subs: Subs,
   local: Local,
 };
 

@@ -17,7 +17,7 @@ const PAGE_SIZE = 60;
 const SEARCH_DEBOUNCE_MS = 300;
 
 interface ArtworkListProps {
-  /** 固定筛选：作者页带 author_id、标签页带 tag、收藏夹带 favorite_id */
+  /** 固定筛选：作者页带 author_id、标签页带 tag、本地收藏带 favorite_id */
   extraQuery?: Partial<ListQuery>;
   /** 子视图的标题与返回入口 */
   heading?: string;
@@ -450,7 +450,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
               },
             },
             {
-              label: "收藏",
+              label: "收藏到本地",
               onSelect: () => {
                 setFavoriteIds([menu.card.id]);
                 setBatchFavoriteOpen(true);

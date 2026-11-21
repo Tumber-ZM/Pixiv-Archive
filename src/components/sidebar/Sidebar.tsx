@@ -29,8 +29,8 @@ const NAV: ReadonlyArray<{ key: ViewKey; label: string; Icon: LucideIcon }> = [
   { key: "gallery", label: "画廊", Icon: Images },
   { key: "authors", label: "作者列表", Icon: Users },
   { key: "tags", label: "标签列表", Icon: Tag },
-  { key: "favorites", label: "收藏夹", Icon: Heart },
-  { key: "bookmarkSubs", label: "收藏订阅", Icon: Bookmark },
+  { key: "favorites", label: "本地收藏", Icon: Heart },
+  { key: "subs", label: "订阅列表", Icon: Bookmark },
   { key: "local", label: "本地作品", Icon: FolderOpen },
 ];
 
@@ -125,7 +125,7 @@ export function Sidebar() {
     setSubError(null);
     setScanTask({ current: 0, total: 0, imported: 0, message: "准备检查订阅…", kind: "subs" });
     try {
-      const results = await call<SubResult[]>(CMD.checkAllBookmarkSubs, { full: false });
+      const results = await call<SubResult[]>(CMD.checkAllSubs, { full: false });
       setSubResults(results);
       bumpData();
     } catch (reason: unknown) {
@@ -196,7 +196,7 @@ export function Sidebar() {
                 : action === "sync"
                   ? "同步作品元数据（标题 / 作者 / 标签 / R18 / AI）；Shift+点击 = 全量重同步"
                   : action === "subs"
-                    ? "检查所有启用的收藏订阅，下载新作品并入库"
+                    ? "检查所有启用的订阅（收藏 / 作者），下载新作品并入库"
                     : label
             }
             onClick={
@@ -299,7 +299,8 @@ export function Sidebar() {
         </p>
         <div className="mt-2 flex max-h-[240px] flex-col gap-1 overflow-y-auto">
           {subResults?.map((row) => (
-            <p key={row.pixiv_user_id} className="text-micro text-text-2">
+            <p key={`${row.kind}:${row.pixiv_user_id}`} className="text-micro text-text-2">
+              {row.kind === "author" ? "作者" : "收藏"} ·{" "}
               {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found} · 下载{" "}
               {row.downloaded}
               {row.failed > 0 ? ` · 失败 ${row.failed}` : ""}

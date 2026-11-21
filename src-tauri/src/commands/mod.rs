@@ -3,6 +3,7 @@ pub mod browse;
 pub mod download;
 pub mod favorites;
 pub mod migration;
+pub mod pixiv_favorites;
 pub mod scan;
 pub mod scanner;
 pub mod settings;

@@ -161,15 +161,15 @@ export function ViewerInfo({
           </Section>
         )}
 
-        {/* 收藏夹：可点，跳到该收藏夹 */}
+        {/* 本地收藏：可点，跳到该本地收藏 */}
         {detail.favorites.length > 0 && (
-          <Section title="所在收藏夹">
+          <Section title="所在本地收藏">
             <div className="flex flex-wrap gap-1.5">
               {detail.favorites.map((favorite) => (
                 <Chip
                   key={favorite.id}
                   onClick={() => onOpenFavorite(favorite)}
-                  title={`打开收藏夹「${favorite.name}」`}
+                  title={`打开本地收藏「${favorite.name}」`}
                 >
                   {favorite.name}
                 </Chip>
@@ -238,10 +238,10 @@ export function ViewerInfo({
             borderColor: isFaved ? "var(--color-accent)" : "var(--viewer-line)",
           }}
           onClick={onFavorite}
-          title={isFaved ? "已收藏，点击管理所属收藏夹" : "收藏（F）"}
+          title={isFaved ? "已收藏到本地，点击管理" : "收藏到本地（F）"}
         >
           <Star size={14} fill={isFaved ? "currentColor" : "none"} />
-          {isFaved ? "已收藏" : "收藏"}
+          {isFaved ? "已收藏到本地" : "收藏到本地"}
         </button>
         <button
           type="button"

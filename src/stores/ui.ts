@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type ViewKey = "gallery" | "authors" | "tags" | "favorites" | "bookmarkSubs" | "local";
+export type ViewKey = "gallery" | "authors" | "tags" | "favorites" | "subs" | "local";
 export type Theme = "light" | "dark" | "system";
 export type TriState = "all" | "hide" | "only";
 export type SortKey = "first_seen" | "create_date" | "title" | "pixiv_id" | "random";
@@ -35,8 +35,8 @@ export interface ScanTask {
   total: number;
   imported: number;
   message: string;
-  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 */
-  kind?: "scan" | "sync" | "subs";
+  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 */
+  kind?: "scan" | "sync" | "subs" | "favorites";
 }
 
 /** 任务完成后的收尾结果 */
@@ -146,7 +146,7 @@ export const useUi = create<UiState>()(
       toggleSafeMode: () => set((s) => ({ safeMode: !s.safeMode })),
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 
-      // 查看器里点标签/收藏夹：先切视图，再把目标交给对应视图消费
+      // 查看器里点标签/本地收藏：先切视图，再把目标交给对应视图消费
       openTag: (name) =>
         set({ view: "tags", pendingTag: name, pendingFavorite: null, pendingAuthor: null }),
       openFavorite: (id, name) =>

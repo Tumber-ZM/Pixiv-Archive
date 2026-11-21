@@ -90,7 +90,7 @@ fn to_view(file: &SettingsFile) -> SettingsView {
     }
 }
 
-/// 扫描与「收藏订阅」下载共用的图片目录。没配置时返回 None。
+/// 扫描与订阅下载共用的图片目录。没配置时返回 None。
 pub fn image_source_dir() -> AppResult<Option<String>> {
     Ok(non_empty(read_file()?.image_source_dir))
 }

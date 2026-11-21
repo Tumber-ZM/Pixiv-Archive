@@ -57,7 +57,7 @@ fn row_of(conn: &Connection, favorite_id: i64) -> AppResult<FavoriteRow> {
 pub fn create_with(conn: &Connection, name: &str) -> AppResult<FavoriteRow> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(AppError::invalid("收藏夹名称不能为空"));
+        return Err(AppError::invalid("本地收藏名称不能为空"));
     }
 
     let exists: Option<i64> = conn
@@ -77,7 +77,7 @@ pub fn create_with(conn: &Connection, name: &str) -> AppResult<FavoriteRow> {
 
 pub fn add_with(conn: &Connection, favorite_id: i64, artwork_ids: &[i64]) -> AppResult<BatchResult> {
     if !favorite_id_exists(conn, favorite_id)? {
-        return Err(AppError::not_found(format!("收藏夹 {favorite_id} 不存在")));
+        return Err(AppError::not_found(format!("本地收藏 {favorite_id} 不存在")));
     }
 
     let tx = conn.unchecked_transaction()?;
@@ -86,7 +86,7 @@ pub fn add_with(conn: &Connection, favorite_id: i64, artwork_ids: &[i64]) -> App
     let mut errors = Vec::new();
 
     for artwork_id in artwork_ids {
-        // 已在该收藏夹里不算错误，重复收藏是幂等操作
+        // 已在该本地收藏里不算错误，重复收藏是幂等操作
         match tx.execute(
             "INSERT OR IGNORE INTO favorite_artworks (favorite_id, artwork_id) VALUES (?1, ?2)",
             [favorite_id, *artwork_id],
@@ -131,10 +131,10 @@ pub fn remove_with(
 }
 
 pub fn delete_with(conn: &Connection, favorite_id: i64) -> AppResult<BatchResult> {
-    // 只删收藏夹本身，作品记录不受影响（favorite_artworks 由 CASCADE 清理）
+    // 只删本地收藏本身，作品记录不受影响（favorite_artworks 由 CASCADE 清理）
     let affected = conn.execute("DELETE FROM favorites WHERE id = ?1", [favorite_id])?;
     if affected == 0 {
-        return Err(AppError::not_found(format!("收藏夹 {favorite_id} 不存在")));
+        return Err(AppError::not_found(format!("本地收藏 {favorite_id} 不存在")));
     }
     Ok(BatchResult {
         ok: 1,
@@ -210,7 +210,7 @@ mod tests {
         let conn = memory_db();
         let first = create_with(&conn, "风景").unwrap();
         let second = create_with(&conn, "风景").unwrap();
-        assert_eq!(first.id, second.id, "同名收藏夹应复用而不是重复创建");
+        assert_eq!(first.id, second.id, "同名本地收藏应复用而不是重复创建");
 
         add_with(&conn, first.id, &[1, 2]).unwrap();
         let listed = list_with(&conn).unwrap();

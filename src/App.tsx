@@ -79,6 +79,23 @@ export default function App() {
       ),
     );
 
+    // 同步我的 Pixiv 收藏（只读作品 ID）
+    track(
+      listen<{ current: number; total: number; message: string }>(
+        "favorites-progress",
+        (event) => {
+          const payload = event.payload;
+          setScanTask({
+            current: payload.current,
+            total: payload.total,
+            imported: 0,
+            message: payload.message,
+            kind: "favorites",
+          });
+        },
+      ),
+    );
+
     return () => {
       disposed = true;
       stops.splice(0).forEach((stop) => stop());

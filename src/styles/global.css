@@ -572,6 +572,7 @@ a {
   background: var(--color-surface);
   outline: 1px solid transparent;
   outline-offset: 2px;
+  cursor: pointer;
   transition: outline-color var(--dur-hover) var(--ease);
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
@@ -579,6 +580,62 @@ a {
 
 .author-card:hover {
   outline-color: var(--color-line-hover);
+}
+
+.author-card:focus-visible {
+  outline-color: var(--color-accent);
+}
+
+/* 作者卡上的订阅开关：贴着 Pixiv ID，已订阅时实心铃铛 + accent */
+.author-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 1px solid var(--color-line-hover);
+  border-radius: var(--radius-badge);
+  color: var(--color-text-3);
+  font-size: var(--text-badge);
+  font-weight: var(--fw-badge);
+  letter-spacing: var(--ls-badge);
+  line-height: var(--lh-badge);
+  white-space: nowrap;
+  background: transparent;
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease),
+    background var(--dur-hover) var(--ease);
+}
+
+.author-sub:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* 已订阅：铃铛填成实心，一眼能看出状态 */
+.author-sub[data-on="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent-soft);
+  background: var(--color-accent-soft);
+}
+
+.author-sub[data-on="true"] svg {
+  fill: currentColor;
+}
+
+.author-sub:disabled {
+  cursor: default;
+}
+
+/* 订阅类型角标：收藏夹用 accent，作者用 mint（沿用 .badge 的尺寸与字重） */
+.sub-kind[data-kind="bookmark"] {
+  color: var(--color-on-scrim);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
+.sub-kind[data-kind="author"] {
+  color: var(--color-scrim);
+  background: var(--color-mint);
+  border: 1px solid var(--color-mint);
 }
 
 /* ── 右键菜单 ────────────────────────────────────────────

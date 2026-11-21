@@ -49,7 +49,7 @@ function Badges({ card }: { card: Card }) {
   );
 }
 
-/** 右上角浮层：悬停出现，含收藏 / 删除 / 复选框（旧项目 .tile-actions + .tile-check）。 */
+/** 右上角浮层：悬停出现，含收藏到本地 / 删除 / 复选框（旧项目 .tile-actions + .tile-check）。 */
 function CardActions({
   favorited,
   selected,
@@ -76,8 +76,8 @@ function CardActions({
             <button
               type="button"
               className="wall-action"
-              title={favorited ? "已收藏" : "收藏"}
-              aria-label={favorited ? "已收藏" : "收藏"}
+              title={favorited ? "已收藏到本地" : "收藏到本地"}
+              aria-label={favorited ? "已收藏到本地" : "收藏到本地"}
               style={
                 favorited
                   ? { color: "var(--color-accent)", borderColor: "var(--color-accent)" }

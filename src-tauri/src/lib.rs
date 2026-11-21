@@ -37,6 +37,14 @@ pub fn run() {
             let _ = platform::paths::ensure_dirs();
             seed_settings_from_appdata();
 
+            // 老库升级：新版本可能新增表/列（如 v2.1 的 subs），启动时补跑一次
+            // 幂等迁移；需要改结构时 ensure_ready 内部会先给 library.db 留备份。
+            if let Ok(path) = platform::paths::db_path() {
+                if path.is_file() {
+                    let _ = db::ensure_ready(&path);
+                }
+            }
+
             // 启动时把数据目录和用户配置的图片目录加进 asset 协议白名单
             allow_image_dir(app.handle());
             Ok(())
@@ -48,15 +56,15 @@ pub fn run() {
             commands::artworks::get_stats,
             commands::artworks::list_artworks,
             commands::artworks::search_artworks,
-            commands::browse::add_bookmark_sub,
+            commands::browse::add_sub,
             commands::browse::get_author_avatar,
             commands::browse::list_authors,
-            commands::browse::list_bookmark_subs,
+            commands::browse::list_subs,
             commands::browse::list_tags,
-            commands::browse::preview_bookmark_sub,
+            commands::browse::preview_sub,
             commands::browse::refresh_author_avatars,
-            commands::browse::remove_bookmark_sub,
-            commands::browse::toggle_bookmark_sub_auto,
+            commands::browse::remove_sub,
+            commands::browse::toggle_sub_auto,
             commands::download::regenerate_thumbnails,
             commands::favorites::add_to_favorite,
             commands::favorites::batch_remove_from_favorite,
@@ -69,6 +77,8 @@ pub fn run() {
             commands::migration::export_data_bundle,
             commands::migration::import_data_bundle,
             commands::migration::relink_images,
+            commands::pixiv_favorites::pixiv_favorites_status,
+            commands::pixiv_favorites::sync_pixiv_favorites,
             commands::scan::cancel_scan,
             commands::scan::data_directory,
             commands::scan::default_scan_root,
@@ -79,8 +89,8 @@ pub fn run() {
             commands::scan::scan_status,
             commands::settings::get_settings,
             commands::settings::save_settings,
-            commands::subs::check_all_bookmark_subs,
-            commands::subs::check_bookmark_sub,
+            commands::subs::check_all_subs,
+            commands::subs::check_sub,
             commands::sync::sync_artworks,
             commands::sync::sync_metadata,
             commands::task::cancel_task,

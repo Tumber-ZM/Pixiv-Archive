@@ -42,7 +42,7 @@ export function BatchBar({
         </button>
         <button type="button" className="btn inline-flex items-center gap-2" onClick={onFavorite}>
           <Heart size={14} />
-          收藏
+          收藏到本地
         </button>
         <button
           type="button"
