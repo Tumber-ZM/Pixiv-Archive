@@ -679,8 +679,8 @@ impl PixivClient {
         })
     }
 
-    /// 取用户头像地址（`/v1/user/detail`）。
-    pub async fn user_avatar_url(&self, user_id: i64) -> AppResult<Option<String>> {
+    /// `/v1/user/detail` 的响应体。头像、昵称都从这里取。
+    async fn user_detail_body(&self, user_id: i64) -> AppResult<Value> {
         self.throttle_api().await;
         let token = self.access_token().await?;
         let response = self
@@ -700,13 +700,29 @@ impl PixivClient {
             )));
         }
 
-        let body: Value = response
+        response
             .json()
             .await
-            .map_err(|error| AppError::internal(format!("作者信息无法解析：{error}")))?;
+            .map_err(|error| AppError::internal(format!("作者信息无法解析：{error}")))
+    }
+
+    /// 取用户头像地址（`/v1/user/detail`）。
+    pub async fn user_avatar_url(&self, user_id: i64) -> AppResult<Option<String>> {
+        let body = self.user_detail_body(user_id).await?;
         Ok(body
             .pointer("/user/profile_image_urls/medium")
             .and_then(Value::as_str)
+            .map(str::to_string))
+    }
+
+    /// 取用户昵称（收藏订阅列表显示用）。
+    pub async fn user_name(&self, user_id: i64) -> AppResult<Option<String>> {
+        let body = self.user_detail_body(user_id).await?;
+        Ok(body
+            .pointer("/user/name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
             .map(str::to_string))
     }
 }
@@ -764,19 +780,29 @@ fn civil_from_unix(secs: u64) -> (i64, u64, u64, u64, u64, u64) {
 }
 
 fn build_http(mode: &str, proxy: Option<&str>) -> AppResult<reqwest::Client> {
-    build_http_with_ua(mode, proxy, USER_AGENT)
+    build_http_with_ua(mode, proxy, USER_AGENT, true)
 }
 
 /// 供更新检查等模块复用：代理规则一致，只换 User-Agent。
+///
+/// `follow_redirects` 为 false 时不自动跟随 3xx：更新检查要读 `Location`
+/// 里的 Release tag，跟随之后就只剩页面 HTML 了。
 pub(crate) fn build_http_with_ua(
     mode: &str,
     proxy: Option<&str>,
     user_agent: &str,
+    follow_redirects: bool,
 ) -> AppResult<reqwest::Client> {
+    let redirect = if follow_redirects {
+        reqwest::redirect::Policy::default()
+    } else {
+        reqwest::redirect::Policy::none()
+    };
     let mut builder = reqwest::Client::builder()
         .user_agent(user_agent)
         .timeout(REQUEST_TIMEOUT)
-        .referer(true);
+        .referer(true)
+        .redirect(redirect);
 
     match mode {
         "proxy" => {

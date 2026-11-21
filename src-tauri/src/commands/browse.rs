@@ -257,13 +257,31 @@ pub fn toggle_sub_auto_with(conn: &Connection, pixiv_user_id: i64) -> AppResult<
     sub_of(conn, pixiv_user_id)
 }
 
-/// 订阅预览需要访问 Pixiv API（T08）。在接上网络之前返回本地能确定的部分。
-pub fn preview_sub(pixiv_user_id: i64) -> SubPreview {
-    SubPreview {
-        pixiv_user_id,
-        name: format!("未知用户 {pixiv_user_id}"),
-        total_bookmarks: None,
+/// 订阅预览：查 Pixiv 用户详情拿昵称。查不到（无 token / 网络失败）就留空，
+/// 前端退回显示「用户 <id>」，不阻塞订阅流程。
+pub async fn preview_sub(pixiv_user_id: i64) -> AppResult<SubPreview> {
+    if pixiv_user_id <= 0 {
+        return Err(AppError::invalid("Pixiv 用户 ID 必须是正整数"));
     }
+    let name = fetch_sub_name(pixiv_user_id).await.unwrap_or_default();
+    Ok(SubPreview {
+        pixiv_user_id,
+        name,
+        total_bookmarks: None,
+    })
+}
+
+/// 用 `/v1/user/detail` 补昵称。无 token 或网络失败返回 None，调用方静默跳过。
+async fn fetch_sub_name(pixiv_user_id: i64) -> Option<String> {
+    let client = PixivClient::from_settings().ok()?;
+    client.user_name(pixiv_user_id).await.ok().flatten()
+}
+
+fn store_sub_name(conn: &Connection, pixiv_user_id: i64, name: &str) {
+    let _ = conn.execute(
+        "UPDATE bookmark_subs SET name = ?1 WHERE pixiv_user_id = ?2",
+        rusqlite::params![name.trim(), pixiv_user_id],
+    );
 }
 
 #[tauri::command]
@@ -288,16 +306,73 @@ pub fn get_author_avatar(author_id: i64) -> AppResult<Option<String>> {
     author_avatar_with(&conn, &data_dir, author_id)
 }
 
+/// 库里还没有昵称的行（老数据 / 订阅时离线）。空字符串也算缺失。
+fn needs_name(name: Option<&str>) -> bool {
+    name.map(|value| value.trim().is_empty()).unwrap_or(true)
+}
+
 #[tauri::command]
-pub fn list_bookmark_subs() -> AppResult<Vec<BookmarkSub>> {
+pub async fn list_bookmark_subs() -> AppResult<Vec<BookmarkSub>> {
+    // 老数据（以及订阅时离线的情况）name 是空的：逐个补一次昵称，成功后写回库。
+    let missing: Vec<i64> = {
+        let conn = open_library()?;
+        list_subs_with(&conn)?
+            .into_iter()
+            .filter(|sub| needs_name(sub.name.as_deref()))
+            .map(|sub| sub.pixiv_user_id)
+            .collect()
+    };
+
+    if !missing.is_empty() {
+        // 补昵称只是锦上添花，不能把订阅列表卡在网络上：没有 token 直接跳过，
+        // 有 token 时整段最多等 8 秒，超时就先显示「未知用户」，下次再补。
+        let has_token = crate::commands::settings::view()
+            .map(|view| view.has_token)
+            .unwrap_or(false);
+        if has_token {
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(8),
+                backfill_sub_names(&missing),
+            )
+            .await;
+        }
+    }
+
     let conn = open_library()?;
     list_subs_with(&conn)
 }
 
+/// 逐个把缺失的订阅昵称补进库；失败/超时都由调用方吞掉。
+async fn backfill_sub_names(ids: &[i64]) {
+    let Ok(client) = PixivClient::from_settings() else {
+        return;
+    };
+    for pixiv_user_id in ids {
+        let Ok(Some(name)) = client.user_name(*pixiv_user_id).await else {
+            continue;
+        };
+        if let Ok(conn) = open_library() {
+            store_sub_name(&conn, *pixiv_user_id, &name);
+        }
+    }
+}
+
 #[tauri::command]
-pub fn add_bookmark_sub(pixiv_user_id: i64, _check_now: bool) -> AppResult<BookmarkSub> {
+pub async fn add_bookmark_sub(pixiv_user_id: i64, _check_now: bool) -> AppResult<BookmarkSub> {
+    {
+        let conn = open_library()?;
+        add_sub_with(&conn, pixiv_user_id)?;
+    }
+
+    // 订阅本身不依赖网络；能连上 Pixiv 就顺手把昵称补上
+    if let Some(name) = fetch_sub_name(pixiv_user_id).await {
+        if let Ok(conn) = open_library() {
+            store_sub_name(&conn, pixiv_user_id, &name);
+        }
+    }
+
     let conn = open_library()?;
-    add_sub_with(&conn, pixiv_user_id)
+    sub_of(&conn, pixiv_user_id)
 }
 
 #[tauri::command]
@@ -313,8 +388,8 @@ pub fn toggle_bookmark_sub_auto(pixiv_user_id: i64) -> AppResult<BookmarkSub> {
 }
 
 #[tauri::command]
-pub fn preview_bookmark_sub(pixiv_user_id: i64) -> AppResult<SubPreview> {
-    Ok(preview_sub(pixiv_user_id))
+pub async fn preview_bookmark_sub(pixiv_user_id: i64) -> AppResult<SubPreview> {
+    preview_sub(pixiv_user_id).await
 }
 
 /// 重新获取所有作者的头像（按 `pixiv_user_id` 调 `/v1/user/detail`）。
@@ -548,9 +623,10 @@ mod tests {
     }
 
     #[test]
-    fn preview_returns_placeholder_until_t08() {
-        let preview = preview_sub(12345);
-        assert_eq!(preview.pixiv_user_id, 12345);
-        assert!(preview.total_bookmarks.is_none());
+    fn name_backfill_only_targets_blank_rows() {
+        assert!(needs_name(None));
+        assert!(needs_name(Some("")));
+        assert!(needs_name(Some("   ")));
+        assert!(!needs_name(Some("Tumber")));
     }
 }

@@ -303,6 +303,7 @@ export function Sidebar() {
               {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found} · 下载{" "}
               {row.downloaded}
               {row.failed > 0 ? ` · 失败 ${row.failed}` : ""}
+              {row.cancelled ? " · 已取消" : ""}
               {row.error ? `（${row.error}）` : ""}
             </p>
           ))}

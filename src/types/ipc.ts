@@ -187,6 +187,8 @@ export interface SubResult {
   failed: number;
   pages_scanned: number;
   caught_up: boolean;
+  /** 用户点了取消，检查提前结束 */
+  cancelled: boolean;
   error: string | null;
 }
 

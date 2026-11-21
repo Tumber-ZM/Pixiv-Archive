@@ -4,11 +4,18 @@ import { Bookmark, Plus } from "lucide-react";
 import { Dialog } from "../components/dialog/Dialog";
 import { EmptyState } from "../components/common/EmptyState";
 import { CMD, call, isAppError } from "../lib/ipc";
+import { useUi } from "../stores/ui";
 import type { BookmarkSub, SubPreview, SubResult } from "../types/ipc";
 
 function formatTime(raw: string | null): string {
   if (!raw) return "从未检查";
   return raw.replace("T", " ").slice(0, 16);
+}
+
+/** 订阅用户名：库里还没补上昵称时退回「未知用户 + id」，不显示空白。 */
+function displayName(name: string | null | undefined, id: number): string {
+  const trimmed = name?.trim();
+  return trimmed ? trimmed : `未知用户 ${id}`;
 }
 
 /** 自动下载开关（`06-界面规格.md` §7） */
@@ -39,6 +46,8 @@ export function BookmarkSubs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const setScanTask = useUi((state) => state.setScanTask);
+  const bumpData = useUi((state) => state.bumpData);
 
   const [addOpen, setAddOpen] = useState(false);
   const [userId, setUserId] = useState("");
@@ -131,17 +140,29 @@ export function BookmarkSubs() {
   const checkOne = async (row: BookmarkSub) => {
     setChecking(row.pixiv_user_id);
     setCheckError(null);
+    // 先立起浮窗：拉收藏页之前网络请求可能有几秒，用户要能随时取消
+    setScanTask({
+      current: 0,
+      total: 0,
+      imported: 0,
+      message: "准备检查订阅…",
+      kind: "subs",
+    });
     try {
       const result = await call<SubResult>(CMD.checkBookmarkSub, {
         pixivUserId: row.pixiv_user_id,
         full: false,
       });
       setCheckResult(result);
+      bumpData();
       setRefreshKey((key) => key + 1);
     } catch (reason: unknown) {
       setCheckError(isAppError(reason) ? reason.message : String(reason));
     } finally {
       setChecking(null);
+      // 后端进度事件会打开右下角浮窗；这里必须收掉，否则残留的 scanTask
+      // 会让后续扫描/同步都被判成「已有任务在运行」。
+      setScanTask(null);
     }
   };
 
@@ -178,7 +199,7 @@ export function BookmarkSubs() {
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate-1 text-body text-text">
-                  {row.name ?? `未知用户 ${row.pixiv_user_id}`}
+                  {displayName(row.name, row.pixiv_user_id)}
                 </p>
                 <p className="mt-1 text-micro text-text-2">
                   上次检查：{formatTime(row.last_checked)}
@@ -241,7 +262,7 @@ export function BookmarkSubs() {
 
         {preview && (
           <p className="mt-3 text-micro text-text-2">
-            @{preview.name} ·
+            {preview.name.trim() ? `@${preview.name.trim()}` : `用户 ${preview.pixiv_user_id}`} ·
             收藏 {preview.total_bookmarks ?? "未知"} 件
           </p>
         )}
@@ -261,25 +282,27 @@ export function BookmarkSubs() {
         onConfirm={unsubscribe}
       >
         <p>
-          将取消对「{removeTarget?.name ?? removeTarget?.pixiv_user_id}」的订阅。
-          已下载的作品会保留。
+          将取消对「
+          {removeTarget ? displayName(removeTarget.name, removeTarget.pixiv_user_id) : ""}
+          」的订阅。已下载的作品会保留。
         </p>
       </Dialog>
 
       <Dialog
         open={checkResult !== null}
-        title="检查完成"
+        title={checkResult?.cancelled ? "检查已取消" : "检查完成"}
         confirmLabel="知道了"
         onCancel={() => setCheckResult(null)}
         onConfirm={() => setCheckResult(null)}
       >
         <p className="text-body text-text">
-          {checkResult?.name || `用户 ${checkResult?.pixiv_user_id ?? ""}`}
+          {displayName(checkResult?.name, checkResult?.pixiv_user_id ?? 0)}
         </p>
         <p className="mt-2 text-micro text-text-2">
           新增 {checkResult?.new_found ?? 0} · 下载 {checkResult?.downloaded ?? 0} · 失败{" "}
           {checkResult?.failed ?? 0} · 翻页 {checkResult?.pages_scanned ?? 0}
           {checkResult?.caught_up ? " · 已追平" : ""}
+          {checkResult?.cancelled ? " · 已取消（剩余作品未处理）" : ""}
         </p>
         {checkResult?.error && (
           <p className="mt-2 text-micro text-danger">{checkResult.error}</p>

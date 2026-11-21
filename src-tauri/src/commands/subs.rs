@@ -27,6 +27,8 @@ pub struct SubResult {
     pub pages_scanned: usize,
     /// 快速模式下「整页都已入库」提前停止
     pub caught_up: bool,
+    /// 用户点取消后提前结束（前端据此显示「已取消」而不是「检查完成」）
+    pub cancelled: bool,
     pub error: Option<String>,
 }
 
@@ -135,9 +137,11 @@ async fn run_checks(
     let mut known = known_pixiv_ids(&conn)?;
     let total = user_ids.len();
     let mut results = Vec::with_capacity(total);
+    let mut cancelled = false;
 
     for (index, user_id) in user_ids.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
+            cancelled = true;
             break;
         }
         let mut result = SubResult {
@@ -151,6 +155,17 @@ async fn run_checks(
                 |row| row.get(0),
             )
             .unwrap_or_default();
+
+        // 订阅名缺失（老数据 / 订阅时离线）时顺手补一次，检查结果里也能显示真名
+        if result.name.trim().is_empty() {
+            if let Ok(Some(name)) = client.user_name(*user_id).await {
+                let _ = conn.execute(
+                    "UPDATE bookmark_subs SET name = ?1 WHERE pixiv_user_id = ?2",
+                    rusqlite::params![name, user_id],
+                );
+                result.name = name;
+            }
+        }
 
         emit(app, index, total, &format!("检查订阅 {}/{}", index + 1, total));
 
@@ -191,7 +206,25 @@ async fn run_checks(
         }
     }
 
-    emit(app, total, total, "订阅检查完成");
+    // 取消发生在「上一个用户检查完、下一个还没开始」时，最后一个结果也要标出来
+    if cancelled {
+        if let Some(last) = results.last_mut() {
+            last.cancelled = true;
+        }
+    }
+    // check_one 内部发现取消时也会标 result；最终提示统一看这两个来源
+    let cancelled = cancelled || results.last().map(|row| row.cancelled).unwrap_or(false);
+
+    emit(
+        app,
+        total,
+        total,
+        if cancelled {
+            "订阅检查已取消"
+        } else {
+            "订阅检查完成"
+        },
+    );
     Ok(results)
 }
 
@@ -217,6 +250,7 @@ async fn check_one(
 
     while pages < MAX_PAGES {
         if cancel.load(Ordering::Relaxed) {
+            result.cancelled = true;
             break;
         }
         let (illusts, next) = client.user_bookmarks_public(*user_id, next_url.as_deref()).await?;
@@ -259,6 +293,7 @@ async fn check_one(
     let queued_total = queued.len();
     for (idx, pixiv_id) in queued.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
+            result.cancelled = true;
             break;
         }
         emit(
