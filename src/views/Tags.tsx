@@ -383,17 +383,13 @@ export function Tags() {
             清除筛选
           </button>
         )}
-      </div>
-
-      {/* 标签组合：紧跟在筛选后面，保持单行高度 */}
-      <div className="mt-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="text-micro text-text-3"
-            title="勾选下方标签组成组合；保存后右键可重命名 / 删除 / 置顶"
-          >
-            标签组合
-          </span>
+        <span className="mx-1 h-4 w-px bg-line" aria-hidden />
+        <span
+          className="text-micro text-text-3"
+          title="勾选下方标签组成组合；保存后右键可重命名 / 删除 / 置顶"
+        >
+          标签组合
+        </span>
           <button
             type="button"
             className="tri-btn tri-btn-accent inline-flex items-center gap-1"
@@ -506,7 +502,6 @@ export function Tags() {
             })}
           </div>
         )}
-      </div>
 
       {/* 标签按钮云 */}
       <div className="mt-5">
