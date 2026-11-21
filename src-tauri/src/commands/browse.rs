@@ -377,6 +377,23 @@ pub fn list_tags(
 }
 
 #[tauri::command]
+pub fn list_author_local_pixiv_ids(author_pixiv_id: i64) -> AppResult<Vec<i64>> {
+    let conn = open_library()?;
+    let mut stmt = conn.prepare(
+        "SELECT a.pixiv_id
+         FROM artworks a
+         JOIN authors au ON au.id = a.author_id
+         WHERE au.pixiv_user_id = ?1",
+    )?;
+    let rows = stmt.query_map([author_pixiv_id], |row| row.get::<_, i64>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
 pub fn list_author_tags(author_id: i64) -> AppResult<Vec<TagRow>> {
     let conn = open_library()?;
     let mut stmt = conn.prepare(

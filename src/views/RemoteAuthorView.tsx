@@ -22,14 +22,17 @@ interface Props {
   onBack: () => void;
 }
 
-/** 作者页的「展示线上全部」：按 Pixiv 用户 ID 拉取线上作品。 */
+/** 作者页的「展示线上全部」：按 Pixiv 用户 ID 分页拉取，拿到一页就展示一页。 */
 export function RemoteAuthorView({ author, onBack }: Props) {
   const [items, setItems] = useState<RemoteIllust[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<number | null>(null);
-  const [done, setDone] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
+  const [localIds, setLocalIds] = useState<Set<number>>(new Set());
+  const [onlyLocal, setOnlyLocal] = useState(false);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [doneIds, setDoneIds] = useState<Set<number>>(new Set());
   const bumpData = useUi((state) => state.bumpData);
   const r18 = useUi((state) => state.r18);
   const ai = useUi((state) => state.ai);
@@ -41,25 +44,60 @@ export function RemoteAuthorView({ author, onBack }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    call<number[]>(CMD.listAuthorLocalPixivIds, {
+      authorPixivId: author.pixiv_user_id,
+    })
+      .then((ids) => {
+        if (!cancelled) setLocalIds(new Set(ids));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [author.pixiv_user_id]);
+
+  useEffect(() => {
+    let cancelled = false;
     setItems([]);
-    setLoading(true);
+    setInitialLoading(true);
+    setLoadingMore(false);
     setError(null);
     setNotice(null);
-    setDone(new Set());
-    call<RemoteIllust[]>(CMD.listPixivAuthorIllusts, {
-      pixivUserId: author.pixiv_user_id,
-    })
-      .then((list) => {
-        if (!cancelled) setItems(list);
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled) {
-          setError(isAppError(reason) ? reason.message : String(reason));
+    setDoneIds(new Set());
+
+    const load = async () => {
+      let next: string | null = null;
+      let count = 0;
+      try {
+        for (;;) {
+          const result: [RemoteIllust[], string | null] =
+            await call<[RemoteIllust[], string | null]>(
+              CMD.listPixivAuthorIllustsPage,
+              { pixivUserId: author.pixiv_user_id, nextUrl: next },
+            );
+          const page: RemoteIllust[] = result[0];
+          const nextUrl: string | null = result[1];
+          if (cancelled) return;
+          count += page.length;
+          setItems((prev) => [...prev, ...page]);
+          setInitialLoading(false);
+          if (!nextUrl || page.length === 0 || count >= 1000) {
+            setLoadingMore(false);
+            return;
+          }
+          next = nextUrl;
+          setLoadingMore(true);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      } catch (reason: unknown) {
+        if (cancelled) return;
+        const message = isAppError(reason) ? reason.message : String(reason);
+        if (count === 0) setError(message);
+        else setNotice(`部分线上作品加载失败：${message}`);
+        setLoadingMore(false);
+        setInitialLoading(false);
+      }
+    };
+    void load();
     return () => {
       cancelled = true;
     };
@@ -68,6 +106,7 @@ export function RemoteAuthorView({ author, onBack }: Props) {
   const visibleItems = useMemo(
     () =>
       items.filter((item) => {
+        if (onlyLocal && !localIds.has(item.pixiv_id)) return false;
         const isR18 = item.tags.some(
           (name) => name === "R-18" || name === "R-18G",
         );
@@ -84,7 +123,7 @@ export function RemoteAuthorView({ author, onBack }: Props) {
         if (gif === "only" && !item.is_gif) return false;
         return true;
       }),
-    [items, r18, ai, gif],
+    [items, onlyLocal, localIds, r18, ai, gif],
   );
 
   const orderedItems = useMemo(() => {
@@ -115,7 +154,8 @@ export function RemoteAuthorView({ author, onBack }: Props) {
     setNotice(null);
     try {
       await call<number>(CMD.downloadPixivIllust, { pixivId: item.pixiv_id });
-      setDone((prev) => new Set(prev).add(item.pixiv_id));
+      setDoneIds((prev) => new Set(prev).add(item.pixiv_id));
+      setLocalIds((prev) => new Set(prev).add(item.pixiv_id));
       bumpData();
       setNotice(`「${item.title || item.pixiv_id}」已下载入库`);
     } catch (reason: unknown) {
@@ -142,9 +182,20 @@ export function RemoteAuthorView({ author, onBack }: Props) {
             Pixiv 线上全部作品 ·{" "}
             {sort === "first_seen" ? "线上发布时间顺序" : SORT_LABELS[sort]}
             {sort !== "random" ? (order === "asc" ? " ↑" : " ↓") : ""}
-            {items.length > 0 && ` · 显示 ${visibleItems.length}/${items.length}`}
+            {items.length > 0 &&
+              ` · 已加载 ${items.length}${loadingMore ? "…" : ""}`}
+            {items.length > 0 && ` · 显示 ${visibleItems.length}`}
           </p>
         </div>
+        <button
+          type="button"
+          className="tri-btn"
+          data-active={onlyLocal}
+          onClick={() => setOnlyLocal((value) => !value)}
+          title="只显示已经下载到本地的作品"
+        >
+          仅展示本地
+        </button>
       </div>
 
       {deletedOnly && (
@@ -153,11 +204,11 @@ export function RemoteAuthorView({ author, onBack }: Props) {
         </p>
       )}
 
-      {loading ? (
+      {initialLoading && items.length === 0 ? (
         <p className="py-10 text-center text-micro text-text-2">
-          正在从 Pixiv 获取「{author.name}」的全部作品…
+          正在从 Pixiv 获取「{author.name}」的作品，第一页马上显示…
         </p>
-      ) : error ? (
+      ) : error && items.length === 0 ? (
         <div className="mt-4 rounded-card border border-line bg-surface p-4 text-micro text-text-2">
           <p>Pixiv 线上结果暂时不可用：{error}</p>
           <p className="mt-1 text-text-3">可以返回本地作品，本地标签不受影响。</p>
@@ -166,7 +217,9 @@ export function RemoteAuthorView({ author, onBack }: Props) {
         <p className="py-10 text-center text-micro text-text-2">
           {items.length === 0
             ? "Pixiv 上没有找到线上作品。"
-            : "当前 R18 / AI / GIF 筛选下没有作品。"}
+            : onlyLocal
+              ? "这些线上作品都还没有下载到本地。"
+              : "当前 R18 / AI / GIF 筛选下没有作品。"}
         </p>
       ) : (
         <>
@@ -184,6 +237,11 @@ export function RemoteAuthorView({ author, onBack }: Props) {
                   <span className="badge absolute bottom-2 right-2">
                     {item.page_count}P
                   </span>
+                  {localIds.has(item.pixiv_id) && (
+                    <span className="absolute left-2 top-2 rounded-full bg-black/70 px-1.5 py-0.5 text-micro text-white">
+                      本地
+                    </span>
+                  )}
                 </div>
                 <div className="p-2">
                   <p className="truncate text-label text-text" title={item.title}>
@@ -196,11 +254,11 @@ export function RemoteAuthorView({ author, onBack }: Props) {
                   <button
                     type="button"
                     className="tri-btn tri-btn-accent mt-2 inline-flex w-full items-center justify-center gap-1"
-                    disabled={busy !== null || done.has(item.pixiv_id)}
+                    disabled={busy !== null || doneIds.has(item.pixiv_id)}
                     onClick={() => void download(item)}
                   >
                     <Download size={11} />
-                    {done.has(item.pixiv_id)
+                    {doneIds.has(item.pixiv_id)
                       ? "已入库"
                       : busy === item.pixiv_id
                         ? "下载中…"
@@ -210,6 +268,11 @@ export function RemoteAuthorView({ author, onBack }: Props) {
               </div>
             ))}
           </div>
+          {loadingMore && (
+            <p className="mt-4 text-center text-micro text-text-3">
+              继续加载线上作品…
+            </p>
+          )}
           {notice && <p className="mt-3 text-micro text-text-2">{notice}</p>}
         </>
       )}

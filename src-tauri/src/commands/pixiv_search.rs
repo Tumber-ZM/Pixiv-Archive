@@ -71,6 +71,18 @@ pub async fn download_pixiv_illust(pixiv_id: i64) -> AppResult<usize> {
     .await
 }
 
+/// 作者页「展示线上全部」的单页接口：前端每拿到一页就立即展示。
+#[tauri::command]
+pub async fn list_pixiv_author_illusts_page(
+    pixiv_user_id: i64,
+    next_url: Option<String>,
+) -> AppResult<(Vec<RemoteIllust>, Option<String>)> {
+    let client = PixivClient::from_settings()?;
+    client
+        .user_illusts_remote(pixiv_user_id, next_url.as_deref())
+        .await
+}
+
 /// 作者页「展示线上全部」：按 Pixiv 用户 ID 拉取线上作品（最多 1000 件）。
 #[tauri::command]
 pub async fn list_pixiv_author_illusts(pixiv_user_id: i64) -> AppResult<Vec<RemoteIllust>> {
