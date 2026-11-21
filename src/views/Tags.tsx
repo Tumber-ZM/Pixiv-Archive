@@ -17,7 +17,7 @@ interface CurrentTag {
 }
 
 export function Tags() {
-  const [q, setQ] = useState("");
+  const q = useUi((state) => state.q);
   const [rows, setRows] = useState<TagRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,13 +71,6 @@ export function Tags() {
 
   return (
     <div className="px-6 py-4">
-      <input
-        className="line-input w-[320px]"
-        placeholder="搜索标签…"
-        value={q}
-        onChange={(event) => setQ(event.currentTarget.value)}
-      />
-
       <div className="mt-4">
         {error ? (
           <EmptyState title="加载失败" hint={error} />

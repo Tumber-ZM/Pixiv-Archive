@@ -133,7 +133,9 @@ export const useUi = create<UiState>()(
       gif: "all",
       deletedOnly: false,
 
-      setView: (view) => set({ view }),
+      // 切换页面时清掉搜索词：顶栏搜索的搜索范围会跟着页面变
+      setView: (view) =>
+        set((state) => (state.view === view ? { view } : { view, q: "" })),
       toggleLayout: () =>
         set((state) => ({ layout: state.layout === "grid" ? "masonry" : "grid" })),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),

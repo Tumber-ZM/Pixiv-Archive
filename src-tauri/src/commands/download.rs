@@ -653,7 +653,7 @@ pub async fn fetch_and_import(
     Ok(files.len())
 }
 
-fn open_library() -> AppResult<Connection> {
+pub(crate) fn open_library() -> AppResult<Connection> {
     let path = paths::db_path()?;
     let data_dir = paths::data_dir()?;
     std::fs::create_dir_all(&data_dir)?;

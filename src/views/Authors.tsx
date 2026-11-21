@@ -11,6 +11,7 @@ import type {
   AuthorRow,
   FavoriteSyncReport,
   FavoriteSyncStatus,
+  RemoteAuthor,
   Sub,
   SubResult,
 } from "../types/ipc";
@@ -134,7 +135,7 @@ function AuthorCard({
 }
 
 export function Authors() {
-  const [q, setQ] = useState("");
+  const q = useUi((state) => state.q);
   const [rows, setRows] = useState<AuthorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -159,6 +160,13 @@ export function Authors() {
   // 订阅确认：作者卡上点「订阅」先问是否补全历史
   const [subscribeTarget, setSubscribeTarget] = useState<AuthorRow | null>(null);
   const [subscribeBackfill, setSubscribeBackfill] = useState(false);
+  // 本地搜不到作者时，非阻塞地补一次 Pixiv 远端作者搜索
+  const [remoteAuthors, setRemoteAuthors] = useState<RemoteAuthor[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteQuery, setRemoteQuery] = useState("");
+  const [remoteSubscribed, setRemoteSubscribed] = useState<Set<number>>(new Set());
+  const [remotePending, setRemotePending] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,6 +191,50 @@ export function Authors() {
       clearTimeout(timer);
     };
   }, [q, refreshKey, dataEpoch]);
+
+  // 本地作者为空时才去 Pixiv 搜；远端请求不阻塞本地列表，失败只提示不弹错
+  useEffect(() => {
+    const word = q.trim();
+    if (!word) {
+      setRemoteAuthors([]);
+      setRemoteError(null);
+      setRemoteLoading(false);
+      setRemoteQuery("");
+      return undefined;
+    }
+    if (loading || rows.length > 0) {
+      if (rows.length > 0) {
+        setRemoteAuthors([]);
+        setRemoteError(null);
+        setRemoteLoading(false);
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setRemoteLoading(true);
+      setRemoteError(null);
+      call<RemoteAuthor[]>(CMD.searchPixivAuthors, { word })
+        .then((list) => {
+          if (cancelled) return;
+          setRemoteAuthors(list);
+          setRemoteQuery(word);
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setRemoteError(isAppError(reason) ? reason.message : String(reason));
+          setRemoteAuthors([]);
+          setRemoteQuery(word);
+        })
+        .finally(() => {
+          if (!cancelled) setRemoteLoading(false);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [q, rows.length, loading]);
 
   // Pixiv 收藏概况：同步过才按真实收藏筛选，没同步时退回「订阅前就有」的口径
   useEffect(() => {
@@ -219,8 +271,28 @@ export function Authors() {
     }
   };
 
-  const confirmSubscribe = async () => {
-    const row = subscribeTarget;
+  // 远端作者列表里的「订阅」：默认只订阅新作品，不自动补全
+  const subscribeRemote = async (author: RemoteAuthor) => {
+    if (remotePending !== null) return;
+    setRemotePending(author.pixiv_user_id);
+    setNotice(null);
+    try {
+      await call<Sub>(CMD.addSub, {
+        kind: "author",
+        targetPixivId: author.pixiv_user_id,
+        backfill: false,
+      });
+      setRemoteSubscribed((prev) => new Set(prev).add(author.pixiv_user_id));
+      setNotice(`已订阅「${author.name}」，新作品会在订阅更新时下载`);
+      setTimeout(() => setNotice(null), 6000);
+    } catch (reason: unknown) {
+      setNotice(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setRemotePending(null);
+    }
+  };
+
+  const confirmSubscribe = async () => {    const row = subscribeTarget;
     if (!row || pendingSub !== null) return;
     setPendingSub(row.pixiv_user_id);
     setNotice(null);
@@ -358,15 +430,6 @@ export function Authors() {
   return (
     <div className="px-6 py-4">
       <div className="flex items-center gap-3">
-        {/* .line-input 自带 width:100%，必须给它一个定宽父级，否则会把按钮挤出去 */}
-        <div className="w-[320px]">
-          <input
-            className="line-input"
-            placeholder="搜索作者…"
-            value={q}
-            onChange={(event) => setQ(event.currentTarget.value)}
-          />
-        </div>
         <button
           type="button"
           className="btn shrink-0"
@@ -470,6 +533,59 @@ export function Authors() {
           </div>
         )}
       </div>
+
+      {q.trim() && !loading && rows.length === 0 && (
+        <div className="mt-6 border-t border-line pt-4">
+          <div className="flex items-center gap-2">
+            <span className="text-micro text-text-3">Pixiv 上的作者</span>
+            {remoteLoading && <span className="text-micro text-text-3">搜索中…</span>}
+          </div>
+          {remoteError ? (
+            <p className="mt-2 text-micro text-text-2">
+              远端搜索不可用：{remoteError}。本地结果不受影响。
+            </p>
+          ) : remoteLoading ? (
+            <p className="mt-2 text-micro text-text-2">正在 Pixiv 上搜索「{q.trim()}」…</p>
+          ) : remoteQuery === q.trim() && remoteAuthors.length > 0 ? (
+            <div className="mt-2 grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
+              {remoteAuthors.map((author) => {
+                const subscribed = remoteSubscribed.has(author.pixiv_user_id);
+                return (
+                  <div
+                    key={author.pixiv_user_id}
+                    className="flex items-center gap-3 rounded-card border border-line bg-surface p-3"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-text-3">
+                      <Users size={14} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-label text-text">{author.name}</p>
+                      <p className="truncate text-micro text-text-3">
+                        @{author.account} · Pixiv {author.pixiv_user_id}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn shrink-0"
+                      disabled={subscribed || remotePending !== null}
+                      onClick={() => void subscribeRemote(author)}
+                      title="只订阅新作品；要补全历史请到订阅列表点「补全」"
+                    >
+                      {subscribed
+                        ? "已订阅"
+                        : remotePending === author.pixiv_user_id
+                          ? "订阅中…"
+                          : "订阅"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : remoteQuery === q.trim() ? (
+            <p className="mt-2 text-micro text-text-2">Pixiv 上也没有找到这个作者。</p>
+          ) : null}
+        </div>
+      )}
 
       <Dialog
         open={subscribeTarget !== null}

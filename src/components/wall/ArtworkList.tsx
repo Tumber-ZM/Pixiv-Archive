@@ -3,7 +3,7 @@ import { ArrowLeft, Images, Loader2 } from "lucide-react";
 
 import { CMD, call, isAppError } from "../../lib/ipc";
 import { TRI_LABELS, useUi } from "../../stores/ui";
-import type { AppError, ArtworkCard, BatchResult, ListQuery, Page, SyncReport } from "../../types/ipc";
+import type { AppError, ArtworkCard, BatchResult, ListQuery, Page, RemoteIllust, SyncReport } from "../../types/ipc";
 import { BatchBar } from "../batch/BatchBar";
 import { ContextMenu } from "../common/ContextMenu";
 import { EmptyState } from "../common/EmptyState";
@@ -24,6 +24,8 @@ interface ArtworkListProps {
   onBack?: () => void;
   /** 列表变化后通知外层（例如删空了要回列表） */
   onChanged?: () => void;
+  /** 本地搜不到时去 Pixiv 搜作品（只给画廊用） */
+  remoteSearch?: boolean;
 }
 
 /**
@@ -32,7 +34,7 @@ interface ArtworkListProps {
  * 无限滚动：每批 60 条，底部哨兵进入视口就取下一批并追加。
  * 筛选条件变化会清空累积结果、退回第 1 批——否则新旧条件的结果会混在一起。
  */
-export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkListProps) {
+export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSearch }: ArtworkListProps) {
   const q = useUi((state) => state.q);
   const sort = useUi((state) => state.sort);
   const order = useUi((state) => state.order);
@@ -71,6 +73,14 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
   const [menu, setMenu] = useState<{ x: number; y: number; card: ArtworkCard } | null>(null);
   const [blankMenu, setBlankMenu] = useState<{ x: number; y: number } | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  // 远端作品搜索：本地为空时才请求，失败只提示不弹错
+  const [remoteItems, setRemoteItems] = useState<RemoteIllust[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteFor, setRemoteFor] = useState("");
+  const [remoteBusy, setRemoteBusy] = useState<number | null>(null);
+  const [remoteDone, setRemoteDone] = useState<Set<number>>(new Set());
+  const [remoteNotice, setRemoteNotice] = useState<string | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   // 防止同一批被重复请求（快速滚动时哨兵会连续触发）
@@ -83,6 +93,41 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     const timer = setTimeout(() => setDebouncedQ(q), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [q]);
+
+  // 本地没有结果时，非阻塞地补一次 Pixiv 作品搜索
+  useEffect(() => {
+    if (!remoteSearch || !debouncedQ.trim() || loading || items.length > 0) {
+      setRemoteItems([]);
+      setRemoteError(null);
+      setRemoteLoading(false);
+      setRemoteFor("");
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setRemoteLoading(true);
+      setRemoteError(null);
+      call<RemoteIllust[]>(CMD.searchPixivIllusts, { word: debouncedQ.trim() })
+        .then((list) => {
+          if (cancelled) return;
+          setRemoteItems(list);
+          setRemoteFor(debouncedQ.trim());
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setRemoteError(isAppError(reason) ? reason.message : String(reason));
+          setRemoteItems([]);
+          setRemoteFor(debouncedQ.trim());
+        })
+        .finally(() => {
+          if (!cancelled) setRemoteLoading(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [remoteSearch, debouncedQ, loading, items.length]);
 
   // 条件变了：清空累积结果，退回第 1 批
   useEffect(() => {
@@ -282,6 +327,22 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     }
   };
 
+  const downloadRemote = async (item: RemoteIllust) => {
+    if (remoteBusy !== null) return;
+    setRemoteBusy(item.pixiv_id);
+    setRemoteNotice(null);
+    try {
+      await call<number>(CMD.downloadPixivIllust, { pixivId: item.pixiv_id });
+      setRemoteDone((prev) => new Set(prev).add(item.pixiv_id));
+      setRemoteNotice(`「${item.title || item.pixiv_id}」已下载入库`);
+      bumpData();
+    } catch (reason: unknown) {
+      setRemoteNotice(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setRemoteBusy(null);
+    }
+  };
+
   if (error) {
     return <EmptyState title="加载失败" hint={error.message} />;
   }
@@ -325,11 +386,65 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
         <SkeletonGrid />
       ) : items.length === 0 ? (
         filtered ? (
-          <EmptyState title="没有符合条件的作品" hint="换个关键词，或清除筛选条件">
-            <button type="button" className="btn mt-2" onClick={clearFilters}>
-              清除筛选
-            </button>
-          </EmptyState>
+          <div>
+            <EmptyState title="没有符合条件的作品" hint="换个关键词，或清除筛选条件">
+              <button type="button" className="btn mt-2" onClick={clearFilters}>
+                清除筛选
+              </button>
+            </EmptyState>
+            {remoteSearch && debouncedQ.trim() && (
+              <div className="mt-6 border-t border-line pt-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-micro text-text-3">Pixiv 上的作品</span>
+                  {remoteLoading && <span className="text-micro text-text-3">搜索中…</span>}
+                </div>
+                {remoteError ? (
+                  <p className="mt-2 text-micro text-text-2">
+                    远端搜索不可用：{remoteError}。本地结果不受影响。
+                  </p>
+                ) : remoteLoading ? (
+                  <p className="mt-2 text-micro text-text-2">
+                    正在 Pixiv 上搜索「{debouncedQ.trim()}」…
+                  </p>
+                ) : remoteFor === debouncedQ.trim() && remoteItems.length > 0 ? (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {remoteItems.map((item) => (
+                      <div
+                        key={item.pixiv_id}
+                        className="flex items-center gap-3 rounded-btn border border-line bg-surface px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-label text-text">
+                            {item.title || "(无标题)"}
+                          </p>
+                          <p className="truncate text-micro text-text-3">
+                            {item.author_name} · Pixiv {item.pixiv_id} · {item.page_count} 页
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn shrink-0"
+                          disabled={remoteBusy !== null || remoteDone.has(item.pixiv_id)}
+                          onClick={() => void downloadRemote(item)}
+                        >
+                          {remoteDone.has(item.pixiv_id)
+                            ? "已入库"
+                            : remoteBusy === item.pixiv_id
+                              ? "下载中…"
+                              : "下载"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : remoteFor === debouncedQ.trim() ? (
+                  <p className="mt-2 text-micro text-text-2">Pixiv 上也没有找到作品。</p>
+                ) : null}
+                {remoteNotice && (
+                  <p className="mt-2 text-micro text-text-2">{remoteNotice}</p>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <EmptyState
             icon={Images}

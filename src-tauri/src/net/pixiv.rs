@@ -80,6 +80,25 @@ pub struct IllustRef {
     pub page_count: i64,
 }
 
+/// 远端作者搜索的一条结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteAuthor {
+    pub pixiv_user_id: i64,
+    pub name: String,
+    pub account: String,
+    pub avatar: Option<String>,
+}
+
+/// 远端作品搜索的一条结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteIllust {
+    pub pixiv_id: i64,
+    pub title: String,
+    pub author_name: String,
+    pub author_id: i64,
+    pub page_count: i64,
+}
+
 struct CachedToken {
     access_token: String,
     expires_at: Instant,
@@ -792,6 +811,154 @@ impl PixivClient {
             zip_url: zip_url.to_string(),
             frames,
         })
+    }
+
+    /// `/v1/search/user`：本地作者搜不到时，去 Pixiv 上找作者。
+    pub async fn search_users(&self, word: &str) -> AppResult<Vec<RemoteAuthor>> {
+        let word = word.trim();
+        if word.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{API_BASE}/v1/search/user"))
+            .query(&[
+                ("word", word),
+                ("sort", "date_desc"),
+                ("filter", "for_android"),
+            ])
+            .bearer_auth(token)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .send()
+            .await
+            .map_err(|error| AppError::new("NETWORK", format!("无法连接 Pixiv：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 作者搜索返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作者搜索响应无法解析：{error}")))?;
+        let previews = body
+            .get("user_previews")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(previews
+            .iter()
+            .filter_map(|preview| {
+                let user = preview.get("user")?;
+                Some(RemoteAuthor {
+                    pixiv_user_id: user.get("id").and_then(Value::as_i64)?,
+                    name: user
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    account: user
+                        .get("account")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    avatar: user
+                        .pointer("/profile_image_urls/medium")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                })
+            })
+            .collect())
+    }
+
+    /// `/v1/search/illust`：本地作品搜不到时，去 Pixiv 上找工作。
+    pub async fn search_illusts(&self, word: &str) -> AppResult<Vec<RemoteIllust>> {
+        let word = word.trim();
+        if word.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{API_BASE}/v1/search/illust"))
+            .query(&[
+                ("word", word),
+                ("search_target", "partial_match_for_tags"),
+                ("sort", "date_desc"),
+                ("filter", "for_android"),
+            ])
+            .bearer_auth(token)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .send()
+            .await
+            .map_err(|error| AppError::new("NETWORK", format!("无法连接 Pixiv：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 作品搜索返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作品搜索响应无法解析：{error}")))?;
+        let illusts = body
+            .get("illusts")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(illusts
+            .iter()
+            .filter_map(|illust| {
+                Some(RemoteIllust {
+                    pixiv_id: illust.get("id").and_then(Value::as_i64)?,
+                    title: illust
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_name: illust
+                        .pointer("/user/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_id: illust.pointer("/user/id").and_then(Value::as_i64).unwrap_or(0),
+                    page_count: illust.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+                })
+            })
+            .collect())
     }
 
     /// `/v1/user/detail` 的响应体。头像、昵称都从这里取。

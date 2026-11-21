@@ -14,6 +14,16 @@ export function Topbar() {
   const gif = useUi((s) => s.gif);
   const deletedOnly = useUi((s) => s.deletedOnly);
   const layout = useUi((s) => s.layout);
+  const view = useUi((s) => s.view);
+
+  const isLibraryView =
+    view === "gallery" || view === "favorites" || view === "local";
+  const searchPlaceholder =
+    view === "authors"
+      ? "搜索作者名 / Pixiv ID…"
+      : view === "tags"
+        ? "搜索标签…"
+        : "搜索标题 / 作者 / 标签 / Pixiv ID…";
 
   const setQ = useUi((s) => s.setQ);
   const setSort = useUi((s) => s.setSort);
@@ -37,16 +47,20 @@ export function Topbar() {
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-paper px-6">
-      <div className="flex w-[320px] items-center gap-2">
-        <Search size={16} className="shrink-0 text-text-3" />
-        <input
-          className="line-input"
-          placeholder="搜索标题 / 作者 / 标签 / Pixiv ID…"
-          value={q}
-          onChange={(event) => setQ(event.currentTarget.value)}
-        />
-      </div>
+      {view !== "subs" && (
+        <div className="flex w-[320px] items-center gap-2">
+          <Search size={16} className="shrink-0 text-text-3" />
+          <input
+            className="line-input"
+            placeholder={searchPlaceholder}
+            value={q}
+            onChange={(event) => setQ(event.currentTarget.value)}
+          />
+        </div>
+      )}
 
+      {isLibraryView && (
+        <>
       <div className="relative" ref={menuRef}>
         <button
           type="button"
@@ -125,6 +139,8 @@ export function Topbar() {
       >
         {layout === "grid" ? <Columns3 size={16} /> : <LayoutGrid size={16} />}
       </button>
+        </>
+      )}
     </header>
   );
 }

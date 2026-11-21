@@ -223,6 +223,23 @@ export interface SubResult {
   error: string | null;
 }
 
+/** Pixiv 远端作者搜索的一条结果。 */
+export interface RemoteAuthor {
+  pixiv_user_id: number;
+  name: string;
+  account: string;
+  avatar: string | null;
+}
+
+/** Pixiv 远端作品搜索的一条结果。 */
+export interface RemoteIllust {
+  pixiv_id: number;
+  title: string;
+  author_name: string;
+  author_id: number;
+  page_count: number;
+}
+
 /** 校验/补页的结果。 */
 export interface RepairReport {
   checked: number;
