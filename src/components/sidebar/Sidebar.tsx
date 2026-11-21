@@ -323,24 +323,27 @@ export function Sidebar() {
       >
         <p className="text-micro text-danger">{syncError}</p>
       </Dialog>
-    <Dialog
+      <Dialog
         open={subResults !== null}
-        title="订阅更新完成"
+        title={
+          subResults?.some((row) => row.cancelled) ? "订阅更新已取消" : "订阅更新完成"
+        }
         confirmLabel="知道了"
         onCancel={() => setSubResults(null)}
         onConfirm={() => setSubResults(null)}
       >
         <p className="text-body text-text">
           新增{" "}
-          {subResults?.reduce((sum, row) => sum + row.new_found, 0) ?? 0} 件 · 下载{" "}
+          {subResults?.reduce((sum, row) => sum + row.new_found, 0) ?? 0} 件 · 补缺{" "}
+          {subResults?.reduce((sum, row) => sum + row.repaired, 0) ?? 0} 件 · 下载{" "}
           {subResults?.reduce((sum, row) => sum + row.downloaded, 0) ?? 0} 件
         </p>
         <div className="mt-2 flex max-h-[240px] flex-col gap-1 overflow-y-auto">
           {subResults?.map((row) => (
             <p key={`${row.kind}:${row.pixiv_user_id}`} className="text-micro text-text-2">
               {row.kind === "author" ? "作者" : "收藏"} ·{" "}
-              {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found} · 下载{" "}
-              {row.downloaded}
+              {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found}
+              {row.repaired > 0 ? ` · 补缺 ${row.repaired}` : ""} · 下载 {row.downloaded}
               {row.failed > 0 ? ` · 失败 ${row.failed}` : ""}
               {row.cancelled ? " · 已取消" : ""}
               {row.error ? `（${row.error}）` : ""}
