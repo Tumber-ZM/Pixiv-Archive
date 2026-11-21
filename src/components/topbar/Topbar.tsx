@@ -36,6 +36,9 @@ export function Topbar() {
   const toggleDeletedOnly = useUi((s) => s.toggleDeletedOnly);
   const toggleLayout = useUi((s) => s.toggleLayout);
   const requestShuffle = useUi((s) => s.requestShuffle);
+  const randomTag = useUi((s) => s.randomTag);
+  const showAllTagsDefault = useUi((s) => s.showAllTagsDefault);
+  const toggleShowAllTagsDefault = useUi((s) => s.toggleShowAllTagsDefault);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -69,23 +72,40 @@ export function Topbar() {
 
       {view === "tags" && (
         <TopbarButton
-          onClick={() => window.dispatchEvent(new Event("pa-tags-show-all"))}
-          title="清空标签勾选，图片区显示全部作品"
+          active={showAllTagsDefault}
+          onClick={toggleShowAllTagsDefault}
+          title="开启时没勾选标签也展示全部作品；关闭后需要先勾选标签"
         >
-          默认展示全部
+          {showAllTagsDefault ? "默认状态：展示全部" : "默认状态：不展示全部"}
         </TopbarButton>
       )}
 
       {isLibraryView && (
         <>
-      <TopbarButton
-        onClick={requestShuffle}
-        title="随机打乱一次；排序下拉框保持不变"
-        className="inline-flex items-center gap-1"
-      >
-        <Shuffle size={12} />
-        随机
-      </TopbarButton>
+      {view === "tags" ? (
+        <>
+          <TopbarButton
+            onClick={() => window.dispatchEvent(new Event("pa-tags-random"))}
+            title="随机挑一个标签并自动勾选"
+          >
+            随机标签
+          </TopbarButton>
+          {randomTag && (
+            <span className="combo-tag" title={`随机标签：${randomTag.name}`}>
+              # {randomTag.label}
+            </span>
+          )}
+        </>
+      ) : (
+        <TopbarButton
+          onClick={requestShuffle}
+          title="随机打乱一次；排序下拉框保持不变"
+          className="inline-flex items-center gap-1"
+        >
+          <Shuffle size={12} />
+          随机
+        </TopbarButton>
+      )}
 
       <div className="relative" ref={menuRef}>
         <TopbarButton

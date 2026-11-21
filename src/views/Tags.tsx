@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   Pin,
+  Save,
   Tag as TagIcon,
   X,
 } from "lucide-react";
@@ -65,6 +66,12 @@ export function Tags() {
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [remoteFor, setRemoteFor] = useState("");
+  const [remoteExpanded, setRemoteExpanded] = useState(false);
+  const [remoteHasOverflow, setRemoteHasOverflow] = useState(false);
+  const remoteBoxRef = useRef<HTMLDivElement>(null);
+
+  const showAllTagsDefault = useUi((state) => state.showAllTagsDefault);
+  const setRandomTag = useUi((state) => state.setRandomTag);
 
   const pendingTag = useUi((state) => state.pendingTag);
   const consumePending = useUi((state) => state.consumePending);
@@ -165,12 +172,41 @@ export function Tags() {
     };
   }, [q]);
 
-  // 顶栏「默认展示全部」：清空勾选，图片区回到全部作品
+  // 顶栏「随机标签」：从当前标签列表随机挑一个并勾选
   useEffect(() => {
-    const handler = () => setSelectedTags([]);
-    window.addEventListener("pa-tags-show-all", handler);
-    return () => window.removeEventListener("pa-tags-show-all", handler);
-  }, []);
+    const handler = () => {
+      if (rows.length === 0) return;
+      const candidates = rows.filter((row) => !selectedTags.includes(row.name));
+      const pool = candidates.length > 0 ? candidates : rows;
+      const row = pool[Math.floor(Math.random() * pool.length)];
+      setRandomTag({
+        name: row.name,
+        label: row.translated_name ?? row.name,
+      });
+      setSelectedTags((prev) =>
+        prev.includes(row.name) ? prev : [...prev, row.name],
+      );
+    };
+    window.addEventListener("pa-tags-random", handler);
+    return () => window.removeEventListener("pa-tags-random", handler);
+  }, [rows, selectedTags, setRandomTag]);
+
+  // Pixiv 标签默认只显示一行
+  useEffect(() => {
+    const el = remoteBoxRef.current;
+    if (!el) return undefined;
+    const update = () => {
+      setRemoteHasOverflow(el.scrollHeight > TAG_ROW_HEIGHT + 1);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [remoteTags, remoteExpanded, remoteFor]);
+
+  useEffect(() => {
+    setRemoteExpanded(false);
+  }, [q]);
 
   // 标签按钮云是否有被 2 行裁掉的内容
   useEffect(() => {
@@ -349,66 +385,63 @@ export function Tags() {
         )}
       </div>
 
-      {/* 标签组合 */}
-      <div className="mt-4">
-        <div className="flex items-center gap-2">
-          <span className="text-micro text-text-3">标签组合</span>
-          <span className="text-micro text-text-3">
-            {selectedTags.length > 0
-              ? `已选 ${selectedTags.length} 个标签`
-              : "勾选下方标签后保存"}
+      {/* 标签组合：紧跟在筛选后面，保持单行高度 */}
+      <div className="mt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="text-micro text-text-3"
+            title="勾选下方标签组成组合；保存后右键可重命名 / 删除 / 置顶"
+          >
+            标签组合
           </span>
-        </div>
-
-        <div className="mt-2 rounded-card border border-line p-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-micro text-text-3">此次组合：</span>
-            {selectedTags.length === 0 ? (
-              <span className="text-micro text-text-3">未选择标签</span>
-            ) : (
-              selectedTags.map((tag) => (
-                <span key={tag} className="combo-tag" title={tag}>
-                  #{labelFor(tag)}
-                  <button
-                    type="button"
-                    className="combo-tag-x"
-                    aria-label={`移除 ${tag}`}
-                    onClick={() => toggleTag(tag)}
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))
-            )}
+          <button
+            type="button"
+            className="tri-btn tri-btn-accent inline-flex items-center gap-1"
+            disabled={selectedTags.length === 0 || comboBusy}
+            onClick={saveCombo}
+            title="把当前勾选的标签保存成组合"
+          >
+            <Save size={12} />
+            保存该组标签
+          </button>
+          <div className="w-[160px]">
+            <input
+              className="line-input"
+              placeholder="组合名称（可留空）"
+              value={comboName}
+              maxLength={30}
+              onChange={(event) => setComboName(event.currentTarget.value)}
+            />
+          </div>
+          {selectedTags.length > 0 && (
             <button
               type="button"
-              className="tri-btn"
-              disabled={selectedTags.length === 0 || comboBusy}
-              onClick={saveCombo}
+              className="text-micro text-text-3 hover:text-text"
+              onClick={() => setSelectedTags([])}
             >
-              保存该组标签
+              清空
             </button>
-            <div className="w-[180px]">
-              <input
-                className="line-input"
-                placeholder="组合名称（可留空）"
-                value={comboName}
-                maxLength={30}
-                onChange={(event) => setComboName(event.currentTarget.value)}
-              />
-            </div>
-            {selectedTags.length > 0 && (
-              <button
-                type="button"
-                className="text-micro text-text-3 hover:text-text"
-                onClick={() => setSelectedTags([])}
-              >
-                清空
-              </button>
-            )}
-          </div>
-          {comboError && <p className="mt-2 text-micro text-danger">{comboError}</p>}
+          )}
+          <span className="text-micro text-text-3">此次组合：</span>
+          {selectedTags.length === 0 ? (
+            <span className="text-micro text-text-3">未选择标签</span>
+          ) : (
+            selectedTags.map((tag) => (
+              <span key={tag} className="combo-tag" title={tag}>
+                #{labelFor(tag)}
+                <button
+                  type="button"
+                  className="combo-tag-x"
+                  aria-label={`移除 ${tag}`}
+                  onClick={() => toggleTag(tag)}
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))
+          )}
         </div>
+        {comboError && <p className="mt-1 text-micro text-danger">{comboError}</p>}
 
         {combos.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
@@ -472,11 +505,6 @@ export function Tags() {
               );
             })}
           </div>
-        )}
-        {combos.length === 0 && (
-          <p className="mt-2 text-micro text-text-3">
-            还没有保存的组合。勾选标签、点「保存该组标签」即可；右键组合可以重命名 / 删除 / 置顶。
-          </p>
         )}
       </div>
 
@@ -573,52 +601,79 @@ export function Tags() {
             正在从 Pixiv 获取{q.trim() ? `「${q.trim()}」的` : "热门"}标签…
           </p>
         ) : remoteFor === q.trim() && remoteTags.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {remoteTags.map((tag) => {
-              const selected = selectedTags.includes(tag.name);
-              const label = tag.translated_name ?? tag.name;
-              return (
-                <div
-                  key={tag.name}
-                  className="tag-pick"
-                  data-active={selected}
-                  data-source="pixiv"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={() => toggleTag(tag.name)}
-                    aria-label={`选择 Pixiv 标签 ${label}`}
-                  />
-                  <button
-                    type="button"
-                    className="tag-pick-open"
-                    onClick={() => toggleTag(tag.name)}
-                    title={`勾选 / 取消 Pixiv 标签 #${label}`}
+          <>
+            <div
+              ref={remoteBoxRef}
+              className={`mt-2 flex flex-wrap gap-2 ${remoteExpanded ? "" : "overflow-hidden"}`}
+              style={
+                remoteExpanded ? undefined : { maxHeight: TAG_ROW_HEIGHT }
+              }
+            >
+              {remoteTags.map((tag) => {
+                const selected = selectedTags.includes(tag.name);
+                const label = tag.translated_name ?? tag.name;
+                return (
+                  <div
+                    key={tag.name}
+                    className="tag-pick"
+                    data-active={selected}
+                    data-source="pixiv"
                   >
-                    <span className="tag-pick-label"># {label}</span>
-                    {tag.count > 0 && <span className="tag-pick-count">{tag.count}</span>}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleTag(tag.name)}
+                      aria-label={`选择 Pixiv 标签 ${label}`}
+                    />
+                    <button
+                      type="button"
+                      className="tag-pick-open"
+                      onClick={() => toggleTag(tag.name)}
+                      title={`勾选 / 取消 Pixiv 标签 #${label}`}
+                    >
+                      <span className="tag-pick-label"># {label}</span>
+                      {tag.count > 0 && (
+                        <span className="tag-pick-count">{tag.count}</span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {(remoteHasOverflow || remoteExpanded) && (
+              <button
+                type="button"
+                className="mt-2 text-micro text-text-3 hover:text-text"
+                onClick={() => setRemoteExpanded((value) => !value)}
+              >
+                {remoteExpanded ? "收起" : "展开更多"}
+              </button>
+            )}
+          </>
         ) : remoteFor === q.trim() ? (
           <p className="mt-2 text-micro text-text-2">Pixiv 上也没有找到相关标签。</p>
         ) : null}
       </div>
 
-      {/* 图片区：勾选标签时按组合过滤，没勾选就是全部作品 */}
+      {/* 图片区：勾选标签时按组合过滤；没勾选时看「默认状态」开关 */}
       <div className="-mx-6 mt-5 border-t border-line pt-4">
-        <ArtworkList
-          ignoreQuery
-          heading={
-            selectedTags.length > 0 ? `已选 ${selectedTags.length} 个标签` : "全部作品"
-          }
-          extraQuery={
-            selectedTags.length > 0 ? { tags_all: selectedTags } : undefined
-          }
-        />
+        {selectedTags.length > 0 || showAllTagsDefault ? (
+          <ArtworkList
+            ignoreQuery
+            heading={
+              selectedTags.length > 0
+                ? `已选 ${selectedTags.length} 个标签`
+                : "全部作品"
+            }
+            extraQuery={
+              selectedTags.length > 0 ? { tags_all: selectedTags } : undefined
+            }
+          />
+        ) : (
+          <div className="px-6 py-10 text-center text-micro text-text-3">
+            默认状态：不展示全部。勾选上面的标签后显示对应作品。
+          </div>
+        )}
       </div>
 
       {comboMenu && (

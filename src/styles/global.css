@@ -246,6 +246,21 @@ a {
   border-color: var(--color-accent-soft);
 }
 
+/* 触发式动作按钮（如「保存该组标签」）：和筛选按钮区分开 */
+.tri-btn-accent {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.tri-btn-accent:hover {
+  border-color: var(--color-accent);
+}
+
+.tri-btn-accent:disabled {
+  opacity: 0.55;
+}
+
 /* 角标：全系统唯一允许 400 字重的地方 */
 .badge {
   display: inline-flex;

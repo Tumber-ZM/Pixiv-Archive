@@ -94,6 +94,10 @@ interface UiState {
   deletedOnly: boolean;
   /** 「随机」按钮触发的一次性乱序；只递增，不参与排序下拉框 */
   shuffleToken: number;
+  /** 标签页：随机标签展示在顶栏，点一次换一个并自动勾选 */
+  randomTag: { name: string; label: string } | null;
+  /** 标签页：没勾选标签时，图片区是否默认展示全部作品 */
+  showAllTagsDefault: boolean;
 
   setView: (view: ViewKey) => void;
   toggleLayout: () => void;
@@ -110,6 +114,8 @@ interface UiState {
   toggleDeletedOnly: () => void;
   clearFilters: () => void;
   requestShuffle: () => void;
+  setRandomTag: (tag: { name: string; label: string } | null) => void;
+  toggleShowAllTagsDefault: () => void;
 }
 
 export const useUi = create<UiState>()(
@@ -138,10 +144,16 @@ export const useUi = create<UiState>()(
       gif: "all",
       deletedOnly: false,
       shuffleToken: 0,
+      randomTag: null,
+      showAllTagsDefault: true,
 
       // 切换页面时清掉搜索词：顶栏搜索的搜索范围会跟着页面变
       setView: (view) =>
-        set((state) => (state.view === view ? { view } : { view, q: "" })),
+        set((state) =>
+          state.view === view
+            ? { view }
+            : { view, q: "", randomTag: null },
+        ),
       toggleLayout: () =>
         set((state) => ({ layout: state.layout === "grid" ? "masonry" : "grid" })),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -194,6 +206,9 @@ export const useUi = create<UiState>()(
       toggleDeletedOnly: () => set((s) => ({ deletedOnly: !s.deletedOnly })),
       clearFilters: () => set({ q: "", r18: "all", ai: "all", gif: "all", deletedOnly: false }),
       requestShuffle: () => set((s) => ({ shuffleToken: s.shuffleToken + 1 })),
+      setRandomTag: (randomTag) => set({ randomTag }),
+      toggleShowAllTagsDefault: () =>
+        set((s) => ({ showAllTagsDefault: !s.showAllTagsDefault })),
     }),
     {
       name: "pixiv-archive-ui",
