@@ -18,6 +18,7 @@ export const CMD = {
   batchRemoveFromFavorite: "batch_remove_from_favorite",
   listAuthors: "list_authors",
   listTags: "list_tags",
+  listTagPreviews: "list_tag_previews",
   listAuthorTags: "list_author_tags",
   listTagCombos: "list_tag_combos",
   saveTagCombo: "save_tag_combo",

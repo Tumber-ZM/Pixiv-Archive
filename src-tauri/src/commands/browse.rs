@@ -412,6 +412,79 @@ pub fn list_author_tags(author_id: i64) -> AppResult<Vec<TagRow>> {
     Ok(out)
 }
 
+/// 标签预览网格：分页返回带一张代表封面的标签。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn list_tag_previews(
+    q: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    favorited_only: Option<bool>,
+    collected_only: Option<bool>,
+    subscribed_only: Option<bool>,
+) -> AppResult<Vec<TagRow>> {
+    let conn = open_library()?;
+    let pattern = like_pattern(q.as_deref());
+    let limit = limit.unwrap_or(60).clamp(1, 120);
+    let offset = offset.unwrap_or(0);
+    let sql = "SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage,
+                      (SELECT i.path
+                       FROM artwork_tags at2
+                       JOIN images i ON i.artwork_id = at2.artwork_id
+                       JOIN artworks w2 ON w2.id = at2.artwork_id
+                       WHERE at2.tag_id = t.id
+                         AND COALESCE(w2.pixiv_status, 'active') <> 'deleted'
+                       ORDER BY COALESCE(w2.origin, 'local') <> 'author_sub', i.id
+                       LIMIT 1) AS cover
+               FROM tags t
+               JOIN artwork_tags at ON at.tag_id = t.id
+               JOIN artworks w ON w.id = at.artwork_id
+               WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
+                 AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+                 AND (?2 = 0 OR EXISTS (
+                       SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = w.pixiv_id))
+                 AND (?3 = 0 OR COALESCE(w.origin, 'local') <> 'author_sub')
+                 AND (?4 = 0 OR EXISTS (
+                       SELECT 1 FROM authors au
+                       JOIN subs s ON s.kind = 'author' AND s.target_pixiv_id = au.pixiv_user_id
+                       WHERE au.id = w.author_id))
+               GROUP BY t.id
+               ORDER BY usage DESC, t.name ASC
+               LIMIT ?5 OFFSET ?6";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params![
+            pattern,
+            i64::from(favorited_only.unwrap_or(false)),
+            i64::from(collected_only.unwrap_or(false)),
+            i64::from(subscribed_only.unwrap_or(false)),
+            i64::from(limit),
+            i64::from(offset)
+        ],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        },
+    )?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, name, translated_name, count, cover_path) = row?;
+        out.push(TagRow {
+            id,
+            name,
+            translated_name,
+            count,
+            cover_path,
+        });
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn get_author_avatar(author_id: i64) -> AppResult<Option<String>> {
     let conn = open_library()?;

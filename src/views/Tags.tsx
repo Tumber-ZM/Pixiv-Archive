@@ -18,6 +18,7 @@ import { CMD, call, isAppError } from "../lib/ipc";
 import { useUi } from "../stores/ui";
 import type { FavoriteSyncStatus, RemoteTag, TagCombo, TagRow } from "../types/ipc";
 import { RemoteTagView } from "./RemoteTagView";
+import { TagPreviewGrid } from "./TagPreviewGrid";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const TAG_ROW_HEIGHT = 36;
@@ -68,7 +69,7 @@ export function Tags() {
   const [deleteTarget, setDeleteTarget] = useState<TagCombo | null>(null);
   const [expandedCombos, setExpandedCombos] = useState<Set<number>>(new Set());
 
-  const [localMode, setLocalMode] = useState<LocalRowsMode>("all");
+  const [localMode, setLocalMode] = useState<LocalRowsMode>("collapsed");
   const [totalRows, setTotalRows] = useState(0);
   const tagBoxRef = useRef<HTMLDivElement>(null);
 
@@ -913,24 +914,31 @@ export function Tags() {
         )}
       </div>
 
-      {/* 没选标签时只展示标签区；需要全库预览可打开顶栏「默认状态」 */}
-      {(galleryTags.length > 0 || showAllTagsDefault) && (
-        <div className="-mx-6 mt-5 border-t border-line pt-4">
+      {/* 没选标签时展示可视化标签图；选标签后展示作品；顶栏「默认状态」可切回全部作品 */}
+      <div className="-mx-6 mt-5 border-t border-line pt-4">
+        {galleryTags.length > 0 ? (
           <ArtworkList
             ignoreQuery
             heading={
               randomActive && randomTag
                 ? `随机标签：# ${randomTag.label}`
-                : selectedTags.length > 0
-                  ? `已选 ${selectedTags.length} 个标签`
-                  : "全部作品"
+                : `已选 ${selectedTags.length} 个标签`
             }
-            extraQuery={
-              galleryTags.length > 0 ? { tags_all: galleryTags } : undefined
-            }
+            extraQuery={{ tags_all: galleryTags }}
           />
-        </div>
-      )}
+        ) : showAllTagsDefault ? (
+          <ArtworkList ignoreQuery heading="全部作品" />
+        ) : (
+          <TagPreviewGrid
+            q={q}
+            onlyCollected={onlyCollected}
+            favoritesSynced={favoritesSynced}
+            onlySubscribed={onlySubscribed}
+            selectedTags={selectedTags}
+            onToggle={handleTagClick}
+          />
+        )}
+      </div>
 
       {comboMenu && (
         <ContextMenu
