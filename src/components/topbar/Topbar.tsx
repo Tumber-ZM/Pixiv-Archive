@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Columns3, LayoutGrid, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, Columns3, LayoutGrid, Search, Shuffle } from "lucide-react";
 
 import { SORT_LABELS, TRI_LABELS, useUi, type SortKey } from "../../stores/ui";
+import { AuthorActions } from "./AuthorActions";
 
 const SORT_KEYS = Object.keys(SORT_LABELS) as SortKey[];
 
@@ -30,6 +31,7 @@ export function Topbar() {
   const cycleTri = useUi((s) => s.cycleTri);
   const toggleDeletedOnly = useUi((s) => s.toggleDeletedOnly);
   const toggleLayout = useUi((s) => s.toggleLayout);
+  const requestShuffle = useUi((s) => s.requestShuffle);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -59,8 +61,20 @@ export function Topbar() {
         </div>
       )}
 
+      {view === "authors" && <AuthorActions />}
+
       {isLibraryView && (
         <>
+      <button
+        type="button"
+        className="tri-btn inline-flex items-center gap-1"
+        onClick={requestShuffle}
+        title="随机打乱一次；排序下拉框保持不变"
+      >
+        <Shuffle size={12} />
+        随机
+      </button>
+
       <div className="relative" ref={menuRef}>
         <button
           type="button"

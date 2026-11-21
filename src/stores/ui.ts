@@ -35,8 +35,8 @@ export interface ScanTask {
   total: number;
   imported: number;
   message: string;
-  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 / 校验图片 */
-  kind?: "scan" | "sync" | "subs" | "favorites" | "repair";
+  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 / 校验图片 / 更新头像 */
+  kind?: "scan" | "sync" | "subs" | "favorites" | "repair" | "avatars";
 }
 
 /** 任务完成后的收尾结果 */
@@ -90,6 +90,8 @@ interface UiState {
   ai: TriState;
   gif: TriState;
   deletedOnly: boolean;
+  /** 「随机」按钮触发的一次性乱序；只递增，不参与排序下拉框 */
+  shuffleToken: number;
 
   setView: (view: ViewKey) => void;
   toggleLayout: () => void;
@@ -105,6 +107,7 @@ interface UiState {
   cycleTri: (which: "r18" | "ai" | "gif") => void;
   toggleDeletedOnly: () => void;
   clearFilters: () => void;
+  requestShuffle: () => void;
 }
 
 export const useUi = create<UiState>()(
@@ -132,6 +135,7 @@ export const useUi = create<UiState>()(
       ai: "all",
       gif: "all",
       deletedOnly: false,
+      shuffleToken: 0,
 
       // 切换页面时清掉搜索词：顶栏搜索的搜索范围会跟着页面变
       setView: (view) =>
@@ -187,15 +191,18 @@ export const useUi = create<UiState>()(
       cycleTri: (which) => set((s) => ({ [which]: nextTriState(s[which]) }) as Pick<UiState, typeof which>),
       toggleDeletedOnly: () => set((s) => ({ deletedOnly: !s.deletedOnly })),
       clearFilters: () => set({ q: "", r18: "all", ai: "all", gif: "all", deletedOnly: false }),
+      requestShuffle: () => set((s) => ({ shuffleToken: s.shuffleToken + 1 })),
     }),
     {
       name: "pixiv-archive-ui",
-      // 折叠状态、主题、安全模式需要跨重启保持，筛选条件每次从默认值开始
+      // 主题/侧栏/排序跨重启保持；其它筛选条件每次从默认值开始
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
         safeMode: state.safeMode,
         layout: state.layout,
+        sort: state.sort,
+        order: state.order,
       }),
     },
   ),

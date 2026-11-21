@@ -105,6 +105,12 @@ pub fn build_filter(query: &ListQuery) -> Filter {
         );
         params.push(Value::Integer(favorite_id));
     }
+    if query.favorited_only.unwrap_or(false) {
+        clauses.push(
+            "EXISTS (SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = a.pixiv_id)"
+                .to_string(),
+        );
+    }
 
     let where_sql = if clauses.is_empty() {
         "1 = 1".to_string()

@@ -318,6 +318,8 @@ pub struct ListQuery {
     pub author_id: Option<i64>,
     pub tag: Option<String>,
     pub favorite_id: Option<i64>,
+    /// 只看 Pixiv 收藏里的作品（作者页的「仅看收藏」）
+    pub favorited_only: Option<bool>,
     /// `local` = 只看本地图片（pixiv_id < 0）；缺省 = 只看 Pixiv 作品
     pub scope: Option<String>,
 }

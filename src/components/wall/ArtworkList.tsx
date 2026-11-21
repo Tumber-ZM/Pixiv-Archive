@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Images, Loader2 } from "lucide-react";
 
 import { CMD, call, isAppError } from "../../lib/ipc";
@@ -21,6 +21,8 @@ interface ArtworkListProps {
   extraQuery?: Partial<ListQuery>;
   /** 子视图的标题与返回入口 */
   heading?: string;
+  /** 标题右边额外放的筛选按钮（例如作者页的「仅看收藏」） */
+  headerExtra?: ReactNode;
   onBack?: () => void;
   /** 列表变化后通知外层（例如删空了要回列表） */
   onChanged?: () => void;
@@ -34,7 +36,7 @@ interface ArtworkListProps {
  * 无限滚动：每批 60 条，底部哨兵进入视口就取下一批并追加。
  * 筛选条件变化会清空累积结果、退回第 1 批——否则新旧条件的结果会混在一起。
  */
-export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSearch }: ArtworkListProps) {
+export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChanged, remoteSearch }: ArtworkListProps) {
   const q = useUi((state) => state.q);
   const sort = useUi((state) => state.sort);
   const order = useUi((state) => state.order);
@@ -44,6 +46,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSear
   const deletedOnly = useUi((state) => state.deletedOnly);
   const layout = useUi((state) => state.layout);
   const clearFilters = useUi((state) => state.clearFilters);
+  const shuffleToken = useUi((state) => state.shuffleToken);
   const cycleTheme = useUi((state) => state.cycleTheme);
   const setSettingsOpen = useUi((state) => state.setSettingsOpen);
   const bumpData = useUi((state) => state.bumpData);
@@ -62,6 +65,8 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSear
 
   // 随机排序的种子只生成一次，翻页时保持不变，否则每页顺序都会变
   const [seed] = useState(() => Math.floor(Math.random() * 999_999) + 1);
+  // 「随机」按钮触发的一次性乱序：和排序下拉框互不影响
+  const [shuffle, setShuffle] = useState<{ token: number; seed: number } | null>(null);
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [viewer, setViewer] = useState<{ ids: number[]; index: number } | null>(null);
@@ -93,6 +98,20 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSear
     const timer = setTimeout(() => setDebouncedQ(q), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [q]);
+
+  // 顶栏「随机」按钮：只换一次乱序种子，不改排序下拉框
+  useEffect(() => {
+    if (shuffleToken === 0) return;
+    setShuffle({
+      token: shuffleToken,
+      seed: Math.floor(Math.random() * 999_999) + 1,
+    });
+  }, [shuffleToken]);
+
+  // 用户改了排序 / 筛选 / 搜索词：退出一次性乱序，回到所选排序
+  useEffect(() => {
+    setShuffle(null);
+  }, [sort, order, r18, ai, gif, deletedOnly, debouncedQ]);
 
   // 本地没有结果时，非阻塞地补一次 Pixiv 作品搜索
   useEffect(() => {
@@ -135,22 +154,24 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSear
     setTotal(0);
     setTotalPages(1);
     setPage(1);
-  }, [debouncedQ, sort, order, r18, ai, gif, deletedOnly, extraKey, refreshKey, dataEpoch]);
+  }, [debouncedQ, sort, order, r18, ai, gif, deletedOnly, extraKey, refreshKey, dataEpoch, shuffle?.token]);
 
   useEffect(() => {
     let cancelled = false;
+    const effectiveSort = shuffle ? "random" : sort;
+    const effectiveOrder = shuffle ? "desc" : order;
 
     const query: ListQuery = {
       page,
       page_size: PAGE_SIZE,
       q: debouncedQ.trim() || undefined,
-      sort,
-      order,
+      sort: effectiveSort,
+      order: effectiveOrder,
       r18,
       ai,
       gif,
       deleted_only: deletedOnly,
-      seed: sort === "random" ? seed : undefined,
+      seed: shuffle ? shuffle.seed : sort === "random" ? seed : undefined,
       ...(extraQuery ?? {}),
     };
 
@@ -190,7 +211,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSear
     };
     // extraQuery 通过 extraKey 参与依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQ, sort, order, r18, ai, gif, deletedOnly, seed, refreshKey, extraKey, dataEpoch]);
+  }, [page, debouncedQ, sort, order, r18, ai, gif, deletedOnly, seed, refreshKey, extraKey, dataEpoch, shuffle?.seed]);
 
   // 底部哨兵：出现即加载下一批。提前 800px 预取，滚动时才不会卡顿。
   useEffect(() => {
@@ -373,6 +394,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged, remoteSear
             </button>
           )}
           {heading && <span className="text-body text-text">{heading}</span>}
+          {headerExtra}
           {filtered && <span className="text-micro text-text-2">{summary}</span>}
           {filtered && (
             <button type="button" className="quiet-link" onClick={clearFilters}>

@@ -9,7 +9,6 @@ import { CMD, call, isAppError } from "../lib/ipc";
 import { useUi } from "../stores/ui";
 import type {
   AuthorRow,
-  FavoriteSyncReport,
   FavoriteSyncStatus,
   RemoteAuthor,
   Sub,
@@ -134,6 +133,11 @@ function AuthorCard({
   );
 }
 
+/** 已订阅的作者置顶；同一组内保持后端原有的作品数排序。 */
+function pinSubscribed(rows: AuthorRow[]): AuthorRow[] {
+  return [...rows].sort((a, b) => Number(b.subscribed) - Number(a.subscribed));
+}
+
 export function Authors() {
   const q = useUi((state) => state.q);
   const [rows, setRows] = useState<AuthorRow[]>([]);
@@ -146,7 +150,6 @@ export function Authors() {
   const bumpData = useUi((state) => state.bumpData);
   // 删除作品后 dataEpoch 递增，列表跟着重新拉一次
   const dataEpoch = useUi((state) => state.dataEpoch);
-  const [refreshing, setRefreshing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   // 正在切换订阅的作者（Pixiv 用户 ID），避免连点时重复请求
@@ -156,7 +159,6 @@ export function Authors() {
   const [onlySubscribed, setOnlySubscribed] = useState(false);
   // Pixiv 收藏概况（同步过才按收藏筛选，没同步时退回「订阅前就有」的口径）
   const [favoriteStatus, setFavoriteStatus] = useState<FavoriteSyncStatus | null>(null);
-  const [syncingFavorites, setSyncingFavorites] = useState(false);
   // 订阅确认：作者卡上点「订阅」先问是否补全历史
   const [subscribeTarget, setSubscribeTarget] = useState<AuthorRow | null>(null);
   const [subscribeBackfill, setSubscribeBackfill] = useState(false);
@@ -175,7 +177,7 @@ export function Authors() {
       call<AuthorRow[]>(CMD.listAuthors, { q: q.trim() || undefined })
         .then((data) => {
           if (cancelled) return;
-          setRows(data);
+          setRows(pinSubscribed(data));
           setError(null);
         })
         .catch((reason: unknown) => {
@@ -247,7 +249,7 @@ export function Authors() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, dataEpoch]);
 
   // 在作者卡上订阅/退订：作者订阅默认只追新，新作品等「订阅更新」时下载
   const removeSubscription = async (row: AuthorRow) => {
@@ -303,7 +305,9 @@ export function Authors() {
         backfill: subscribeBackfill,
       });
       setRows((prev) =>
-        prev.map((item) => (item.id === row.id ? { ...item, subscribed: true } : item)),
+        pinSubscribed(
+          prev.map((item) => (item.id === row.id ? { ...item, subscribed: true } : item)),
+        ),
       );
       setSubscribeTarget(null);
 
@@ -339,55 +343,6 @@ export function Authors() {
     }
   };
 
-  // 同步「我的 Pixiv 收藏」：只读作品 ID，写完刷新列表让收藏筛选立刻生效
-  const syncFavorites = async () => {
-    if (syncingFavorites) return;
-    setSyncingFavorites(true);
-    setNotice(null);
-    setScanTask({
-      current: 0,
-      total: 0,
-      imported: 0,
-      message: "准备同步 Pixiv 收藏…",
-      kind: "favorites",
-    });
-    try {
-      const report = await call<FavoriteSyncReport>(CMD.syncPixivFavorites);
-      setRefreshKey((key) => key + 1);
-      setNotice(
-        report.cancelled
-          ? "收藏同步已取消"
-          : `已同步 ${report.total} 件收藏（公开 ${report.public} · 私密 ${report.private}）`,
-      );
-      setTimeout(() => setNotice(null), 5000);
-    } catch (reason: unknown) {
-      setNotice(isAppError(reason) ? reason.message : String(reason));
-    } finally {
-      setSyncingFavorites(false);
-      setScanTask(null);
-    }
-  };
-
-  // 用 pixiv_user_id 逐个拉头像并覆盖本地缓存（进度走右下角浮窗）
-  const refreshAvatars = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    setNotice(null);
-    setScanTask({ current: 0, total: 0, imported: 0, message: "更新作者头像…", kind: "subs" });
-    try {
-      const updated = await call<number>(CMD.refreshAuthorAvatars);
-      setRefreshKey((key) => key + 1);
-      bumpData();
-      setNotice(`已更新 ${updated} 个头像`);
-      setTimeout(() => setNotice(null), 4000);
-    } catch (reason: unknown) {
-      setNotice(isAppError(reason) ? reason.message : String(reason));
-    } finally {
-      setRefreshing(false);
-      setScanTask(null);
-    }
-  };
-
   // 从查看器点作者名进来：直接打开该作者的作品列表。这里只用到 id 与 name，
   // 其余 AuthorRow 字段不会出现在作品列表里，给占位值即可。
   useEffect(() => {
@@ -406,18 +361,38 @@ export function Authors() {
     consumePending();
   }, [pendingAuthor, consumePending]);
 
+  const favoritesSynced = (favoriteStatus?.count ?? 0) > 0;
+
   // 视图内切到该作者的作品，不再单独做作者信息头部
   if (current) {
     return (
       <ArtworkList
-        extraQuery={{ author_id: current.id }}
+        extraQuery={{
+          author_id: current.id,
+          favorited_only: onlyCollected && favoritesSynced ? true : undefined,
+        }}
         heading={current.name}
+        headerExtra={
+          <button
+            type="button"
+            className="tri-btn"
+            data-active={onlyCollected}
+            disabled={!favoritesSynced}
+            title={
+              favoritesSynced
+                ? "只显示你在 Pixiv 收藏的作品"
+                : "先点「同步收藏」后才能按 Pixiv 收藏筛选"
+            }
+            onClick={() => setOnlyCollected((value) => !value)}
+          >
+            仅看收藏
+          </button>
+        }
         onBack={() => setCurrent(null)}
       />
     );
   }
 
-  const favoritesSynced = (favoriteStatus?.count ?? 0) > 0;
   const visibleRows = rows.filter((row) => {
     if (onlyCollected) {
       // 同步过收藏就严格按 Pixiv 收藏；没同步时退回「订阅前就有」的判断
@@ -429,27 +404,7 @@ export function Authors() {
 
   return (
     <div className="px-6 py-4">
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="btn shrink-0"
-          onClick={refreshAvatars}
-          disabled={refreshing}
-          title="用作者 ID 从 Pixiv 重新获取并覆盖本地头像"
-        >
-          {refreshing ? "更新中…" : "更新作者头像"}
-        </button>
-        <button
-          type="button"
-          className="btn shrink-0"
-          onClick={syncFavorites}
-          disabled={syncingFavorites}
-          title="读取你 Pixiv 账号的公开 + 私密收藏，只在本机记录作品 ID，用来筛选作者"
-        >
-          {syncingFavorites ? "同步中…" : "同步收藏"}
-        </button>
-        {notice && <span className="text-micro text-text-2">{notice}</span>}
-      </div>
+      {notice && <p className="mb-2 text-micro text-text-2">{notice}</p>}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="text-micro text-text-3">筛选</span>
@@ -479,11 +434,9 @@ export function Authors() {
           <span className="text-micro text-text-3">共 {visibleRows.length} 位作者</span>
         )}
         <span className="text-micro text-text-3">
-          {syncingFavorites
-            ? "收藏同步中…"
-            : favoriteStatus?.last_synced
-              ? `Pixiv 收藏 ${favoriteStatus.count} 件`
-              : "Pixiv 收藏未同步"}
+          {favoriteStatus?.last_synced
+            ? `Pixiv 收藏 ${favoriteStatus.count} 件`
+            : "Pixiv 收藏未同步"}
         </span>
         {visibleRows.length !== rows.length && (
           <button

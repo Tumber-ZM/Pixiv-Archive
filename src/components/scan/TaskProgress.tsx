@@ -10,6 +10,7 @@ const TITLES: Record<string, string> = {
   subs: "更新订阅",
   favorites: "同步收藏",
   repair: "校验图片",
+  avatars: "更新作者头像",
 };
 
 /**
