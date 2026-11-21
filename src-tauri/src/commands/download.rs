@@ -549,6 +549,18 @@ pub fn import_downloaded(
     Ok(artwork_id)
 }
 
+/// 该来源下还没处理完的队列总量（含等待重试的失败项），用于进度文案。
+pub fn queue_len(conn: &Connection, origin: &str) -> AppResult<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM download_queue
+          WHERE status IN ('pending', 'failed')
+            AND COALESCE(origin, 'local') = ?1",
+        [origin],
+        |row| row.get(0),
+    )?;
+    Ok(count as usize)
+}
+
 /// 一次消费多少队列项：避免单个任务跑太久，剩下的下次继续。
 pub const QUEUE_BATCH: i64 = 500;
 
@@ -565,13 +577,12 @@ pub fn enqueue(conn: &Connection, pixiv_id: i64, origin: &str) -> AppResult<()> 
 }
 
 /// 取出该来源下可以立即处理的作品：`pending` 或已到重试时间的 `failed`。
-pub fn pending_queue(conn: &Connection, limit: i64, origin: &str) -> AppResult<Vec<i64>> {
-    let mut stmt = conn.prepare(
+pub fn pending_queue(conn: &Connection, limit: i64, origin: &str) -> AppResult<Vec<i64>> {    let mut stmt = conn.prepare(
         "SELECT pixiv_id FROM download_queue
          WHERE status IN ('pending', 'failed')
            AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
            AND COALESCE(origin, 'local') = ?2
-         ORDER BY id ASC
+         ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, id ASC
          LIMIT ?1",
     )?;
     let rows = stmt.query_map(params![limit, origin], |row| row.get::<_, i64>(0))?;

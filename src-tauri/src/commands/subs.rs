@@ -460,6 +460,22 @@ async fn check_one(
 
     let queued = download::pending_queue(conn, download::QUEUE_BATCH, origin)?;
     let queued_total = queued.len();
+    let backlog = download::queue_len(conn, origin)?;
+    if queued_total > 0 {
+        emit(
+            app,
+            0,
+            queued_total,
+            result.downloaded,
+            &format!(
+                "{}「{}」：本地待下载 {} 件，本次处理 {} 件",
+                kind_label(kind),
+                result.name,
+                backlog,
+                queued_total
+            ),
+        );
+    }
     for (idx, pixiv_id) in queued.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
