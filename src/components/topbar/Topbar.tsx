@@ -19,7 +19,10 @@ export function Topbar() {
   const view = useUi((s) => s.view);
 
   const isLibraryView =
-    view === "gallery" || view === "favorites" || view === "local";
+    view === "gallery" ||
+    view === "favorites" ||
+    view === "local" ||
+    view === "tags";
   const searchPlaceholder =
     view === "authors"
       ? "搜索作者名 / Pixiv ID…"
