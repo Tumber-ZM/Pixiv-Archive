@@ -6,7 +6,7 @@ import { CMD, call } from "../lib/ipc";
 import { useUi } from "../stores/ui";
 import type { TagRow } from "../types/ipc";
 
-const PAGE_SIZE = 60;
+const PAGE_SIZE = 30;
 
 interface Props {
   q: string;
@@ -136,7 +136,7 @@ export function TagPreviewGrid({
             <button
               key={tag.id}
               type="button"
-              className="group relative aspect-square overflow-hidden rounded-card border border-line bg-surface-2 text-left data-[active=true]:border-accent"
+              className="tag-preview-card group relative aspect-square overflow-hidden rounded-card border border-line bg-surface-2 text-left data-[active=true]:border-accent"
               data-active={selected}
               onClick={() => onToggle(tag.name)}
               title={`筛选 #${label}`}

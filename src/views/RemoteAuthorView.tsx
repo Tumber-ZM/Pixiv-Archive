@@ -2,20 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Download, Heart } from "lucide-react";
 
 import { CMD, call, isAppError } from "../lib/ipc";
-import { SORT_LABELS, useUi } from "../stores/ui";
+import { useUi } from "../stores/ui";
 import type { AuthorRow, RemoteIllust } from "../types/ipc";
 import { RemoteThumb } from "./RemoteTagView";
-
-function seededShuffle<T>(items: T[], seed: number): T[] {
-  const list = [...items];
-  let state = seed >>> 0 || 1;
-  for (let i = list.length - 1; i > 0; i -= 1) {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    const j = state % (i + 1);
-    [list[i], list[j]] = [list[j], list[i]];
-  }
-  return list;
-}
 
 interface Props {
   author: AuthorRow;
@@ -38,9 +27,6 @@ export function RemoteAuthorView({ author, onBack }: Props) {
   const ai = useUi((state) => state.ai);
   const gif = useUi((state) => state.gif);
   const deletedOnly = useUi((state) => state.deletedOnly);
-  const sort = useUi((state) => state.sort);
-  const order = useUi((state) => state.order);
-  const shuffleToken = useUi((state) => state.shuffleToken);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +65,12 @@ export function RemoteAuthorView({ author, onBack }: Props) {
           const nextUrl: string | null = result[1];
           if (cancelled) return;
           count += page.length;
+          page.sort((a, b) => {
+            const compare = (b.create_date || "").localeCompare(
+              a.create_date || "",
+            );
+            return compare === 0 ? b.pixiv_id - a.pixiv_id : compare;
+          });
           setItems((prev) => [...prev, ...page]);
           setInitialLoading(false);
           if (!nextUrl || page.length === 0 || count >= 1000) {
@@ -126,27 +118,6 @@ export function RemoteAuthorView({ author, onBack }: Props) {
     [items, onlyLocal, localIds, r18, ai, gif],
   );
 
-  const orderedItems = useMemo(() => {
-    if (sort === "random") {
-      return seededShuffle(
-        visibleItems,
-        (shuffleToken || 1) + (order === "asc" ? 1 : 0),
-      );
-    }
-    const list = [...visibleItems];
-    list.sort((a, b) => {
-      if (sort === "title") return a.title.localeCompare(b.title, "ja");
-      if (sort === "pixiv_id") return a.pixiv_id - b.pixiv_id;
-      if (sort === "create_date") {
-        const compare = (a.create_date || "").localeCompare(b.create_date || "");
-        return compare === 0 ? a.pixiv_id - b.pixiv_id : compare;
-      }
-      return 0;
-    });
-    if (sort !== "first_seen" && order === "asc") list.reverse();
-    if (sort === "first_seen" && order === "asc") list.reverse();
-    return list;
-  }, [visibleItems, sort, order, shuffleToken]);
 
   const download = async (item: RemoteIllust) => {
     if (busy !== null) return;
@@ -179,9 +150,7 @@ export function RemoteAuthorView({ author, onBack }: Props) {
         <div className="min-w-0">
           <h2 className="truncate text-heading text-text">{author.name}</h2>
           <p className="text-micro text-text-3">
-            Pixiv 线上全部作品 ·{" "}
-            {sort === "first_seen" ? "线上发布时间顺序" : SORT_LABELS[sort]}
-            {sort !== "random" ? (order === "asc" ? " ↑" : " ↓") : ""}
+            Pixiv 线上全部作品 · 按发布时间新→旧
             {items.length > 0 &&
               ` · 已加载 ${items.length}${loadingMore ? "…" : ""}`}
             {items.length > 0 && ` · 显示 ${visibleItems.length}`}
@@ -224,7 +193,7 @@ export function RemoteAuthorView({ author, onBack }: Props) {
       ) : (
         <>
           <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))]">
-            {orderedItems.map((item) => (
+            {visibleItems.map((item) => (
               <div
                 key={item.pixiv_id}
                 className="overflow-hidden rounded-card border border-line bg-surface"

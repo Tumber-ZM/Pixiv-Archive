@@ -25,6 +25,8 @@ const TAG_ROW_HEIGHT = 36;
 // 本地标签初始固定 1 行，避免异步加载完成后把下面的图片区顶下去
 const DEFAULT_ROWS = 1;
 const MORE_ROWS = 4;
+// 折叠时不要一次渲染两千多个按钮，先渲染足够填满几行的量
+const COLLAPSED_TAG_LIMIT = 120;
 type LocalRowsMode = "collapsed" | "all";
 
 /** 当前正在看的标签。跳转只需要名字，不必带完整 TagRow。 */
@@ -446,6 +448,12 @@ export function Tags() {
     ...priorityRows,
     ...rows.filter((row) => !prioritySet.has(row.name)),
   ];
+  const renderedRows =
+    searching || localMode === "all"
+      ? displayRows
+      : displayRows.slice(0, COLLAPSED_TAG_LIMIT);
+  const hasMoreTags =
+    displayRows.length > COLLAPSED_TAG_LIMIT || totalRows > DEFAULT_ROWS;
 
   const comboMenuItems: MenuItem[] = comboMenu
     ? [
@@ -730,7 +738,7 @@ export function Tags() {
       <div className="mt-5">
         <div className="flex h-7 items-center gap-2">
           <span className="section-label">标签</span>
-          {!searching && totalRows > DEFAULT_ROWS && (
+          {!searching && hasMoreTags && (
             <button
               type="button"
               className="section-more"
@@ -749,7 +757,10 @@ export function Tags() {
               ) : (
                 <>
                   <ChevronDown size={10} />
-                  {totalRows > MORE_ROWS ? "展开（全部）" : "展开"}
+                  {displayRows.length > COLLAPSED_TAG_LIMIT ||
+                  totalRows > MORE_ROWS
+                    ? "展开（全部）"
+                    : "展开"}
                 </>
               )}
             </button>
@@ -800,7 +811,7 @@ export function Tags() {
                     }
               }
             >
-              {displayRows.map((row) => {
+              {renderedRows.map((row) => {
                 const label = row.translated_name ?? row.name;
                 const selected = selectedTags.includes(row.name);
                 const isRandom = randomTag?.name === row.name;

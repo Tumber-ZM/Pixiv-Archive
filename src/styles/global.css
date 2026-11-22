@@ -532,6 +532,12 @@ a {
   pointer-events: none;
 }
 
+/* 标签预览很多时只渲染视口附近的卡片 */
+.tag-preview-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 180px;
+}
+
 .wall-action {
   display: flex;
   align-items: center;

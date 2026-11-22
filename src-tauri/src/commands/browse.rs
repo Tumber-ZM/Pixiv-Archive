@@ -444,6 +444,7 @@ pub fn list_tag_previews(
 ) -> AppResult<Vec<TagRow>> {
     let conn = open_library()?;
     let pattern = like_pattern(q.as_deref());
+    let thumbs_dir = paths::thumbnails_dir()?;
     let limit = limit.unwrap_or(60).clamp(1, 120);
     let offset = offset.unwrap_or(0);
     let sql = "SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage,
@@ -455,6 +456,13 @@ pub fn list_tag_previews(
                          AND COALESCE(w2.pixiv_status, 'active') <> 'deleted'
                        ORDER BY COALESCE(w2.origin, 'local') <> 'author_sub', at2.artwork_id
                        LIMIT 1) AS cover,
+                      (SELECT w2.pixiv_id
+                       FROM artwork_tags at2
+                       JOIN artworks w2 ON w2.id = at2.artwork_id
+                       WHERE at2.tag_id = t.id
+                         AND COALESCE(w2.pixiv_status, 'active') <> 'deleted'
+                       ORDER BY COALESCE(w2.origin, 'local') <> 'author_sub', at2.artwork_id
+                       LIMIT 1) AS cover_pixiv_id,
                       EXISTS(
                         SELECT 1 FROM pixiv_favorites pf
                         WHERE pf.pixiv_id = (
@@ -499,13 +507,21 @@ pub fn list_tag_previews(
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, Option<String>>(4)?,
-                row.get::<_, i64>(5)? != 0,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, i64>(6)? != 0,
             ))
         },
     )?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, name, translated_name, count, cover_path, pixiv_favorited) = row?;
+        let (id, name, translated_name, count, cover_path, cover_pixiv_id, pixiv_favorited) =
+            row?;
+        let cover_path = cover_pixiv_id
+            .and_then(|pixiv_id| {
+                let path = thumbs_dir.join(format!("{pixiv_id}.jpg"));
+                path.is_file().then(|| path.to_string_lossy().into_owned())
+            })
+            .or(cover_path);
         out.push(TagRow {
             id,
             name,
