@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Bell, Users } from "lucide-react";
+import { Bell, ChevronDown, ChevronUp, Users } from "lucide-react";
 
 import { EmptyState } from "../components/common/EmptyState";
 import { Dialog } from "../components/dialog/Dialog";
@@ -152,6 +152,9 @@ function AuthorTagBar({
   const dataEpoch = useUi((state) => state.dataEpoch);
   const [tags, setTags] = useState<TagRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [totalRows, setTotalRows] = useState(1);
+  const tagBoxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,6 +174,21 @@ function AuthorTagBar({
     };
   }, [authorId, dataEpoch]);
 
+  useEffect(() => {
+    const el = tagBoxRef.current;
+    if (!el) {
+      setTotalRows(0);
+      return undefined;
+    }
+    const update = () => {
+      setTotalRows(Math.max(1, Math.ceil(el.scrollHeight / 36)));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tags, expanded]);
+
   if (loading || tags.length === 0) return null;
 
   const toggle = (name: string) => {
@@ -182,33 +200,65 @@ function AuthorTagBar({
   };
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
-      <span className="section-label">标签</span>
-      {tags.map((tag) => {
-        const label = tag.translated_name ?? tag.name;
-        return (
+    <div className="mb-4">
+      <div className="flex h-7 items-center gap-2">
+        <span className="section-label">标签</span>
+        {totalRows > 1 && (
           <button
-            key={tag.id}
             type="button"
-            className="tag-pick"
-            data-active={selected.includes(tag.name)}
-            onClick={() => toggle(tag.name)}
-            title={`筛选该作者下带 #${label} 的作品`}
+            className="section-more"
+            onClick={() => setExpanded((value) => !value)}
+            title={expanded ? "收起作者标签" : "展开全部作者标签"}
           >
-            <span className="tag-pick-label"># {label}</span>
-            <span className="tag-pick-count">{tag.count}</span>
+            {expanded ? (
+              <>
+                <ChevronUp size={10} />
+                收起
+              </>
+            ) : (
+              <>
+                <ChevronDown size={10} />
+                {totalRows > 4 ? "展开（全部）" : "展开"}
+              </>
+            )}
           </button>
-        );
-      })}
-      {selected.length > 0 && (
-        <button
-          type="button"
-          className="text-micro text-text-3 hover:text-text"
-          onClick={() => onChange([])}
-        >
-          清除标签
-        </button>
-      )}
+        )}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            className="text-micro text-text-3 hover:text-text"
+            onClick={() => onChange([])}
+          >
+            清除标签
+          </button>
+        )}
+      </div>
+      <div
+        ref={tagBoxRef}
+        className={`flex flex-wrap content-start gap-2 ${expanded ? "" : "overflow-hidden"}`}
+        style={
+          expanded
+            ? undefined
+            : { maxHeight: 36, minHeight: 36 }
+        }
+      >
+        {tags.map((tag) => {
+          const label = tag.translated_name ?? tag.name;
+          return (
+            <button
+              key={tag.id}
+              type="button"
+              className="tag-pick"
+              data-active={selected.includes(tag.name)}
+              onClick={() => toggle(tag.name)}
+              title={`筛选该作者下带 #${label} 的作品`}
+            >
+              <span className="tag-pick-label"># {label}</span>
+              <span className="tag-pick-count">{tag.count}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
