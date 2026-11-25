@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Tag as TagIcon } from "lucide-react";
 
@@ -21,8 +21,10 @@ interface CurrentTag {
  * 标签墙。和画廊一致用无限滚动：每批 60 条，底部哨兵进入视口就取下一批并追加。
  */
 export function Tags() {
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const q = useUi((state) => state.pageSearch.tags);
+  const setNestedView = useUi((state) => state.setNestedView);
+  // 搜索词存在 store 里：切回标签页时直接用上次的关键词取数，不必先闪一屏全量
+  const [debouncedQ, setDebouncedQ] = useState(() => useUi.getState().pageSearch.tags);
   const [items, setItems] = useState<TagRow[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -41,6 +43,12 @@ export function Tags() {
   const consumePending = useUi((state) => state.consumePending);
   // 删除作品后 dataEpoch 递增，列表跟着重新拉一次
   const dataEpoch = useUi((state) => state.dataEpoch);
+
+  // 打开某个标签的作品列表时，把顶栏交还给全局筛选（标签搜索框只在列表态显示）
+  useLayoutEffect(() => {
+    setNestedView(current !== null);
+    return () => setNestedView(false);
+  }, [current, setNestedView]);
 
   useEffect(() => {
     if (!pendingTag) return;
@@ -132,14 +140,7 @@ export function Tags() {
 
   return (
     <div className="px-6 py-4">
-      <input
-        className="line-input w-[320px]"
-        placeholder="搜索标签…"
-        value={q}
-        onChange={(event) => setQ(event.currentTarget.value)}
-      />
-
-      <div className="mt-4">
+      <div>
         {error ? (
           <EmptyState title="加载失败" hint={error} />
         ) : loading && items.length === 0 ? (

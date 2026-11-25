@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Heart, Plus } from "lucide-react";
+import { Heart, Plus, Search } from "lucide-react";
 
 import { ContextMenu } from "../components/common/ContextMenu";
 import { EmptyState } from "../components/common/EmptyState";
@@ -41,6 +41,8 @@ function Cover({ paths }: { paths: string[] }) {
 }
 
 export function Favorites() {
+  const q = useUi((state) => state.pageSearch.favorites);
+  const setNestedView = useUi((state) => state.setNestedView);
   const [rows, setRows] = useState<FavoriteRow[]>([]);
   const [covers, setCovers] = useState<Record<number, string[]>>({});
   const [loading, setLoading] = useState(true);
@@ -57,6 +59,17 @@ export function Favorites() {
     setCurrent(pendingFavorite);
     consumePending();
   }, [pendingFavorite, consumePending]);
+
+  // 打开某个本地收藏时，把顶栏交还给全局筛选（收藏搜索框只在列表态显示）
+  useLayoutEffect(() => {
+    setNestedView(current !== null);
+    return () => setNestedView(false);
+  }, [current, setNestedView]);
+
+  const keyword = q.trim().toLowerCase();
+  const visibleRows = keyword
+    ? rows.filter((row) => row.name.toLowerCase().includes(keyword))
+    : rows;
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -144,14 +157,14 @@ export function Favorites() {
   return (
     <div className="px-6 py-4">
       <div className="mb-4 flex h-10 items-center">
-        <span className="text-body text-text">收藏夹</span>
+        <span className="text-body text-text">本地收藏</span>
         <button
           type="button"
           className="btn ml-auto inline-flex items-center gap-2"
           onClick={() => setCreateOpen(true)}
         >
           <Plus size={14} />
-          新建收藏夹
+          新建本地收藏
         </button>
       </div>
 
@@ -160,10 +173,12 @@ export function Favorites() {
       ) : loading ? (
         <p className="py-8 text-center text-micro text-text-2">加载中…</p>
       ) : rows.length === 0 ? (
-        <EmptyState icon={Heart} title="还没有收藏夹" hint="新建收藏夹后可以把作品归档进去" />
+        <EmptyState icon={Heart} title="还没有本地收藏" hint="新建本地收藏后可以把作品归档进去" />
+      ) : visibleRows.length === 0 ? (
+        <EmptyState icon={Search} title="没有匹配的本地收藏" hint="换个关键词试试" />
       ) : (
         <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <div
               key={row.id}
               className="overflow-hidden rounded-card border border-line bg-surface"
@@ -200,7 +215,7 @@ export function Favorites() {
 
       <Dialog
         open={createOpen}
-        title="新建收藏夹"
+        title="新建本地收藏"
         confirmLabel="创建"
         busy={busy}
         onCancel={() => setCreateOpen(false)}
@@ -208,7 +223,7 @@ export function Favorites() {
       >
         <input
           className="line-input"
-          placeholder="收藏夹名称"
+          placeholder="本地收藏名称"
           value={newName}
           onChange={(event) => setNewName(event.currentTarget.value)}
           autoFocus
@@ -217,14 +232,14 @@ export function Favorites() {
 
       <Dialog
         open={deleteTarget !== null}
-        title="删除收藏夹"
+        title="删除本地收藏"
         danger
         busy={busy}
         confirmLabel="删除"
         onCancel={() => setDeleteTarget(null)}
         onConfirm={remove}
       >
-        <p>将删除「{deleteTarget?.name}」。收藏夹里的作品不会被删除。</p>
+        <p>将删除「{deleteTarget?.name}」。本地收藏里的作品不会被删除。</p>
       </Dialog>
     </div>
   );

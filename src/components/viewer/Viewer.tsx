@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -8,7 +8,7 @@ import type { AppError, ArtworkDetail } from "../../types/ipc";
 import { ContextMenu } from "../common/ContextMenu";
 import { Dialog } from "../dialog/Dialog";
 import { FavoritePicker } from "./FavoritePicker";
-import { ViewerImage } from "./ViewerImage";
+import { ViewerImage, type ViewerImageHandle } from "./ViewerImage";
 import { ViewerInfo } from "./ViewerInfo";
 
 interface ViewerProps {
@@ -42,6 +42,7 @@ export function Viewer({
   const [busy, setBusy] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const imageRef = useRef<ViewerImageHandle>(null);
 
   const openTag = useUi((state) => state.openTag);
   const openFavorite = useUi((state) => state.openFavorite);
@@ -74,11 +75,15 @@ export function Viewer({
     };
   }, [currentId, reloadKey]);
 
+  // 换作品一律回到第一页：否则页码会短暂停留在上一件的页数上，
+  // 下一条键盘事件就可能把新作品翻到一个不存在的页
   const goPrev = useCallback(() => {
+    setPage(0);
     setIndex((current) => Math.max(0, current - 1));
   }, []);
 
   const goNext = useCallback(() => {
+    setPage(0);
     setIndex((current) => Math.min(artworkIds.length - 1, current + 1));
   }, [artworkIds.length]);
 
@@ -95,15 +100,29 @@ export function Viewer({
       // 弹层打开时键盘归弹层管，避免 Esc 直接关掉整个查看器
       if (favoriteOpen || deleteOpen || settingsOpen) return;
 
+      // 小键盘 +/- 的 event.key 已经是 "+"/"-"，再用 code 兜底非美式布局
+      if (event.key === "+" || event.key === "=" || event.code === "NumpadAdd") {
+        imageRef.current?.zoomIn();
+        return;
+      }
+      if (event.key === "-" || event.key === "_" || event.code === "NumpadSubtract") {
+        imageRef.current?.zoomOut();
+        return;
+      }
+
       switch (event.key) {
         case "Escape":
           onClose();
           break;
         case "ArrowLeft":
-          goPrev();
+          // 多页作品先翻页，到第一页才切到上一个作品
+          if (page > 0) setPage(page - 1);
+          else goPrev();
           break;
         case "ArrowRight":
-          goNext();
+          // 到最后一页才切到下一个作品
+          if (page < (detail?.page_count ?? 1) - 1) setPage(page + 1);
+          else goNext();
           break;
         case "ArrowUp":
         case ",":
@@ -124,7 +143,7 @@ export function Viewer({
 
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose, goPrev, goNext, detail, favoriteOpen, deleteOpen, settingsOpen]);
+  }, [onClose, goPrev, goNext, detail, page, favoriteOpen, deleteOpen, settingsOpen]);
 
   const handleDelete = async () => {
     setBusy(true);
@@ -222,6 +241,7 @@ export function Viewer({
         </div>
 
         <ViewerImage
+          ref={imageRef}
           src={src}
           pageIndex={page}
           pageCount={detail?.page_count ?? 1}

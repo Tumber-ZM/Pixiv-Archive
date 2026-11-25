@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+
+/** 供查看器把键盘 `+` / `-` 转成缩放操作 */
+export interface ViewerImageHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+}
 
 interface ViewerImageProps {
   src: string | null;
@@ -10,10 +16,13 @@ interface ViewerImageProps {
   onNextArtwork: () => void;
   canPrevArtwork: boolean;
   canNextArtwork: boolean;
+  ref?: Ref<ViewerImageHandle>;
 }
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 5;
+/** 滚轮与加减号的单步缩放倍率 */
+const ZOOM_STEP = 1.25;
 /** 拖出边界时的阻尼系数：实际位移 = 边界 + 超出量 × 该系数 */
 const OVERSCROLL_DAMP = 0.35;
 const SETTLE_MS = 260;
@@ -49,7 +58,9 @@ function clampOffset(
   return { x: apply(x, limitX), y: apply(y, limitY) };
 }
 
-/** 图片区：滚轮缩放 0.2×–5×、拖拽平移（带弹性边界）、双击复位（`06-界面规格.md` §8）。 */
+/**
+ * 图片区：滚轮 / 加减号缩放 0.2×–5×、拖拽平移（带弹性边界）、双击复位（`06-界面规格.md` §8）。
+ */
 export function ViewerImage({
   src,
   pageIndex,
@@ -59,6 +70,7 @@ export function ViewerImage({
   onNextArtwork,
   canPrevArtwork,
   canNextArtwork,
+  ref,
 }: ViewerImageProps) {
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -90,6 +102,20 @@ export function ViewerImage({
     setScale(1);
     setOffset({ x: 0, y: 0 });
   };
+
+  /** 按比例缩放，夹在 MIN_SCALE–MAX_SCALE 之间 */
+  const zoomBy = (factor: number) => {
+    setScale((current) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, current * factor)));
+  };
+
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => {
+      if (src) zoomBy(ZOOM_STEP);
+    },
+    zoomOut: () => {
+      if (src) zoomBy(1 / ZOOM_STEP);
+    },
+  }));
 
   // 换图必须复位，否则上一张的缩放会带到下一张
   useEffect(() => {
@@ -131,10 +157,7 @@ export function ViewerImage({
 
   const onWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     if (!src) return;
-    setScale((current) => {
-      const next = event.deltaY < 0 ? current * 1.25 : current * 0.8;
-      return Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
-    });
+    zoomBy(event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {

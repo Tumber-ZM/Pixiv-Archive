@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type ViewKey = "gallery" | "authors" | "tags" | "favorites" | "bookmarkSubs" | "local";
+/** 顶栏被页面自己的搜索框接管的视图 */
+export type PageSearchKey = "authors" | "tags" | "favorites" | "bookmarkSubs";
 export type Theme = "light" | "dark" | "system";
 export type TriState = "all" | "hide" | "only";
 export type SortKey = "first_seen" | "create_date" | "title" | "pixiv_id" | "random";
@@ -100,6 +102,13 @@ interface UiState {
   gif: TriState;
   deletedOnly: boolean;
 
+  /** 各列表页自己的搜索词：作者 / 标签 / 本地收藏 / 订阅 */
+  pageSearch: Record<PageSearchKey, string>;
+  /** 这些视图里打开了子列表（作者作品列表等）时，顶栏交还给全局筛选 */
+  nestedView: boolean;
+  setPageSearch: (key: PageSearchKey, value: string) => void;
+  setNestedView: (nested: boolean) => void;
+
   setView: (view: ViewKey) => void;
   toggleLayout: () => void;
   toggleSidebar: () => void;
@@ -142,6 +151,8 @@ export const useUi = create<UiState>()(
       ai: "all",
       gif: "all",
       deletedOnly: false,
+      pageSearch: { authors: "", tags: "", favorites: "", bookmarkSubs: "" },
+      nestedView: false,
 
       setView: (view) => set({ view }),
       toggleLayout: () =>
@@ -188,6 +199,9 @@ export const useUi = create<UiState>()(
         })),
 
       setQ: (q) => set({ q }),
+      setPageSearch: (key, value) =>
+        set((state) => ({ pageSearch: { ...state.pageSearch, [key]: value } })),
+      setNestedView: (nestedView) => set({ nestedView }),
       // 点当前排序项切换升降序，点其他项改字段并重置为降序；
       // 随机每次点都重抽种子，且不参与升降序
       setSort: (sort) =>

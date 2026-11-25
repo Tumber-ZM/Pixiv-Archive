@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Users } from "lucide-react";
 
@@ -85,20 +85,16 @@ function AuthorCard({ row, onOpen }: { row: AuthorRow; onOpen: () => void }) {
 }
 
 export function Authors() {
-  const [q, setQ] = useState("");
+  const q = useUi((state) => state.pageSearch.authors);
+  const setNestedView = useUi((state) => state.setNestedView);
   const [rows, setRows] = useState<AuthorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [current, setCurrent] = useState<AuthorRow | null>(null);
   const pendingAuthor = useUi((state) => state.pendingAuthor);
   const consumePending = useUi((state) => state.consumePending);
-  const setScanTask = useUi((state) => state.setScanTask);
-  const bumpData = useUi((state) => state.bumpData);
   // 删除作品后 dataEpoch 递增，列表跟着重新拉一次
   const dataEpoch = useUi((state) => state.dataEpoch);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,27 +118,13 @@ export function Authors() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [q, refreshKey, dataEpoch]);
+  }, [q, dataEpoch]);
 
-  // 用 pixiv_user_id 逐个拉头像并覆盖本地缓存（进度走右下角浮窗）
-  const refreshAvatars = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    setNotice(null);
-    setScanTask({ current: 0, total: 0, imported: 0, message: "更新作者头像…", kind: "subs" });
-    try {
-      const updated = await call<number>(CMD.refreshAuthorAvatars);
-      setRefreshKey((key) => key + 1);
-      bumpData();
-      setNotice(`已更新 ${updated} 个头像`);
-      setTimeout(() => setNotice(null), 4000);
-    } catch (reason: unknown) {
-      setNotice(isAppError(reason) ? reason.message : String(reason));
-    } finally {
-      setRefreshing(false);
-      setScanTask(null);
-    }
-  };
+  // 打开某个作者的作品列表时，把顶栏交还给全局筛选（作者搜索框只在列表态显示）
+  useLayoutEffect(() => {
+    setNestedView(current !== null);
+    return () => setNestedView(false);
+  }, [current, setNestedView]);
 
   // 从查看器点作者名进来：直接打开该作者的作品列表。这里只用到 id 与 name，
   // 其余 AuthorRow 字段不会出现在作品列表里，给占位值即可。
@@ -172,29 +154,7 @@ export function Authors() {
 
   return (
     <div className="px-6 py-4">
-      <div className="flex items-center gap-3">
-        {/* .line-input 自带 width:100%，必须给它一个定宽父级，否则会把按钮挤出去 */}
-        <div className="w-[320px]">
-          <input
-            className="line-input"
-            placeholder="搜索作者…"
-            value={q}
-            onChange={(event) => setQ(event.currentTarget.value)}
-          />
-        </div>
-        <button
-          type="button"
-          className="btn shrink-0"
-          onClick={refreshAvatars}
-          disabled={refreshing}
-          title="用作者 ID 从 Pixiv 重新获取并覆盖本地头像"
-        >
-          {refreshing ? "更新中…" : "更新作者头像"}
-        </button>
-        {notice && <span className="text-micro text-text-2">{notice}</span>}
-      </div>
-
-      <div className="mt-4">
+      <div>
         {error ? (
           <EmptyState title="加载失败" hint={error} />
         ) : loading ? (

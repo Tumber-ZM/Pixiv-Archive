@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bookmark, Plus } from "lucide-react";
+import { Bookmark, Plus, Search } from "lucide-react";
 
 import { Dialog } from "../components/dialog/Dialog";
 import { EmptyState } from "../components/common/EmptyState";
@@ -42,6 +42,7 @@ function Switch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 export function BookmarkSubs() {
+  const q = useUi((state) => state.pageSearch.bookmarkSubs);
   const [rows, setRows] = useState<BookmarkSub[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -166,6 +167,15 @@ export function BookmarkSubs() {
     }
   };
 
+  // 订阅列表按昵称或 Pixiv 用户 ID 过滤
+  const keyword = q.trim().toLowerCase();
+  const visibleRows = keyword
+    ? rows.filter((row) => {
+        const name = displayName(row.name, row.pixiv_user_id).toLowerCase();
+        return name.includes(keyword) || String(row.pixiv_user_id).includes(keyword);
+      })
+    : rows;
+
   return (
     <div className="px-6 py-4">
       <div className="mb-4 flex h-10 items-center">
@@ -190,9 +200,11 @@ export function BookmarkSubs() {
           title="还没有订阅"
           hint="订阅他人的公开收藏后，新作品会自动下载归档"
         />
+      ) : visibleRows.length === 0 ? (
+        <EmptyState icon={Search} title="没有匹配的订阅" hint="换个关键词试试" />
       ) : (
         <div className="flex flex-col">
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <div
               key={row.pixiv_user_id}
               className="flex h-[88px] items-center gap-4 border-b border-line"

@@ -97,14 +97,14 @@ export function FavoritePicker({ artworkIds, onClose, onSaved }: FavoritePickerP
   return (
     <Dialog
       open
-      title={artworkIds.length > 1 ? `将 ${artworkIds.length} 件加入收藏夹` : "收藏夹"}
+      title={artworkIds.length > 1 ? `将 ${artworkIds.length} 件加入本地收藏` : "本地收藏"}
       confirmLabel="保存"
       busy={busy}
       onConfirm={save}
       onCancel={onClose}
     >
       {favorites.length === 0 ? (
-        <p className="text-body text-text-2">还没有收藏夹，输入名称即可新建。</p>
+        <p className="text-body text-text-2">还没有本地收藏，输入名称即可新建。</p>
       ) : (
         <div className="flex max-h-[240px] flex-col gap-1 overflow-y-auto">
           {favorites.map((favorite) => (
@@ -124,14 +124,14 @@ export function FavoritePicker({ artworkIds, onClose, onSaved }: FavoritePickerP
       <div className="mt-3">
         <input
           className="line-input"
-          placeholder="新收藏夹名称（可留空）"
+          placeholder="新本地收藏名称（可留空）"
           value={newName}
           onChange={(event) => setNewName(event.currentTarget.value)}
         />
       </div>
 
       {artworkIds.length === 1 && initial.size > 0 && (
-        <p className="mt-2 text-micro text-text-3">取消勾选即可从该收藏夹移除。</p>
+        <p className="mt-2 text-micro text-text-3">取消勾选即可从该本地收藏移除。</p>
       )}
       {error && <p className="mt-2 text-micro text-danger">{error}</p>}
     </Dialog>

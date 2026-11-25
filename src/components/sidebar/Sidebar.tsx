@@ -30,7 +30,7 @@ const NAV: ReadonlyArray<{ key: ViewKey; label: string; Icon: LucideIcon }> = [
   { key: "gallery", label: "画廊", Icon: Images },
   { key: "authors", label: "作者列表", Icon: Users },
   { key: "tags", label: "标签列表", Icon: Tag },
-  { key: "favorites", label: "收藏夹", Icon: Heart },
+  { key: "favorites", label: "本地收藏", Icon: Heart },
   { key: "bookmarkSubs", label: "收藏订阅", Icon: Bookmark },
   { key: "local", label: "本地作品", Icon: FolderOpen },
 ];
