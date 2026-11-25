@@ -16,6 +16,11 @@ export const SORT_LABELS: Record<SortKey, string> = {
   random: "随机",
 };
 
+/** 随机排序的种子：翻页期间保持不变，换种子就是重抽一轮。 */
+function nextRandomSeed() {
+  return Math.floor(Math.random() * 999_999) + 1;
+}
+
 export const TRI_LABELS: Record<TriState, string> = {
   all: "全部",
   hide: "隐藏",
@@ -88,6 +93,8 @@ interface UiState {
   q: string;
   sort: SortKey;
   order: "asc" | "desc";
+  /** 随机排序的种子：只用来让翻页顺序稳定，换排序或重抽时更新 */
+  randomSeed: number;
   r18: TriState;
   ai: TriState;
   gif: TriState;
@@ -130,6 +137,7 @@ export const useUi = create<UiState>()(
       q: "",
       sort: "first_seen",
       order: "desc",
+      randomSeed: nextRandomSeed(),
       r18: "all",
       ai: "all",
       gif: "all",
@@ -180,9 +188,18 @@ export const useUi = create<UiState>()(
         })),
 
       setQ: (q) => set({ q }),
-      // 点当前排序项切换升降序，点其他项改字段并重置为降序
+      // 点当前排序项切换升降序，点其他项改字段并重置为降序；
+      // 随机每次点都重抽种子，且不参与升降序
       setSort: (sort) =>
-        set((s) => (s.sort === sort ? { order: s.order === "desc" ? "asc" : "desc" } : { sort, order: "desc" })),
+        set((s) => {
+          if (sort === "random") {
+            return { sort, order: "desc" as const, randomSeed: nextRandomSeed() };
+          }
+          if (s.sort === sort) {
+            return { order: s.order === "desc" ? ("asc" as const) : ("desc" as const) };
+          }
+          return { sort, order: "desc" as const };
+        }),
       toggleOrder: () => set((s) => ({ order: s.order === "desc" ? "asc" : "desc" })),
       cycleTri: (which) => set((s) => ({ [which]: nextTriState(s[which]) }) as Pick<UiState, typeof which>),
       toggleDeletedOnly: () => set((s) => ({ deletedOnly: !s.deletedOnly })),
@@ -190,12 +207,15 @@ export const useUi = create<UiState>()(
     }),
     {
       name: "pixiv-archive-ui",
-      // 折叠状态、主题、安全模式需要跨重启保持，筛选条件每次从默认值开始
+      // 折叠状态、主题、安全模式、布局需要跨重启保持；筛选条件每次从默认值开始。
+      // 排序也记住，但随机种子不记——重启后重新抽，顺序自然不同。
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
         safeMode: state.safeMode,
         layout: state.layout,
+        sort: state.sort,
+        order: state.order,
       }),
     },
   ),

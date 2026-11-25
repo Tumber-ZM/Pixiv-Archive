@@ -55,7 +55,8 @@ export function Topbar() {
           aria-expanded={menuOpen}
         >
           排序：{SORT_LABELS[sort]}
-          {order === "desc" ? <ArrowDown size={12} /> : <ArrowUp size={12} />}
+          {sort !== "random" &&
+            (order === "desc" ? <ArrowDown size={12} /> : <ArrowUp size={12} />)}
         </button>
 
         {menuOpen && (
@@ -71,7 +72,7 @@ export function Topbar() {
                 }}
               >
                 <span>{SORT_LABELS[key]}</span>
-                {sort === key && (
+                {sort === key && key !== "random" && (
                   <span className="text-micro text-text-3">
                     {order === "desc" ? "降序" : "升序"}
                   </span>

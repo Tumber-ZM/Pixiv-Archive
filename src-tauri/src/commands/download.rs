@@ -532,8 +532,9 @@ pub fn import_downloaded(
     Ok(artwork_id)
 }
 
-/// 一次消费多少队列项：避免单个任务跑太久，剩下的下次继续。
-pub const QUEUE_BATCH: i64 = 500;
+/// 订阅检查每批从队列取出的件数。这只是进度刷新的粒度，不是下载量上限：
+/// 一批处理完会接着取下一批，直到队列里没有可处理项。
+pub const QUEUE_CHUNK: i64 = 500;
 
 /// 队列里还没处理掉的总量（跨多次检查累计）。
 pub fn queue_len(conn: &Connection) -> AppResult<usize> {

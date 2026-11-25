@@ -9,7 +9,7 @@ use crate::commands::download;
 use crate::commands::task::TaskCancel;
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::models::{AuthorRow, BookmarkSub, SubPreview, TagRow};
+use crate::models::{AuthorRow, BookmarkSub, ListQuery, Page, SubPreview, TagRow};
 use crate::net::pixiv::PixivClient;
 use crate::platform::paths;
 
@@ -105,10 +105,26 @@ pub fn list_authors_with(
 pub fn list_tags_with(
     conn: &Connection,
     data_dir: &Path,
-    q: Option<&str>,
-    limit: u32,
-) -> AppResult<Vec<TagRow>> {
-    let pattern = like_pattern(q);
+    query: &ListQuery,
+) -> AppResult<Page<TagRow>> {
+    let pattern = like_pattern(query.q.as_deref());
+    let (page, page_size) = db::query::page_of(query);
+    let offset = (page as i64 - 1) * page_size as i64;
+
+    // 先数总数：WHERE / HAVING 必须与下面完全一致，否则页数和实际行数对不上
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (
+             SELECT t.id
+             FROM tags t
+             JOIN artwork_tags at ON at.tag_id = t.id
+             JOIN artworks w ON w.id = at.artwork_id AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
+             WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
+             GROUP BY t.id
+             HAVING COUNT(at.artwork_id) > 0
+         )",
+        [pattern.as_deref()],
+        |row| row.get(0),
+    )?;
 
     let sql = "WITH ranked AS (
                    SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage
@@ -119,7 +135,7 @@ pub fn list_tags_with(
                    GROUP BY t.id
                    HAVING COUNT(at.artwork_id) > 0
                    ORDER BY usage DESC, t.name
-                   LIMIT ?2
+                   LIMIT ?2 OFFSET ?3
                )
                SELECT r.id, r.name, r.translated_name, r.usage,
                  (SELECT w.pixiv_id
@@ -131,18 +147,21 @@ pub fn list_tags_with(
                ORDER BY r.usage DESC, r.name";
 
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params![pattern.as_deref(), limit], |row| {
-        let cover_pixiv_id: Option<i64> = row.get(4)?;
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, i64>(3)?,
-            cover_pixiv_id,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        rusqlite::params![pattern.as_deref(), page_size as i64, offset],
+        |row| {
+            let cover_pixiv_id: Option<i64> = row.get(4)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)?,
+                cover_pixiv_id,
+            ))
+        },
+    )?;
 
-    let mut out = Vec::new();
+    let mut items = Vec::with_capacity(page_size as usize);
     for row in rows {
         let (id, name, translated_name, count, cover_pixiv_id) = row?;
         // 封面统一走 400px 缩略图，不直接引原图
@@ -152,7 +171,7 @@ pub fn list_tags_with(
                 .is_file()
                 .then(|| candidate.to_string_lossy().to_string())
         });
-        out.push(TagRow {
+        items.push(TagRow {
             id,
             name,
             translated_name,
@@ -160,7 +179,20 @@ pub fn list_tags_with(
             cover_path,
         });
     }
-    Ok(out)
+
+    let total_pages = if total == 0 {
+        0
+    } else {
+        ((total + page_size as i64 - 1) / page_size as i64) as u32
+    };
+
+    Ok(Page {
+        items,
+        total,
+        page,
+        page_size,
+        total_pages,
+    })
 }
 
 /// 头像优先取 `data_dir/avatars/<pixiv_user_id>.png`，
@@ -292,11 +324,10 @@ pub fn list_authors(q: Option<String>) -> AppResult<Vec<AuthorRow>> {
 }
 
 #[tauri::command]
-pub fn list_tags(q: Option<String>) -> AppResult<Vec<TagRow>> {
+pub fn list_tags(query: ListQuery) -> AppResult<Page<TagRow>> {
     let conn = open_library()?;
     let data_dir = paths::data_dir()?;
-    // 标签可能上千个，先按使用次数截断再取封面
-    list_tags_with(&conn, &data_dir, q.as_deref(), 300)
+    list_tags_with(&conn, &data_dir, &query)
 }
 
 #[tauri::command]
@@ -568,9 +599,9 @@ mod tests {
         assert_eq!(authors[0].name, "多い作者");
 
         // 残留的 artwork_tags 行（无外键级联时）不能把标签留在列表里
-        let tags = list_tags_with(&conn, &dir, None, 300).unwrap();
+        let tags = list_tags_with(&conn, &dir, &ListQuery::default()).unwrap();
         assert!(
-            tags.iter().all(|tag| tag.name != "孤标签"),
+            tags.items.iter().all(|tag| tag.name != "孤标签"),
             "没有作品的标签不该再出现在列表里"
         );
     }
@@ -594,14 +625,22 @@ mod tests {
             .join("test-tmp");
         std::fs::create_dir_all(dir.join("thumbnails")).unwrap();
 
-        let rows = list_tags_with(&conn, &dir, None, 300).unwrap();
-        assert_eq!(rows[0].name, "R-18");
-        assert_eq!(rows[0].count, 2);
+        let rows = list_tags_with(&conn, &dir, &ListQuery::default()).unwrap();
+        assert_eq!(rows.items[0].name, "R-18");
+        assert_eq!(rows.items[0].count, 2);
 
         // 译名也要能搜到
-        let by_translation = list_tags_with(&conn, &dir, Some("成人"), 300).unwrap();
-        assert_eq!(by_translation.len(), 1);
-        assert_eq!(by_translation[0].name, "R-18");
+        let by_translation = list_tags_with(
+            &conn,
+            &dir,
+            &ListQuery {
+                q: Some("成人".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(by_translation.items.len(), 1);
+        assert_eq!(by_translation.items[0].name, "R-18");
     }
 
     #[test]
@@ -610,9 +649,18 @@ mod tests {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test-tmp");
-        let rows = list_tags_with(&conn, &dir, None, 1).unwrap();
-        assert_eq!(rows.len(), 1, "limit 应限制返回条数");
-        assert_eq!(rows[0].name, "R-18", "应保留使用次数最高的标签");
+        let rows = list_tags_with(
+            &conn,
+            &dir,
+            &ListQuery {
+                page_size: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.items.len(), 1, "page_size 应限制每页条数");
+        assert_eq!(rows.items[0].name, "R-18", "应保留使用次数最高的标签");
+        assert!(rows.total > 1, "总数应包含所有标签，不受每页条数影响");
     }
 
     #[test]

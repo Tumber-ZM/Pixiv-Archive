@@ -127,9 +127,10 @@ pub fn order_by(query: &ListQuery) -> String {
         Some("title") => format!("ORDER BY a.title {direction}"),
         Some("pixiv_id") => format!("ORDER BY a.pixiv_id {direction}"),
         Some("random") => {
+            // 随机没有升降序：换种子就是重抽一轮，方向不参与
             // seed 取模，避免 a.id * seed * 1103515245 在 SQLite 里溢出成浮点后排序不稳定
             let seed = query.seed.unwrap_or(1).rem_euclid(1_000_000) + 1;
-            format!("ORDER BY (a.id * {seed} * 1103515245 + 12345) % 2147483647 {direction}")
+            format!("ORDER BY (a.id * {seed} * 1103515245 + 12345) % 2147483647")
         }
         _ => format!("ORDER BY a.first_seen {direction}"),
     }

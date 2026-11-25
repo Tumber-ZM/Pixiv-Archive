@@ -36,6 +36,8 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
   const q = useUi((state) => state.q);
   const sort = useUi((state) => state.sort);
   const order = useUi((state) => state.order);
+  // 随机种子由 store 持有：同一轮翻页顺序稳定，点「随机」时换新种子
+  const randomSeed = useUi((state) => state.randomSeed);
   const r18 = useUi((state) => state.r18);
   const ai = useUi((state) => state.ai);
   const gif = useUi((state) => state.gif);
@@ -57,9 +59,6 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<AppError | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-
-  // 随机排序的种子只生成一次，翻页时保持不变，否则每页顺序都会变
-  const [seed] = useState(() => Math.floor(Math.random() * 999_999) + 1);
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [viewer, setViewer] = useState<{ ids: number[]; index: number } | null>(null);
@@ -90,7 +89,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     setTotal(0);
     setTotalPages(1);
     setPage(1);
-  }, [debouncedQ, sort, order, r18, ai, gif, deletedOnly, extraKey, refreshKey, dataEpoch]);
+  }, [debouncedQ, sort, order, randomSeed, r18, ai, gif, deletedOnly, extraKey, refreshKey, dataEpoch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +104,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
       ai,
       gif,
       deleted_only: deletedOnly,
-      seed: sort === "random" ? seed : undefined,
+      seed: sort === "random" ? randomSeed : undefined,
       ...(extraQuery ?? {}),
     };
 
@@ -145,7 +144,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     };
     // extraQuery 通过 extraKey 参与依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQ, sort, order, r18, ai, gif, deletedOnly, seed, refreshKey, extraKey, dataEpoch]);
+  }, [page, debouncedQ, sort, order, r18, ai, gif, deletedOnly, randomSeed, refreshKey, extraKey, dataEpoch]);
 
   // 底部哨兵：出现即加载下一批。提前 800px 预取，滚动时才不会卡顿。
   useEffect(() => {

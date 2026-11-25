@@ -354,101 +354,132 @@ async fn check_one(
         download::enqueue(conn, item.pixiv_id)?;
     }
 
-    let queued = download::pending_queue(conn, download::QUEUE_BATCH)?;
-    let queued_total = queued.len();
-    let backlog = download::queue_len(conn)?;
-    if queued_total > 0 {
-        emit(
-            app,
-            0,
-            queued_total,
-            result.downloaded,
-            backlog,
-            &format!(
-                "收藏订阅「{}」：本地待下载 {} 件，本次处理 {} 件",
-                result.name, backlog, queued_total
-            ),
-        );
-    }
-    for (idx, pixiv_id) in queued.iter().enumerate() {
+    // 3. 循环消费队列：每批 QUEUE_CHUNK 件。分批只决定进度刷新粒度，不是
+    //    下载量上限——一批处理完会接着取下一批，直到取不到可处理项。
+    let plan_total = download::queue_len(conn)?;
+    let mut handled = 0usize;
+
+    loop {
         if cancel.load(Ordering::Relaxed) {
             result.cancelled = true;
             break;
         }
+
+        // 队列里可能只剩还没到重试时间的失败项，此时取到空批就收工；
+        // 不能拿 queue_len 当循环条件，否则会原地空转。
+        let queued = download::pending_queue(conn, download::QUEUE_CHUNK)?;
+        if queued.is_empty() {
+            break;
+        }
+
+        let queued_total = queued.len();
+        let backlog = download::queue_len(conn)?;
+        // 进度条按「本轮队列总量」走，current 只增不减；plan_total 可能包含
+        // 未到重试时间的失败项，差额由收尾的完成事件补满。
+        let total = plan_total.max(handled + queued_total);
         emit(
             app,
-            idx + 1,
-            queued_total,
+            handled,
+            total,
             result.downloaded,
             backlog,
             &format!(
-                "收藏订阅「{}」：下载 {}/{}（PID {}）",
-                result.name,
-                idx + 1,
-                queued_total,
-                pixiv_id
+                "收藏订阅「{}」：本批 {} 件，队列剩余 {} 件",
+                result.name, queued_total, backlog
             ),
         );
 
-        match client.illust_detail(*pixiv_id).await {
-            Ok(data) => {
-                // 头像要在入库前判断：apply_illust 会把 profile_image 更新成新地址
-                let stored_avatar: Option<String> = conn
-                    .query_row(
-                        "SELECT profile_image FROM authors WHERE pixiv_user_id = ?1",
-                        [data.author_id],
-                        |row| row.get(0),
+        let mut stop = false;
+        for (idx, pixiv_id) in queued.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                result.cancelled = true;
+                stop = true;
+                break;
+            }
+
+            emit(
+                app,
+                handled + idx + 1,
+                total,
+                result.downloaded,
+                backlog,
+                &format!(
+                    "收藏订阅「{}」：本批 {}/{}（PID {}），累计入库 {}",
+                    result.name,
+                    idx + 1,
+                    queued_total,
+                    pixiv_id,
+                    result.downloaded
+                ),
+            );
+
+            match client.illust_detail(*pixiv_id).await {
+                Ok(data) => {
+                    // 头像要在入库前判断：apply_illust 会把 profile_image 更新成新地址
+                    let stored_avatar: Option<String> = conn
+                        .query_row(
+                            "SELECT profile_image FROM authors WHERE pixiv_user_id = ?1",
+                            [data.author_id],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten();
+                    let _ = download::ensure_avatar(
+                        client,
+                        data_dir,
+                        data.author_id,
+                        data.author_avatar.as_deref(),
+                        stored_avatar.as_deref(),
                     )
-                    .ok()
-                    .flatten();
-                let _ = download::ensure_avatar(
-                    client,
-                    data_dir,
-                    data.author_id,
-                    data.author_avatar.as_deref(),
-                    stored_avatar.as_deref(),
-                )
-                .await;
-                match download::fetch_and_import(
-                    client,
-                    conn,
-                    data_dir,
-                    source_root,
-                    &data,
-                    cancel,
-                )
-                .await
-                {
-                    Ok(imported) => {
-                        download::complete_queue_item(conn, *pixiv_id)?;
-                        // 非公开 / 已删除作品返回 0（已标记隐藏），不算下载成功
-                        if imported > 0 {
-                            result.downloaded += 1;
+                    .await;
+                    match download::fetch_and_import(
+                        client,
+                        conn,
+                        data_dir,
+                        source_root,
+                        &data,
+                        cancel,
+                    )
+                    .await
+                    {
+                        Ok(imported) => {
+                            download::complete_queue_item(conn, *pixiv_id)?;
+                            // 非公开 / 已删除作品返回 0（已标记隐藏），不算下载成功
+                            if imported > 0 {
+                                result.downloaded += 1;
+                            }
+                        }
+                        Err(error) if error.code == "CANCELLED" => {
+                            // 用户取消：队列项保持 pending，已下的页留在磁盘，下次接着补，
+                            // 也不要记成失败把退避时间推后。
+                            result.cancelled = true;
+                            stop = true;
+                            break;
+                        }
+                        Err(error) => {
+                            download::fail_queue_item(conn, *pixiv_id, &error.message)?;
+                            result.failed += 1;
+                            eprintln!("下载作品 {pixiv_id} 失败：{}", error.message);
                         }
                     }
-                    Err(error) if error.code == "CANCELLED" => {
-                        // 用户取消：队列项保持 pending，已下的页留在磁盘，下次接着补，
-                        // 也不要记成失败把退避时间推后。
-                        result.cancelled = true;
-                        break;
-                    }
-                    Err(error) => {
-                        download::fail_queue_item(conn, *pixiv_id, &error.message)?;
-                        result.failed += 1;
-                        eprintln!("下载作品 {pixiv_id} 失败：{}", error.message);
-                    }
+                }
+                Err(error) if error.code == "AUTH" => return Err(error),
+                Err(error) if error.code == "NOT_FOUND" => {
+                    // Pixiv 上已删除：移出队列，不再重试
+                    download::complete_queue_item(conn, *pixiv_id)?;
+                    result.failed += 1;
+                }
+                Err(error) => {
+                    download::fail_queue_item(conn, *pixiv_id, &error.message)?;
+                    result.failed += 1;
                 }
             }
-            Err(error) if error.code == "AUTH" => return Err(error),
-            Err(error) if error.code == "NOT_FOUND" => {
-                // Pixiv 上已删除：移出队列，不再重试
-                download::complete_queue_item(conn, *pixiv_id)?;
-                result.failed += 1;
-            }
-            Err(error) => {
-                download::fail_queue_item(conn, *pixiv_id, &error.message)?;
-                result.failed += 1;
-            }
+
+            handled += 1;
+        }
+
+        if stop {
+            break;
         }
     }
 
