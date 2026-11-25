@@ -28,10 +28,8 @@ pub struct ArtworkCard {
     pub height: Option<i64>,
     pub pixiv_status: String,
     pub ai_type: i64,
-    /// 是否至少在一个本地收藏里
+    /// 是否至少在一个收藏夹里
     pub is_favorited: bool,
-    /// 是否在 Pixiv 收藏里（只读）
-    pub is_pixiv_favorited: bool,
     pub cover_path: Option<String>,
     pub cover_image_id: Option<i64>,
     /// 封面原始宽高，用于瀑布流按比例预估卡片高度
@@ -125,12 +123,6 @@ pub struct AuthorRow {
     pub avatar_path: Option<String>,
     /// 该作者最近几件作品的缩略图，用于列表卡片的封面条
     pub covers: Vec<String>,
-    /// 是否已订阅该作者（列表里直接显示铃铛状态，不用再查一次）
-    pub subscribed: bool,
-    /// 是否至少有一件「收藏」来源的作品（作者订阅下载的不算，用于「仅看收藏」筛选）
-    pub collected: bool,
-    /// 是否至少有一件本地作品在 Pixiv 收藏里（同步收藏后才有意义）
-    pub favorited: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,17 +133,6 @@ pub struct TagRow {
     pub count: i64,
     /// 该标签下随机一张作品的缩略图，用于标签画廊的封面
     pub cover_path: Option<String>,
-    /// 封面作品是否在 Pixiv 收藏里（只读）
-    pub pixiv_favorited: bool,
-}
-
-/// 标签组合。`tags` 存标签原名；后续标签组合订阅引用 `id`。
-#[derive(Debug, Clone, Serialize)]
-pub struct TagCombo {
-    pub id: i64,
-    pub name: String,
-    pub tags: Vec<String>,
-    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -179,41 +160,11 @@ pub struct JobSnapshot {
     pub error: Option<String>,
 }
 
-/// 订阅类型。`bookmark` = 对方的公开收藏，`author` = 该作者发布的作品。
-///
-/// 以后加 tag 组合订阅时在这里加一个值即可，表结构不用动。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubKind {
-    Bookmark,
-    Author,
-}
-
-impl SubKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Bookmark => "bookmark",
-            Self::Author => "author",
-        }
-    }
-
-    /// 前端传字符串；未知值返回 None，由命令层转成 INVALID_INPUT。
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "bookmark" | "bookmarks" | "favorite" => Some(Self::Bookmark),
-            "author" | "artist" | "user" => Some(Self::Author),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
-pub struct Sub {
-    pub kind: String,
-    /// 被订阅的 Pixiv 用户 ID（收藏订阅的目标也是用户）
-    pub target_pixiv_id: i64,
+pub struct BookmarkSub {
+    pub pixiv_user_id: i64,
     pub name: Option<String>,
-    /// 作者订阅的起点：NULL = 待建立，0 = 补全全部历史
-    pub baseline_pid: Option<i64>,
+    pub last_pid: Option<i64>,
     pub auto_download: bool,
     pub last_checked: Option<String>,
     pub last_result: Option<String>,
@@ -222,27 +173,9 @@ pub struct Sub {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubPreview {
-    pub kind: String,
-    pub target_pixiv_id: i64,
+    pub pixiv_user_id: i64,
     pub name: String,
     pub total_bookmarks: Option<i64>,
-}
-
-/// 本地缓存的 Pixiv 收藏概况（作者列表筛选与「同步收藏」按钮用）。
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct FavoriteSyncStatus {
-    pub count: i64,
-    pub last_synced: Option<String>,
-}
-
-/// 一次「同步我的收藏」的结果。
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct FavoriteSyncReport {
-    pub total: usize,
-    pub public: usize,
-    pub private: usize,
-    pub pages: usize,
-    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,15 +263,7 @@ pub struct ListQuery {
     pub seed: Option<i64>,
     pub author_id: Option<i64>,
     pub tag: Option<String>,
-    /// 同时命中这些标签（标签组合用，AND）
-    pub tags_all: Option<Vec<String>>,
     pub favorite_id: Option<i64>,
-    /// 只看 Pixiv 收藏里的作品（作者页的「仅看收藏」）
-    pub favorited_only: Option<bool>,
-    /// 没同步收藏时的兜底：只看订阅前就有的作品
-    pub collected_only: Option<bool>,
-    /// 只看已订阅作者的作品
-    pub subscribed_only: Option<bool>,
     /// `local` = 只看本地图片（pixiv_id < 0）；缺省 = 只看 Pixiv 作品
     pub scope: Option<String>,
 }

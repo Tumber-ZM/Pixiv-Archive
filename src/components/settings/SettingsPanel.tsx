@@ -385,7 +385,7 @@ export function SettingsPanel() {
                     </div>
                   </label>
                   <p className="text-micro text-text-3">
-                    扫描图片时直接从这个目录读取；「订阅列表」下载的图片也落到这里。
+                    扫描图片时直接从这个目录读取；「收藏订阅」下载的图片也落到这里。
                   </p>
                   <p className="text-micro text-text-3">
                     请确保文件名包含 7–10 位 Pixiv 作品 ID；多图作品请用
@@ -478,7 +478,7 @@ export function SettingsPanel() {
                     />
                   </label>
                   <p className="text-micro text-text-3">
-                    token 只保存在本机 settings.json；同步元数据、「订阅列表」下载和「同步 Pixiv 收藏」都需要它。
+                    token 只保存在本机 settings.json；同步元数据与「收藏订阅」下载都需要它。
                   </p>
 
                   <div className="flex items-center gap-3">

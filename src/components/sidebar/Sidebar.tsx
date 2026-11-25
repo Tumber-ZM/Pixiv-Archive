@@ -17,21 +17,20 @@ import {
   Sun,
   Tag,
   Users,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
 import { Dialog } from "../dialog/Dialog";
 import { CMD, call, isAppError } from "../../lib/ipc";
 import { useUi, type Theme, type ViewKey } from "../../stores/ui";
-import type { RepairReport, Stats, SubResult, SyncReport } from "../../types/ipc";
+import type { Stats, SubResult, SyncReport } from "../../types/ipc";
 
 const NAV: ReadonlyArray<{ key: ViewKey; label: string; Icon: LucideIcon }> = [
   { key: "gallery", label: "画廊", Icon: Images },
   { key: "authors", label: "作者列表", Icon: Users },
   { key: "tags", label: "标签列表", Icon: Tag },
-  { key: "favorites", label: "本地收藏", Icon: Heart },
-  { key: "subs", label: "订阅列表", Icon: Bookmark },
+  { key: "favorites", label: "收藏夹", Icon: Heart },
+  { key: "bookmarkSubs", label: "收藏订阅", Icon: Bookmark },
   { key: "local", label: "本地作品", Icon: FolderOpen },
 ];
 
@@ -39,12 +38,11 @@ const NAV: ReadonlyArray<{ key: ViewKey; label: string; Icon: LucideIcon }> = [
 const ACTIONS: ReadonlyArray<{
   label: string;
   Icon: LucideIcon;
-  action?: "scan" | "sync" | "subs" | "repair";
+  action?: "scan" | "sync" | "subs";
 }> = [
   { label: "同步元数据", Icon: RefreshCw, action: "sync" },
   { label: "扫描图片", Icon: ScanLine, action: "scan" },
   { label: "订阅更新", Icon: Bell, action: "subs" },
-  { label: "校验图片", Icon: Wrench, action: "repair" },
 ];
 
 const THEME_META: Record<Theme, { label: string; Icon: LucideIcon }> = {
@@ -127,7 +125,7 @@ export function Sidebar() {
     setSubError(null);
     setScanTask({ current: 0, total: 0, imported: 0, message: "准备检查订阅…", kind: "subs" });
     try {
-      const results = await call<SubResult[]>(CMD.checkAllSubs, { full: false });
+      const results = await call<SubResult[]>(CMD.checkAllBookmarkSubs, { full: false });
       setSubResults(results);
       bumpData();
     } catch (reason: unknown) {
@@ -138,39 +136,8 @@ export function Sidebar() {
     }
   };
 
-  const [repairRunning, setRepairRunning] = useState(false);
-  const [repairReport, setRepairReport] = useState<RepairReport | null>(null);
-  const [repairError, setRepairError] = useState<string | null>(null);
-
-  // 「校验图片」：找出图片数少于远端页数的作品，缺什么补什么，齐全的不动
-  const runRepair = async () => {
-    if (repairRunning) return;
-    if (scanTask) {
-      setRepairError("有任务在运行，请等它结束再校验");
-      return;
-    }
-    setRepairRunning(true);
-    setRepairError(null);
-    setScanTask({
-      current: 0,
-      total: 0,
-      imported: 0,
-      message: "准备校验图片…",
-      kind: "repair",
-    });
-    try {
-      const report = await call<RepairReport>(CMD.repairIncompleteImages);
-      setRepairReport(report);
-      bumpData();
-    } catch (reason: unknown) {
-      setRepairError(isAppError(reason) ? reason.message : String(reason));
-    } finally {
-      setRepairRunning(false);
-      setScanTask(null);
-    }
-  };
-
-  const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];  // 折叠态要居中，但 .nav-item 自带 `padding: 0 14px`，utility 优先级盖不住，只能内联覆盖
+  const { label: themeLabel, Icon: ThemeIcon } = THEME_META[theme];
+  // 折叠态要居中，但 .nav-item 自带 `padding: 0 14px`，utility 优先级盖不住，只能内联覆盖
   const itemStyle = collapsed ? { justifyContent: "center", padding: 0 } : undefined;
 
   return (
@@ -221,8 +188,7 @@ export function Sidebar() {
             disabled={
               action === undefined ||
               (action === "sync" && syncing) ||
-              (action === "subs" && subRunning) ||
-              (action === "repair" && repairRunning)
+              (action === "subs" && subRunning)
             }
             title={
               action === "scan"
@@ -230,10 +196,8 @@ export function Sidebar() {
                 : action === "sync"
                   ? "同步作品元数据（标题 / 作者 / 标签 / R18 / AI）；Shift+点击 = 全量重同步"
                   : action === "subs"
-                    ? "检查所有启用的订阅（Pixiv 收藏 / 作者），下载新作品并入库"
-                    : action === "repair"
-                      ? "校验每件作品的图片数是否和 Pixiv 页数一致，缺页的补下载"
-                      : label
+                    ? "检查所有启用的收藏订阅，下载新作品并入库"
+                    : label
             }
             onClick={
               action === "scan"
@@ -242,9 +206,7 @@ export function Sidebar() {
                   ? (event) => runSync(event.shiftKey)
                   : action === "subs"
                     ? runSubs
-                    : action === "repair"
-                      ? runRepair
-                      : undefined
+                    : undefined
             }
           >
             <Icon size={16} />
@@ -306,7 +268,7 @@ export function Sidebar() {
       >
         <p className="text-body text-text">本次待同步 {syncReport?.total ?? 0} 件</p>
         <p className="mt-2 text-micro text-text-2">
-          成功 {syncReport?.synced ?? 0} · 已隐藏 {syncReport?.deleted ?? 0} · 失败{" "}
+          成功 {syncReport?.synced ?? 0} · 已删除 {syncReport?.deleted ?? 0} · 失败{" "}
           {syncReport?.failed ?? 0}
         </p>
         {syncReport?.auth_error && (
@@ -323,27 +285,23 @@ export function Sidebar() {
       >
         <p className="text-micro text-danger">{syncError}</p>
       </Dialog>
-      <Dialog
+    <Dialog
         open={subResults !== null}
-        title={
-          subResults?.some((row) => row.cancelled) ? "订阅更新已取消" : "订阅更新完成"
-        }
+        title="订阅更新完成"
         confirmLabel="知道了"
         onCancel={() => setSubResults(null)}
         onConfirm={() => setSubResults(null)}
       >
         <p className="text-body text-text">
           新增{" "}
-          {subResults?.reduce((sum, row) => sum + row.new_found, 0) ?? 0} 件 · 补缺{" "}
-          {subResults?.reduce((sum, row) => sum + row.repaired, 0) ?? 0} 件 · 下载{" "}
+          {subResults?.reduce((sum, row) => sum + row.new_found, 0) ?? 0} 件 · 下载{" "}
           {subResults?.reduce((sum, row) => sum + row.downloaded, 0) ?? 0} 件
         </p>
         <div className="mt-2 flex max-h-[240px] flex-col gap-1 overflow-y-auto">
           {subResults?.map((row) => (
-            <p key={`${row.kind}:${row.pixiv_user_id}`} className="text-micro text-text-2">
-              {row.kind === "author" ? "作者" : "Pixiv 收藏"} ·{" "}
-              {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found}
-              {row.repaired > 0 ? ` · 补缺 ${row.repaired}` : ""} · 下载 {row.downloaded}
+            <p key={row.pixiv_user_id} className="text-micro text-text-2">
+              {row.name || `用户 ${row.pixiv_user_id}`}：新增 {row.new_found} · 下载{" "}
+              {row.downloaded}
               {row.failed > 0 ? ` · 失败 ${row.failed}` : ""}
               {row.cancelled ? " · 已取消" : ""}
               {row.error ? `（${row.error}）` : ""}
@@ -360,32 +318,6 @@ export function Sidebar() {
         onConfirm={() => setSubError(null)}
       >
         <p className="text-micro text-danger">{subError}</p>
-      </Dialog>
-
-      <Dialog
-        open={repairReport !== null}
-        title="校验完成"
-        confirmLabel="知道了"
-        onCancel={() => setRepairReport(null)}
-        onConfirm={() => setRepairReport(null)}
-      >
-        <p className="text-body text-text">
-          检查 {repairReport?.checked ?? 0} 件 · 补齐 {repairReport?.repaired ?? 0} 件
-          {repairReport?.failed ? ` · 失败 ${repairReport.failed}` : ""}
-        </p>
-        <p className="mt-2 text-micro text-text-2">
-          已经齐全的作品不会重新下载；缺页的只补缺失页。
-        </p>
-      </Dialog>
-
-      <Dialog
-        open={repairError !== null}
-        title="校验失败"
-        confirmLabel="知道了"
-        onCancel={() => setRepairError(null)}
-        onConfirm={() => setRepairError(null)}
-      >
-        <p className="text-micro text-danger">{repairError}</p>
       </Dialog>
     </aside>
   );

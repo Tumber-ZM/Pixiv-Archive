@@ -64,26 +64,8 @@ export default function App() {
 
     // 订阅检查进度
     track(
-      listen<{ current: number; total: number; imported?: number; backlog?: number; message: string }>(
-        "sub-progress",
-        (event) => {
-          const payload = event.payload;
-          setScanTask({
-            current: payload.current,
-            total: payload.total,
-            imported: payload.imported ?? 0,
-            backlog: payload.backlog ?? 0,
-            message: payload.message,
-            kind: "subs",
-          });
-        },
-      ),
-    );
-
-    // 同步我的 Pixiv 收藏（只读作品 ID）
-    track(
       listen<{ current: number; total: number; message: string }>(
-        "favorites-progress",
+        "sub-progress",
         (event) => {
           const payload = event.payload;
           setScanTask({
@@ -91,24 +73,7 @@ export default function App() {
             total: payload.total,
             imported: 0,
             message: payload.message,
-            kind: "favorites",
-          });
-        },
-      ),
-    );
-
-    // 校验缺页并补下
-    track(
-      listen<{ current: number; total: number; imported?: number; message: string }>(
-        "repair-progress",
-        (event) => {
-          const payload = event.payload;
-          setScanTask({
-            current: payload.current,
-            total: payload.total,
-            imported: payload.imported ?? 0,
-            message: payload.message,
-            kind: "repair",
+            kind: "subs",
           });
         },
       ),
