@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Check, Layers, Star, Trash2 } from "lucide-react";
+import { Bookmark, Check, Heart, Layers, Trash2 } from "lucide-react";
 import type { KeyboardEvent, MouseEvent } from "react";
 
 import type { Layout } from "../../stores/ui";
@@ -43,13 +43,41 @@ function Badges({ card }: { card: Card }) {
         </span>
       )}
       {card.pixiv_status === "deleted" && (
-        <span className="badge badge-deleted">已删除</span>
+        <span className="badge badge-deleted" title="Pixiv 上已删除或非公开">
+          已隐藏
+        </span>
       )}
     </div>
   );
 }
 
-/** 右上角浮层：悬停出现，含收藏 / 删除 / 复选框（旧项目 .tile-actions + .tile-check）。 */
+/** 常驻的收藏标记：书签=本地收藏，爱心=Pixiv 收藏（只读）。 */
+function FavoriteMarks({ card }: { card: Card }) {
+  return (
+    <div className="wall-favorite-marks">
+      <span
+        className="wall-mark wall-mark-bookmark"
+        data-active={card.is_favorited}
+        title={card.is_favorited ? "已在本地收藏" : "不在本地收藏"}
+      >
+        <Bookmark size={11} fill={card.is_favorited ? "currentColor" : "none"} />
+      </span>
+      <span
+        className="wall-mark wall-mark-heart"
+        data-active={card.is_pixiv_favorited}
+        title={
+          card.is_pixiv_favorited
+            ? "已在 Pixiv 收藏"
+            : "不在 Pixiv 收藏"
+        }
+      >
+        <Heart size={11} fill={card.is_pixiv_favorited ? "currentColor" : "none"} />
+      </span>
+    </div>
+  );
+}
+
+/** 右上角浮层：悬停出现，含收藏到本地 / 删除 / 复选框（旧项目 .tile-actions + .tile-check）。 */
 function CardActions({
   favorited,
   selected,
@@ -76,8 +104,8 @@ function CardActions({
             <button
               type="button"
               className="wall-action"
-              title={favorited ? "已收藏" : "收藏"}
-              aria-label={favorited ? "已收藏" : "收藏"}
+              title={favorited ? "已收藏到本地" : "收藏到本地"}
+              aria-label={favorited ? "已收藏到本地" : "收藏到本地"}
               style={
                 favorited
                   ? { color: "var(--color-accent)", borderColor: "var(--color-accent)" }
@@ -88,7 +116,7 @@ function CardActions({
                 onFavorite();
               }}
             >
-              <Star size={11} fill={favorited ? "currentColor" : "none"} />
+              <Bookmark size={11} fill={favorited ? "currentColor" : "none"} />
             </button>
           )}
           {onDelete && (
@@ -193,6 +221,7 @@ export function ArtworkCard({
         )}
         <Badges card={card} />
         {actions}
+        <FavoriteMarks card={card} />
         <p className="wall-tile-title">{title}</p>
       </div>
     );
@@ -216,6 +245,7 @@ export function ArtworkCard({
         )}
         <Badges card={card} />
         {actions}
+        <FavoriteMarks card={card} />
       </div>
 
       <div className="mt-2.5">

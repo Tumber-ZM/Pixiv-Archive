@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Images, Loader2 } from "lucide-react";
 
 import { CMD, call, isAppError } from "../../lib/ipc";
 import { TRI_LABELS, useUi } from "../../stores/ui";
-import type { AppError, ArtworkCard, BatchResult, ListQuery, Page, SyncReport } from "../../types/ipc";
+import type { AppError, ArtworkCard, BatchResult, ListQuery, Page, RemoteIllust, SyncReport } from "../../types/ipc";
 import { BatchBar } from "../batch/BatchBar";
 import { ContextMenu } from "../common/ContextMenu";
 import { EmptyState } from "../common/EmptyState";
@@ -17,13 +17,23 @@ const PAGE_SIZE = 60;
 const SEARCH_DEBOUNCE_MS = 300;
 
 interface ArtworkListProps {
-  /** 固定筛选：作者页带 author_id、标签页带 tag、收藏夹带 favorite_id */
+  /** 固定筛选：作者页带 author_id、标签页带 tag、本地收藏带 favorite_id */
   extraQuery?: Partial<ListQuery>;
   /** 子视图的标题与返回入口 */
   heading?: string;
+  /** 标题右边额外放的筛选按钮（例如作者页的「仅看收藏」） */
+  headerExtra?: ReactNode;
   onBack?: () => void;
   /** 列表变化后通知外层（例如删空了要回列表） */
   onChanged?: () => void;
+  /** 本地搜不到时去 Pixiv 搜作品（只给画廊用） */
+  remoteSearch?: boolean;
+  /** 忽略顶栏搜索词（标签页的图片区只按勾选标签过滤） */
+  ignoreQuery?: boolean;
+  /** 标题栏下方额外内容（作者页的标签云） */
+  tagBar?: ReactNode;
+  /** 清除额外筛选（作者页标签） */
+  onClearExtra?: () => void;
 }
 
 /**
@@ -32,7 +42,7 @@ interface ArtworkListProps {
  * 无限滚动：每批 60 条，底部哨兵进入视口就取下一批并追加。
  * 筛选条件变化会清空累积结果、退回第 1 批——否则新旧条件的结果会混在一起。
  */
-export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkListProps) {
+export function ArtworkList({ extraQuery, heading, headerExtra, onBack, onChanged, remoteSearch, ignoreQuery, tagBar, onClearExtra }: ArtworkListProps) {
   const q = useUi((state) => state.q);
   const sort = useUi((state) => state.sort);
   const order = useUi((state) => state.order);
@@ -42,10 +52,15 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
   const deletedOnly = useUi((state) => state.deletedOnly);
   const layout = useUi((state) => state.layout);
   const clearFilters = useUi((state) => state.clearFilters);
+  const shuffleToken = useUi((state) => state.shuffleToken);
   const cycleTheme = useUi((state) => state.cycleTheme);
   const setSettingsOpen = useUi((state) => state.setSettingsOpen);
   const bumpData = useUi((state) => state.bumpData);
   const setScanTask = useUi((state) => state.setScanTask);
+  const clearAllFilters = () => {
+    clearFilters();
+    onClearExtra?.();
+  };
   const dataEpoch = useUi((state) => state.dataEpoch);
 
   const [debouncedQ, setDebouncedQ] = useState(q);
@@ -60,6 +75,8 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
 
   // 随机排序的种子只生成一次，翻页时保持不变，否则每页顺序都会变
   const [seed] = useState(() => Math.floor(Math.random() * 999_999) + 1);
+  // 「随机」按钮触发的一次性乱序：和排序下拉框互不影响
+  const [shuffle, setShuffle] = useState<{ token: number; seed: number } | null>(null);
 
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [viewer, setViewer] = useState<{ ids: number[]; index: number } | null>(null);
@@ -71,6 +88,14 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
   const [menu, setMenu] = useState<{ x: number; y: number; card: ArtworkCard } | null>(null);
   const [blankMenu, setBlankMenu] = useState<{ x: number; y: number } | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  // 远端作品搜索：本地为空时才请求，失败只提示不弹错
+  const [remoteItems, setRemoteItems] = useState<RemoteIllust[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteFor, setRemoteFor] = useState("");
+  const [remoteBusy, setRemoteBusy] = useState<number | null>(null);
+  const [remoteDone, setRemoteDone] = useState<Set<number>>(new Set());
+  const [remoteNotice, setRemoteNotice] = useState<string | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   // 防止同一批被重复请求（快速滚动时哨兵会连续触发）
@@ -84,28 +109,82 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     return () => clearTimeout(timer);
   }, [q]);
 
+  // 顶栏「随机」按钮：只换一次乱序种子，不改排序下拉框
+  useEffect(() => {
+    if (shuffleToken === 0) return;
+    setShuffle({
+      token: shuffleToken,
+      seed: Math.floor(Math.random() * 999_999) + 1,
+    });
+  }, [shuffleToken]);
+
+  // 用户改了排序 / 筛选 / 搜索词：退出一次性乱序，回到所选排序
+  useEffect(() => {
+    setShuffle(null);
+  }, [sort, order, r18, ai, gif, deletedOnly, debouncedQ]);
+
+  // 本地没有结果时，非阻塞地补一次 Pixiv 作品搜索
+  useEffect(() => {
+    if (!remoteSearch || ignoreQuery || !debouncedQ.trim() || loading || items.length > 0) {
+      setRemoteItems([]);
+      setRemoteError(null);
+      setRemoteLoading(false);
+      setRemoteFor("");
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setRemoteLoading(true);
+      setRemoteError(null);
+      call<RemoteIllust[]>(CMD.searchPixivIllusts, {
+        word: debouncedQ.trim(),
+        sort: "date_desc",
+      })
+        .then((list) => {
+          if (cancelled) return;
+          setRemoteItems(list);
+          setRemoteFor(debouncedQ.trim());
+        })
+        .catch((reason: unknown) => {
+          if (cancelled) return;
+          setRemoteError(isAppError(reason) ? reason.message : String(reason));
+          setRemoteItems([]);
+          setRemoteFor(debouncedQ.trim());
+        })
+        .finally(() => {
+          if (!cancelled) setRemoteLoading(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [remoteSearch, ignoreQuery, debouncedQ, loading, items.length]);
+
   // 条件变了：清空累积结果，退回第 1 批
   useEffect(() => {
     setItems([]);
     setTotal(0);
     setTotalPages(1);
     setPage(1);
-  }, [debouncedQ, sort, order, r18, ai, gif, deletedOnly, extraKey, refreshKey, dataEpoch]);
+  }, [debouncedQ, sort, order, r18, ai, gif, deletedOnly, extraKey, refreshKey, dataEpoch, shuffle?.token]);
 
   useEffect(() => {
     let cancelled = false;
+    const effectiveSort = shuffle ? "random" : sort;
+    const effectiveOrder = shuffle ? "desc" : order;
 
     const query: ListQuery = {
       page,
       page_size: PAGE_SIZE,
-      q: debouncedQ.trim() || undefined,
-      sort,
-      order,
+      q: ignoreQuery ? undefined : debouncedQ.trim() || undefined,
+      sort: effectiveSort,
+      order: effectiveOrder,
       r18,
       ai,
       gif,
       deleted_only: deletedOnly,
-      seed: sort === "random" ? seed : undefined,
+      seed: shuffle ? shuffle.seed : sort === "random" ? seed : undefined,
       ...(extraQuery ?? {}),
     };
 
@@ -145,7 +224,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     };
     // extraQuery 通过 extraKey 参与依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQ, sort, order, r18, ai, gif, deletedOnly, seed, refreshKey, extraKey, dataEpoch]);
+  }, [page, debouncedQ, sort, order, r18, ai, gif, deletedOnly, seed, refreshKey, extraKey, dataEpoch, shuffle?.seed]);
 
   // 底部哨兵：出现即加载下一批。提前 800px 预取，滚动时才不会卡顿。
   useEffect(() => {
@@ -191,7 +270,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     r18 !== "all" ? `R18 ${TRI_LABELS[r18]}` : null,
     ai !== "all" ? `AI ${TRI_LABELS[ai]}` : null,
     gif !== "all" ? `GIF ${TRI_LABELS[gif]}` : null,
-    deletedOnly ? "仅已删除" : null,
+    deletedOnly ? "仅已隐藏" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -236,7 +315,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     setScanTask({ current: 0, total: ids.length, imported: 0, message: "同步元数据…", kind: "sync" });
     try {
       const report = await call<SyncReport>(CMD.syncArtworks, { artworkIds: ids });
-      setSyncNotice(`成功 ${report.synced} · 已删除 ${report.deleted} · 失败 ${report.failed}`);
+      setSyncNotice(`成功 ${report.synced} · 已隐藏 ${report.deleted} · 失败 ${report.failed}`);
       setSelected(new Set());
       refresh();
     } catch (reason: unknown) {
@@ -282,6 +361,22 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
     }
   };
 
+  const downloadRemote = async (item: RemoteIllust) => {
+    if (remoteBusy !== null) return;
+    setRemoteBusy(item.pixiv_id);
+    setRemoteNotice(null);
+    try {
+      await call<number>(CMD.downloadPixivIllust, { pixivId: item.pixiv_id });
+      setRemoteDone((prev) => new Set(prev).add(item.pixiv_id));
+      setRemoteNotice(`「${item.title || item.pixiv_id}」已下载入库`);
+      bumpData();
+    } catch (reason: unknown) {
+      setRemoteNotice(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setRemoteBusy(null);
+    }
+  };
+
   if (error) {
     return <EmptyState title="加载失败" hint={error.message} />;
   }
@@ -312,24 +407,81 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
             </button>
           )}
           {heading && <span className="text-body text-text">{heading}</span>}
+          {headerExtra}
           {filtered && <span className="text-micro text-text-2">{summary}</span>}
           {filtered && (
-            <button type="button" className="quiet-link" onClick={clearFilters}>
+            <button type="button" className="quiet-link" onClick={clearAllFilters}>
               清除筛选
             </button>
           )}
         </div>
       )}
 
+      {tagBar}
+
       {loading && items.length === 0 ? (
         <SkeletonGrid />
       ) : items.length === 0 ? (
         filtered ? (
-          <EmptyState title="没有符合条件的作品" hint="换个关键词，或清除筛选条件">
-            <button type="button" className="btn mt-2" onClick={clearFilters}>
-              清除筛选
-            </button>
-          </EmptyState>
+          <div>
+            <EmptyState title="没有符合条件的作品" hint="换个关键词，或清除筛选条件">
+              <button type="button" className="btn mt-2" onClick={clearAllFilters}>
+                清除筛选
+              </button>
+            </EmptyState>
+            {remoteSearch && debouncedQ.trim() && (
+              <div className="mt-6 border-t border-line pt-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-micro text-text-3">Pixiv 上的作品</span>
+                  {remoteLoading && <span className="text-micro text-text-3">搜索中…</span>}
+                </div>
+                {remoteError ? (
+                  <p className="mt-2 text-micro text-text-2">
+                    远端搜索不可用：{remoteError}。本地结果不受影响。
+                  </p>
+                ) : remoteLoading ? (
+                  <p className="mt-2 text-micro text-text-2">
+                    正在 Pixiv 上搜索「{debouncedQ.trim()}」…
+                  </p>
+                ) : remoteFor === debouncedQ.trim() && remoteItems.length > 0 ? (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {remoteItems.map((item) => (
+                      <div
+                        key={item.pixiv_id}
+                        className="flex items-center gap-3 rounded-btn border border-line bg-surface px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-label text-text">
+                            {item.title || "(无标题)"}
+                          </p>
+                          <p className="truncate text-micro text-text-3">
+                            {item.author_name} · Pixiv {item.pixiv_id} · {item.page_count} 页
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn shrink-0"
+                          disabled={remoteBusy !== null || remoteDone.has(item.pixiv_id)}
+                          onClick={() => void downloadRemote(item)}
+                        >
+                          {remoteDone.has(item.pixiv_id)
+                            ? "已入库"
+                            : remoteBusy === item.pixiv_id
+                              ? "下载中…"
+                              : "下载"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : remoteFor === debouncedQ.trim() ? (
+                  <p className="mt-2 text-micro text-text-2">Pixiv 上也没有找到作品。</p>
+                ) : null}
+                {remoteNotice && (
+                  <p className="mt-2 text-micro text-text-2">{remoteNotice}</p>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <EmptyState
             icon={Images}
@@ -450,7 +602,7 @@ export function ArtworkList({ extraQuery, heading, onBack, onChanged }: ArtworkL
               },
             },
             {
-              label: "收藏",
+              label: "收藏到本地",
               onSelect: () => {
                 setFavoriteIds([menu.card.id]);
                 setBatchFavoriteOpen(true);

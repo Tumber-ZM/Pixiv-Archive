@@ -8,6 +8,8 @@ interface DialogProps {
   cancelLabel?: string;
   danger?: boolean;
   busy?: boolean;
+  /** 只禁用确认按钮（例如「先查询再订阅」），取消/Esc 仍然可用 */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -27,6 +29,7 @@ export function Dialog({
   cancelLabel = "取消",
   danger = false,
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: DialogProps) {
@@ -96,7 +99,7 @@ export function Dialog({
             type="button"
             className={danger ? "btn btn-danger" : "btn"}
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
           >
             {confirmLabel}
           </button>

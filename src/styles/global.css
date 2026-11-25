@@ -246,6 +246,21 @@ a {
   border-color: var(--color-accent-soft);
 }
 
+/* 触发式动作按钮（如「保存该组标签」）：和筛选按钮区分开 */
+.tri-btn-accent {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.tri-btn-accent:hover {
+  border-color: var(--color-accent);
+}
+
+.tri-btn-accent:disabled {
+  opacity: 0.55;
+}
+
 /* 角标：全系统唯一允许 400 字重的地方 */
 .badge {
   display: inline-flex;
@@ -471,6 +486,58 @@ a {
   opacity: 1;
 }
 
+/* 常驻收藏标记：书签=本地收藏，爱心=Pixiv 收藏 */
+.wall-favorite-marks {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.wall-mark,
+.pixiv-heart {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--color-scrim);
+  color: var(--color-on-scrim);
+  opacity: 0.55;
+}
+
+.wall-mark[data-active="true"],
+.pixiv-heart[data-active="true"] {
+  opacity: 1;
+}
+
+.wall-mark-heart[data-active="true"],
+.pixiv-heart[data-active="true"] {
+  color: #ff9fb2;
+}
+
+.wall-mark-bookmark[data-active="true"] {
+  color: var(--color-accent);
+}
+
+.pixiv-heart {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* 标签预览很多时只渲染视口附近的卡片 */
+.tag-preview-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 180px;
+}
+
 .wall-action {
   display: flex;
   align-items: center;
@@ -560,6 +627,179 @@ a {
   font-weight: var(--fw-micro);
 }
 
+/* ── 标签选择 / 组合 ───────────────────────────────────── */
+
+/* 分区标题：比正文更亮，并带一条 accent 竖线 */
+.section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: var(--text-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.section-label::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+
+/* 分区的展开/收起：小按钮，不和标题混在一起 */
+.section-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-badge);
+  background: var(--color-surface);
+  color: var(--color-text-2);
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.section-more:hover {
+  border-color: var(--color-line-hover);
+  color: var(--color-text);
+}
+
+.tag-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  min-height: 30px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-btn);
+  color: var(--color-text-2);
+  font-size: var(--text-label);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+}
+
+.tag-pick:hover {
+  border-color: var(--color-line-hover);
+}
+
+.tag-pick[data-active="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent-soft);
+  background: var(--color-accent-soft);
+}
+
+/* 随机标签：亮黄色，覆盖当前组合但不算选中；点击后变蓝加入组合 */
+.tag-pick[data-random="true"] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+  background: var(--color-warn-soft);
+}
+
+/* 顶栏黄色常驻；下方候选在用户改选其他标签后变暗，但仍可点击 */
+.tag-pick[data-random="dim"] {
+  color: var(--color-warn);
+  border-color: var(--color-line);
+  background: transparent;
+  opacity: 0.55;
+}
+
+.tag-pick[data-random="dim"]:hover {
+  border-color: var(--color-warn);
+  opacity: 0.85;
+}
+
+.tag-pick-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-pick-count {
+  color: var(--color-text-3);
+  font-size: var(--text-micro);
+}
+
+.tag-pick[data-active="true"] .tag-pick-count,
+.tag-pick[data-random="true"] .tag-pick-count {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.combo-tag[data-random="true"] {
+  color: var(--color-warn);
+  border-color: var(--color-warn);
+  background: var(--color-warn-soft);
+}
+
+.combo-tag[data-random="true"]:hover {
+  border-color: var(--color-warn);
+}
+
+/* 组合横条：高度压到和筛选按钮一致，避免把第一行撑歪 */
+.combo-box {
+  min-height: 33px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.combo-box .tri-btn {
+  height: 27px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.tag-pick[data-source="pixiv"] {
+  border-style: dashed;
+}
+
+.combo-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 180px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-badge);
+  color: var(--color-text-2);
+  font-size: var(--text-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.combo-tag-x {
+  display: inline-flex;
+  color: var(--color-text-3);
+}
+
+.combo-tag-x:hover {
+  color: var(--color-text);
+}
+
+.combo-tag-button {
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.combo-tag-button:hover {
+  border-color: var(--color-line-hover);
+}
+
+.combo-card[data-active="true"] {
+  border-color: var(--color-accent-soft);
+}
+
+
 /* ── 作者列表卡片（参考图一）─────────────────────────────
    顶部一条 3 张作品封面，下方是头像与作者名。 */
 .author-card {
@@ -572,6 +812,7 @@ a {
   background: var(--color-surface);
   outline: 1px solid transparent;
   outline-offset: 2px;
+  cursor: pointer;
   transition: outline-color var(--dur-hover) var(--ease);
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
@@ -579,6 +820,62 @@ a {
 
 .author-card:hover {
   outline-color: var(--color-line-hover);
+}
+
+.author-card:focus-visible {
+  outline-color: var(--color-accent);
+}
+
+/* 作者卡上的订阅开关：贴着 Pixiv ID，已订阅时实心铃铛 + accent */
+.author-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 1px solid var(--color-line-hover);
+  border-radius: var(--radius-badge);
+  color: var(--color-text-3);
+  font-size: var(--text-badge);
+  font-weight: var(--fw-badge);
+  letter-spacing: var(--ls-badge);
+  line-height: var(--lh-badge);
+  white-space: nowrap;
+  background: transparent;
+  transition: color var(--dur-hover) var(--ease), border-color var(--dur-hover) var(--ease),
+    background var(--dur-hover) var(--ease);
+}
+
+.author-sub:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* 已订阅：铃铛填成实心，一眼能看出状态 */
+.author-sub[data-on="true"] {
+  color: var(--color-accent);
+  border-color: var(--color-accent-soft);
+  background: var(--color-accent-soft);
+}
+
+.author-sub[data-on="true"] svg {
+  fill: currentColor;
+}
+
+.author-sub:disabled {
+  cursor: default;
+}
+
+/* 订阅类型角标：收藏夹用 accent，作者用 mint（沿用 .badge 的尺寸与字重） */
+.sub-kind[data-kind="bookmark"] {
+  color: var(--color-on-scrim);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
+.sub-kind[data-kind="author"] {
+  color: var(--color-scrim);
+  background: var(--color-mint);
+  border: 1px solid var(--color-mint);
 }
 
 /* ── 右键菜单 ────────────────────────────────────────────

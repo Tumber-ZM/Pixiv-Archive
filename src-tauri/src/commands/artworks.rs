@@ -16,6 +16,7 @@ const CARD_COLUMNS: &str = "
   COALESCE(a.page_count, 1) AS page_count, a.create_date, a.width, a.height,
   COALESCE(a.pixiv_status, 'active') AS pixiv_status, COALESCE(a.ai_type, 1) AS ai_type,
   EXISTS(SELECT 1 FROM favorite_artworks fa WHERE fa.artwork_id = a.id) AS is_favorited,
+  EXISTS(SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = a.pixiv_id) AS is_pixiv_favorited,
   (SELECT i.path FROM images i WHERE i.artwork_id = a.id ORDER BY i.page LIMIT 1) AS cover_path,
   (SELECT i.id   FROM images i WHERE i.artwork_id = a.id ORDER BY i.page LIMIT 1) AS cover_image_id,
   (SELECT i.width  FROM images i WHERE i.artwork_id = a.id ORDER BY i.page LIMIT 1) AS cover_width,
@@ -51,13 +52,14 @@ fn map_card(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtworkCard> {
         pixiv_status: row.get(9)?,
         ai_type: row.get(10)?,
         is_favorited: row.get::<_, i64>(11)? != 0,
-        cover_path: row.get(12)?,
-        cover_image_id: row.get(13)?,
-        cover_width: row.get(14)?,
-        cover_height: row.get(15)?,
-        source_path: row.get(16)?,
-        is_r18: row.get::<_, i64>(17)? != 0,
-        is_gif: row.get::<_, i64>(18)? != 0,
+        is_pixiv_favorited: row.get::<_, i64>(12)? != 0,
+        cover_path: row.get(13)?,
+        cover_image_id: row.get(14)?,
+        cover_width: row.get(15)?,
+        cover_height: row.get(16)?,
+        source_path: row.get(17)?,
+        is_r18: row.get::<_, i64>(18)? != 0,
+        is_gif: row.get::<_, i64>(19)? != 0,
     })
 }
 
@@ -112,22 +114,28 @@ pub fn stats_with(conn: &Connection) -> AppResult<Stats> {
     // 本地文件（pixiv_id < 0）不属于 Pixiv 作品，统计里一律排除
     let sql = format!(
         "SELECT
-           (SELECT COUNT(*) FROM artworks WHERE pixiv_id > 0),
+           (SELECT COUNT(*) FROM artworks \
+            WHERE pixiv_id > 0 AND COALESCE(pixiv_status,'active') <> 'deleted'),
            (SELECT COUNT(*) FROM images i JOIN artworks a ON a.id = i.artwork_id \
-            WHERE a.pixiv_id > 0),
+            WHERE a.pixiv_id > 0 AND COALESCE(a.pixiv_status,'active') <> 'deleted'),
            (SELECT COUNT(*) FROM authors au WHERE EXISTS (
-                SELECT 1 FROM artworks a WHERE a.author_id = au.id)),
+                SELECT 1 FROM artworks a WHERE a.author_id = au.id
+                  AND COALESCE(a.pixiv_status,'active') <> 'deleted')),
            (SELECT COUNT(*) FROM tags t WHERE EXISTS (
                 SELECT 1 FROM artwork_tags at
                 JOIN artworks w ON w.id = at.artwork_id
-                WHERE at.tag_id = t.id)),
+                WHERE at.tag_id = t.id
+                  AND COALESCE(w.pixiv_status,'active') <> 'deleted')),
            (SELECT COUNT(*) FROM favorites),
            (SELECT COUNT(*) FROM artworks \
             WHERE COALESCE(pixiv_status,'active') = 'deleted' AND pixiv_id > 0),
-           (SELECT COUNT(*) FROM artworks a WHERE {r18} AND a.pixiv_id > 0),
+           (SELECT COUNT(*) FROM artworks a WHERE {r18} AND a.pixiv_id > 0 \
+            AND COALESCE(a.pixiv_status,'active') <> 'deleted'),
            (SELECT COUNT(*) FROM artworks \
-            WHERE COALESCE(ai_type,1) = 2 AND pixiv_id > 0),
-           (SELECT COUNT(*) FROM artworks a WHERE {gif} AND a.pixiv_id > 0)"
+            WHERE COALESCE(ai_type,1) = 2 AND pixiv_id > 0 \
+              AND COALESCE(pixiv_status,'active') <> 'deleted'),
+           (SELECT COUNT(*) FROM artworks a WHERE {gif} AND a.pixiv_id > 0 \
+            AND COALESCE(a.pixiv_status,'active') <> 'deleted')"
     );
 
     Ok(conn.query_row(&sql, [], |row| {
@@ -145,7 +153,7 @@ pub fn stats_with(conn: &Connection) -> AppResult<Stats> {
     })?)
 }
 
-/// 详情：作品 + 标签 + 图片 + 所属收藏夹，查看器一次拿全。
+/// 详情：作品 + 标签 + 图片 + 所属本地收藏，查看器一次拿全。
 pub fn get_artwork_with(conn: &Connection, artwork_id: i64) -> AppResult<ArtworkDetail> {
     let mut detail = {
         let mut stmt = conn.prepare(
@@ -471,7 +479,7 @@ mod tests {
         )
         .unwrap();
 
-        // 默认查询（画廊、作者、标签、收藏夹都走它）看不到本地文件
+        // 默认查询（画廊、作者、标签、本地收藏都走它）看不到本地文件
         assert_eq!(count(&conn, ListQuery::default()), 6);
 
         // 本地作品视图只返回负数 ID
@@ -597,7 +605,7 @@ mod tests {
         assert!(card.is_gif);
         assert_eq!(card.page_count, 1);
         assert_eq!(card.pixiv_status, "active");
-        assert!(!card.is_favorited, "未加入收藏夹时应为 false");
+        assert!(!card.is_favorited, "未加入本地收藏时应为 false");
         assert!(card.cover_path.as_deref().unwrap().ends_with(".gif"));
     }
 

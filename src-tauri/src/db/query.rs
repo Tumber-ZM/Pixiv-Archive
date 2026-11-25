@@ -37,7 +37,7 @@ pub fn build_filter(query: &ListQuery) -> Filter {
     let mut params: Vec<Value> = Vec::new();
 
     // 本地图片（文件名里没有 Pixiv ID，入库时派生了负数 ID）默认不进画廊，
-    // 也不进作者/标签/收藏夹视图；只有「本地作品」页显式传 scope=local
+    // 也不进作者/标签/本地收藏视图；只有「本地作品」页显式传 scope=local
     match query.scope.as_deref() {
         Some("local") => clauses.push("a.pixiv_id < 0".to_string()),
         _ => clauses.push("a.pixiv_id > 0".to_string()),
@@ -78,8 +78,12 @@ pub fn build_filter(query: &ListQuery) -> Filter {
         _ => {}
     }
 
+    // deleted 同时代表「已删除」和 Pixiv 上 visible=false 的非公开作品：
+    // 默认隐藏，只有勾了「已删除」筛选才显示。
     if query.deleted_only.unwrap_or(false) {
         clauses.push("a.pixiv_status = 'deleted'".to_string());
+    } else {
+        clauses.push("COALESCE(a.pixiv_status, 'active') <> 'deleted'".to_string());
     }
     if let Some(author_id) = query.author_id {
         clauses.push("a.author_id = ?".to_string());
@@ -93,6 +97,16 @@ pub fn build_filter(query: &ListQuery) -> Filter {
         );
         params.push(Value::Text(tag.to_string()));
     }
+    if let Some(tags) = query.tags_all.as_ref().filter(|tags| !tags.is_empty()) {
+        for tag in tags {
+            clauses.push(
+                "EXISTS (SELECT 1 FROM artwork_tags at JOIN tags t ON t.id = at.tag_id \
+                 WHERE at.artwork_id = a.id AND t.name = ?)"
+                    .to_string(),
+            );
+            params.push(Value::Text(tag.clone()));
+        }
+    }
     if let Some(favorite_id) = query.favorite_id {
         clauses.push(
             "EXISTS (SELECT 1 FROM favorite_artworks fa \
@@ -100,6 +114,23 @@ pub fn build_filter(query: &ListQuery) -> Filter {
                 .to_string(),
         );
         params.push(Value::Integer(favorite_id));
+    }
+    if query.favorited_only.unwrap_or(false) {
+        clauses.push(
+            "EXISTS (SELECT 1 FROM pixiv_favorites pf WHERE pf.pixiv_id = a.pixiv_id)"
+                .to_string(),
+        );
+    }
+    if query.collected_only.unwrap_or(false) {
+        clauses.push("COALESCE(a.origin, 'local') <> 'author_sub'".to_string());
+    }
+    if query.subscribed_only.unwrap_or(false) {
+        clauses.push(
+            "EXISTS (SELECT 1 FROM authors au \
+             JOIN subs s ON s.kind = 'author' AND s.target_pixiv_id = au.pixiv_user_id \
+             WHERE au.id = a.author_id)"
+                .to_string(),
+        );
     }
 
     let where_sql = if clauses.is_empty() {
@@ -216,7 +247,10 @@ mod tests {
     #[test]
     fn all_filters_off_still_excludes_local_files() {
         let filter = build_filter(&ListQuery::default());
-        assert_eq!(filter.where_sql, "a.pixiv_id > 0");
+        assert_eq!(
+            filter.where_sql,
+            "a.pixiv_id > 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'"
+        );
         assert!(filter.params.is_empty());
     }
 
@@ -226,7 +260,10 @@ mod tests {
             scope: Some("local".to_string()),
             ..Default::default()
         });
-        assert_eq!(filter.where_sql, "a.pixiv_id < 0");
+        assert_eq!(
+            filter.where_sql,
+            "a.pixiv_id < 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'"
+        );
     }
 
     #[test]

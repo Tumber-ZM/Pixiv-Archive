@@ -307,9 +307,10 @@ fn read_bundle(data: &Path, zip_path: &Path, relink: bool) -> AppResult<BundleIm
         return Err(AppError::invalid("数据包里没有 library.db"));
     }
 
-    // 先校验能打开、能数出记录，坏包不覆盖现有库
+    // 先校验能打开、能数出记录，坏包不覆盖现有库。
+    // 走 init 而不是 open：旧版本导出的包里没有 subs 表，换进来之后要能直接迁移。
     let (artworks, images) = {
-        let conn = crate::db::open(&staged_db)?;
+        let conn = crate::db::init(&staged_db)?;
         let artworks: i64 = conn.query_row("SELECT COUNT(*) FROM artworks", [], |row| row.get(0))?;
         let images: i64 = conn.query_row("SELECT COUNT(*) FROM images", [], |row| row.get(0))?;
         (artworks, images)

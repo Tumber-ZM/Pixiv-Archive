@@ -1,4 +1,4 @@
-/// 8 张表 + 12 个索引，逐字照抄旧项目 `app/database.py`。
+/// 11 张表 + 12 个索引，逐字照抄旧项目 `app/database.py`。
 ///
 /// 与旧项目唯一的差别：`sync_error` 直接写进建表语句。
 /// 旧库是逐步 `ALTER TABLE` 演化来的，这里建表就带全，`columns.rs` 仍会为旧库补列。
@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS artworks (
     first_seen TEXT DEFAULT (datetime('now')),
     last_synced TEXT,
     local_path TEXT,
+    -- 作品来源：local = 扫描/收藏订阅等既有收藏，author_sub = 作者订阅下载
+    origin TEXT DEFAULT 'local',
     -- Pixiv illust_ai_type：1 = 非 AI，2 = AI 生成。存量与未同步行按 1 处理
     ai_type INTEGER DEFAULT 1,
     sync_error TEXT,
@@ -67,6 +69,9 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE TABLE IF NOT EXISTS download_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pixiv_id INTEGER NOT NULL UNIQUE,
+    -- 这条队列属于哪种订阅（local = 收藏/手动，author_sub = 作者订阅），
+    -- 避免作者订阅检查时消费掉别的订阅排队的作品、并把来源标错
+    origin TEXT DEFAULT 'local',
     status TEXT NOT NULL DEFAULT 'pending',
     attempts INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
@@ -90,15 +95,45 @@ CREATE TABLE IF NOT EXISTS favorite_artworks (
     FOREIGN KEY (artwork_id) REFERENCES artworks(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS bookmark_subs (
-    pixiv_user_id INTEGER PRIMARY KEY,
+-- 订阅：kind = bookmark（对方公开收藏）/ author（该作者的作品）。
+-- 同一用户两种类型可以并存，所以主键是 (kind, target_pixiv_id)。
+-- baseline_pid 是作者订阅的起点：NULL = 还没建立，0 = 补全全部历史。
+CREATE TABLE IF NOT EXISTS subs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    target_pixiv_id INTEGER NOT NULL,
     name TEXT,
-    last_pid INTEGER,
+    baseline_pid INTEGER,
     auto_download INTEGER DEFAULT 1,
     last_checked TEXT,
     last_result TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE (kind, target_pixiv_id)
 );
+
+-- Pixiv 收藏的本地索引：只保存作品 ID，用于作者列表「仅看收藏」筛选。
+-- 数据来自用户自己账号的公开/私密收藏，不上传任何东西。
+CREATE TABLE IF NOT EXISTS pixiv_favorites (
+    pixiv_id INTEGER PRIMARY KEY,
+    favorited_at TEXT DEFAULT (datetime('now'))
+);
+
+-- 杂项元数据（如上次同步 Pixiv 收藏的时间）。
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- 标签组合：tags 是 JSON 数组（标签原名），后续「标签组合订阅」直接引用 id。
+CREATE TABLE IF NOT EXISTS tag_combos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tag_combos_pinned ON tag_combos(pinned, updated_at);
 
 CREATE INDEX IF NOT EXISTS idx_artworks_pixiv_id ON artworks(pixiv_id);
 CREATE INDEX IF NOT EXISTS idx_artworks_author_id ON artworks(author_id);
@@ -119,6 +154,14 @@ CREATE INDEX IF NOT EXISTS idx_favorite_artworks_artwork ON favorite_artworks(ar
 
 /// 旧库可能缺的列与过时的表，逐个补齐。
 /// 这里覆盖 `app/database.py` 的四个 `_migrate_*` 函数，缺一个就会在旧库上报错。
+pub fn table_exists(conn: &rusqlite::Connection, table: &str) -> crate::error::AppResult<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn table_columns(conn: &rusqlite::Connection, table: &str) -> crate::error::AppResult<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -149,6 +192,13 @@ pub fn ensure_columns(conn: &rusqlite::Connection) -> crate::error::AppResult<()
     if !columns.iter().any(|c| c == "next_retry_at") {
         conn.execute("ALTER TABLE artworks ADD COLUMN next_retry_at TEXT", [])?;
     }
+    // 存量作品都算「收藏」；作者订阅之后下载的才写 author_sub
+    if !columns.iter().any(|c| c == "origin") {
+        conn.execute(
+            "ALTER TABLE artworks ADD COLUMN origin TEXT DEFAULT 'local'",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -165,13 +215,51 @@ pub fn ensure_bookmark_subs_cols(conn: &rusqlite::Connection) -> crate::error::A
     Ok(())
 }
 
+/// 老库的下载队列没有 `origin`：补上，存量队列都按 local（收藏/手动）处理。
+pub fn ensure_download_queue_cols(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
+    let columns = table_columns(conn, "download_queue")?;
+    if !columns.iter().any(|c| c == "origin") {
+        conn.execute(
+            "ALTER TABLE download_queue ADD COLUMN origin TEXT DEFAULT 'local'",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// v2.1：收藏订阅泛化成 `subs`。老库的 `bookmark_subs` 一次性搬进新表。
+///
+/// 只有 `db::init` 发现库里还没有 `subs` 表时才调用，所以删掉的订阅不会
+/// 被旧表重新搬回来。旧表保留不删：万一退回旧版 exe，收藏订阅仍然能读。
+pub fn migrate_bookmark_subs(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
+    if !table_exists(conn, "bookmark_subs")? {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO subs
+             (kind, target_pixiv_id, name, auto_download, last_checked, last_result, created_at)
+         SELECT 'bookmark', pixiv_user_id, name, COALESCE(auto_download, 1),
+                last_checked, last_result, COALESCE(created_at, datetime('now'))
+           FROM bookmark_subs",
+        [],
+    )?;
+    Ok(())
+}
+
 /// v1.2.1 起画师订阅被「收藏订阅」取代，旧表连同数据一并丢弃。
+///
+/// 同时丢掉旧的 `uidx_images_sha256` 全局唯一索引：同一张图可能被不同作品
+/// 引用（跨作品同图），按内容唯一会把后一个作品变成「有作品、没有图片」。
 pub fn drop_legacy_tables(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
     conn.execute("DROP TABLE IF EXISTS subscriptions", [])?;
+    conn.execute("DROP INDEX IF EXISTS uidx_images_sha256", [])?;
     Ok(())
 }
 
 /// 旧库可能已有重复行；先清理再建唯一索引，否则建索引会直接失败。
+///
+/// 只按 (artwork_id, page) 去重；不再按 sha256 全局去重，避免跨作品同图
+/// 导致作品缺页或空壳。
 pub fn ensure_unique_indexes(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
     // 同一作品同一页保留最早的一行
     conn.execute(
@@ -180,22 +268,19 @@ pub fn ensure_unique_indexes(conn: &rusqlite::Connection) -> crate::error::AppRe
          )",
         [],
     )?;
-    // 同一内容（sha256 相同）保留最早的一行；sha256 为 NULL 的行不受影响
-    conn.execute(
-        "DELETE FROM images WHERE sha256 IS NOT NULL AND id NOT IN (
-             SELECT MIN(id) FROM images WHERE sha256 IS NOT NULL GROUP BY sha256
-         )",
-        [],
-    )?;
     conn.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_artwork_page ON images(artwork_id, page);
-         CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_sha256 ON images(sha256);",
+        "DROP INDEX IF EXISTS uidx_images_sha256;
+         CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_artwork_page ON images(artwork_id, page);",
     )?;
     Ok(())
 }
 
 /// 是否需要跑一次「有副作用」的迁移（用于迁移前备份数据库）。
 pub fn needs_migration(conn: &rusqlite::Connection) -> crate::error::AppResult<bool> {
+    // v2.1 的 subs 表：老库还没有它，要先把 bookmark_subs 搬进去，先备份
+    if !table_exists(conn, "subs")? {
+        return Ok(true);
+    }
     let columns = table_columns(conn, "artworks")?;
     if !columns.iter().any(|c| c == "sync_error_kind") {
         return Ok(true);

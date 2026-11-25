@@ -16,7 +16,7 @@ interface ViewerProps {
   artworkIds: number[];
   initialIndex: number;
   onClose: () => void;
-  /** 作品被删除或收藏夹变化后，让列表重新取数 */
+  /** 作品被删除或本地收藏变化后，让列表重新取数 */
   onChanged: () => void;
   /** 还有未加载的作品时为 true */
   hasMore?: boolean;
@@ -239,7 +239,7 @@ export function Viewer({
           onClose={() => setFavoriteOpen(false)}
           onSaved={() => {
             setFavoriteOpen(false);
-            // 重新拉一次详情，让左栏的「已收藏」按钮和「所在收藏夹」同步
+            // 重新拉一次详情，让左栏的「已收藏到本地」按钮和「所在本地收藏」同步
             setReloadKey((key) => key + 1);
             onChanged();
           }}
@@ -268,7 +268,7 @@ export function Viewer({
                 call(CMD.openInFolder, { path }).catch(() => undefined);
               },
             },
-            { label: "收藏", onSelect: () => setFavoriteOpen(true) },
+            { label: "收藏到本地", onSelect: () => setFavoriteOpen(true) },
             { label: "删除作品", danger: true, onSelect: () => setDeleteOpen(true) },
             { label: "切换主题", separatorBefore: true, onSelect: cycleTheme },
             { label: "打开设置", onSelect: () => setSettingsOpen(true) },

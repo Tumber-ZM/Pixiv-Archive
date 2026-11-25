@@ -140,7 +140,9 @@ export function ViewerInfo({
           {detail.ai_type === 2 && <span className="badge badge-ai">AI</span>}
           {detail.is_gif && <span className="badge badge-gif">GIF</span>}
           {detail.pixiv_status === "deleted" && (
-            <span className="badge badge-deleted">已删除</span>
+            <span className="badge badge-deleted" title="Pixiv 上已删除或非公开">
+              已隐藏
+            </span>
           )}
         </div>
 
@@ -161,15 +163,15 @@ export function ViewerInfo({
           </Section>
         )}
 
-        {/* 收藏夹：可点，跳到该收藏夹 */}
+        {/* 本地收藏：可点，跳到该本地收藏 */}
         {detail.favorites.length > 0 && (
-          <Section title="所在收藏夹">
+          <Section title="所在本地收藏">
             <div className="flex flex-wrap gap-1.5">
               {detail.favorites.map((favorite) => (
                 <Chip
                   key={favorite.id}
                   onClick={() => onOpenFavorite(favorite)}
-                  title={`打开收藏夹「${favorite.name}」`}
+                  title={`打开本地收藏「${favorite.name}」`}
                 >
                   {favorite.name}
                 </Chip>
@@ -217,7 +219,7 @@ export function ViewerInfo({
             <MetaRow label="发布" value={formatDate(detail.create_date)} />
             <MetaRow
               label="状态"
-              value={detail.pixiv_status === "deleted" ? "已删除" : "活跃"}
+              value={detail.pixiv_status === "deleted" ? "已隐藏（删除或非公开）" : "活跃"}
             />
             <MetaRow label="首次扫描" value={formatDate(detail.first_seen)} />
             <MetaRow label="最后同步" value={formatDate(detail.last_synced)} />
@@ -238,10 +240,10 @@ export function ViewerInfo({
             borderColor: isFaved ? "var(--color-accent)" : "var(--viewer-line)",
           }}
           onClick={onFavorite}
-          title={isFaved ? "已收藏，点击管理所属收藏夹" : "收藏（F）"}
+          title={isFaved ? "已收藏到本地，点击管理" : "收藏到本地（F）"}
         >
           <Star size={14} fill={isFaved ? "currentColor" : "none"} />
-          {isFaved ? "已收藏" : "收藏"}
+          {isFaved ? "已收藏到本地" : "收藏到本地"}
         </button>
         <button
           type="button"

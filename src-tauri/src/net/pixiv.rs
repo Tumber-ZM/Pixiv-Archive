@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,8 @@ pub struct IllustData {
     pub author_avatar: Option<String>,
     pub create_date: Option<String>,
     pub page_count: i64,
+    /// Pixiv 的 `visible`：false = 已删除或非公开，图片地址会返回 limit_unknown 占位图
+    pub visible: bool,
     pub width: Option<i64>,
     pub height: Option<i64>,
     /// Pixiv：1 = 非 AI，2 = AI。缺失按 1 处理，避免误标
@@ -68,18 +71,53 @@ pub struct UgoiraMeta {
     pub frames: Vec<UgoiraFrame>,
 }
 
-/// 收藏列表里的一项（只取下载/入库需要的字段，原图 URL 靠 detail 另取）。
+/// 作品列表（收藏 / 作者作品）里的一项：只取下载/入库需要的字段，原图 URL 靠 detail 另取。
 #[derive(Debug, Clone, Serialize)]
-pub struct BookmarkIllust {
+pub struct IllustRef {
     pub pixiv_id: i64,
     pub title: String,
     pub author_name: String,
     pub page_count: i64,
 }
 
+/// 远端作者搜索的一条结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteAuthor {
+    pub pixiv_user_id: i64,
+    pub name: String,
+    pub account: String,
+    pub avatar: Option<String>,
+}
+
+/// 远端作品搜索的一条结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteIllust {
+    pub pixiv_id: i64,
+    pub title: String,
+    pub author_name: String,
+    pub author_id: i64,
+    pub page_count: i64,
+    pub thumbnail: String,
+    pub is_gif: bool,
+    pub ai_type: i64,
+    pub create_date: String,
+    pub is_favorited: bool,
+    pub tags: Vec<String>,
+}
+
+/// Pixiv 上的标签（热门标签或作品搜索结果里聚合出来的）。
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteTag {
+    pub name: String,
+    pub translated_name: Option<String>,
+    pub count: i64,
+}
+
 struct CachedToken {
     access_token: String,
     expires_at: Instant,
+    /// token 所属的 Pixiv 用户 ID（OAuth 响应里的 `response.user.id`）
+    user_id: Option<i64>,
 }
 
 pub struct PixivClient {
@@ -221,15 +259,39 @@ impl PixivClient {
             .pointer("/response/expires_in")
             .and_then(Value::as_u64)
             .unwrap_or(3600);
+        // user.id 在 Pixiv 的 JSON 里有时是字符串、有时是数字，两种都接
+        let user_id = body
+            .pointer("/response/user/id")
+            .and_then(|value| {
+                value
+                    .as_i64()
+                    .or_else(|| value.as_str().and_then(|raw| raw.parse().ok()))
+            });
 
         if let Ok(mut guard) = self.token.lock() {
             *guard = Some(CachedToken {
                 access_token: access_token.clone(),
                 expires_at: Instant::now()
                     + Duration::from_secs(expires_in.saturating_sub(TOKEN_MARGIN).max(60)),
+                user_id,
             });
         }
         Ok(access_token)
+    }
+
+    /// token 所属的 Pixiv 用户 ID（同步「我的收藏」要用）。
+    ///
+    /// OAuth 响应里带 `user.id`；拿不到时返回错误，由调用方提示用户重新填 token。
+    pub async fn current_user_id(&self) -> AppResult<i64> {
+        self.access_token().await?;
+        let guard = self
+            .token
+            .lock()
+            .map_err(|_| AppError::internal("token 缓存已损坏"))?;
+        guard
+            .as_ref()
+            .and_then(|cached| cached.user_id)
+            .ok_or_else(|| AppError::internal("Pixiv 认证响应里没有用户 ID，请重新填写 Refresh Token"))
     }
 
     /// 拉作品详情并转成同步用的结构。
@@ -286,12 +348,15 @@ impl PixivClient {
         Ok(parse_illust(illust))
     }
 
-    /// 取用户公开收藏列表的一页。`next_url` 传上一页返回的翻页地址。
-    pub async fn user_bookmarks_public(
+    /// 取用户收藏列表的一页。`restrict` = `public` / `private`。
+    ///
+    /// `private` 只有 token 属于该用户时才有内容，用来同步「我的收藏」。
+    pub async fn user_bookmarks(
         &self,
         user_id: i64,
+        restrict: &str,
         next_url: Option<&str>,
-    ) -> AppResult<(Vec<BookmarkIllust>, Option<String>)> {
+    ) -> AppResult<(Vec<IllustRef>, Option<String>)> {
         self.throttle_api().await;
         let token = self.access_token().await?;
         let url = next_url
@@ -306,7 +371,7 @@ impl PixivClient {
         if next_url.is_none() {
             request = request.query(&[
                 ("user_id", user_id.to_string()),
-                ("restrict", "public".to_string()),
+                ("restrict", restrict.to_string()),
             ]);
         }
 
@@ -323,7 +388,11 @@ impl PixivClient {
             ));
         }
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(AppError::not_found("该用户不存在，或收藏列表不是公开的"));
+            return Err(AppError::not_found("该用户不存在，或收藏列表不可见"));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
         }
         if !status.is_success() {
             return Err(AppError::internal(format!(
@@ -337,42 +406,154 @@ impl PixivClient {
             .await
             .map_err(|error| AppError::internal(format!("收藏列表响应无法解析：{error}")))?;
 
-        let illusts = body
+        Ok(parse_illust_list(&body))
+    }
+
+    /// 取用户公开收藏列表的一页（订阅检查用）。
+    pub async fn user_bookmarks_public(
+        &self,
+        user_id: i64,
+        next_url: Option<&str>,
+    ) -> AppResult<(Vec<IllustRef>, Option<String>)> {
+        self.user_bookmarks(user_id, "public", next_url).await
+    }
+
+    /// 取用户作品列表的一页（App API `/v1/user/illusts`）。
+    ///
+    /// 作者订阅用它替代收藏接口，返回结构与收藏列表完全一致；
+    /// 收藏按收藏时间倒序、作品按发布时间倒序，两者都从新到旧。
+    pub async fn user_illusts(
+        &self,
+        user_id: i64,
+        next_url: Option<&str>,
+    ) -> AppResult<(Vec<IllustRef>, Option<String>)> {
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let url = next_url
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{API_BASE}/v1/user/illusts"));
+        let mut request = self
+            .http
+            .get(&url)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .header("Accept-Language", "zh-CN")
+            .bearer_auth(token);
+        if next_url.is_none() {
+            // 不带 filter=for_ios：那会把 R-18 作品过滤掉，与收藏订阅的口径不一致
+            request = request.query(&[
+                ("user_id", user_id.to_string()),
+                ("type", "illust".to_string()),
+            ]);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|error| AppError::internal(format!("请求作者作品失败：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::not_found("该用户不存在"));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作者作品列表无法解析：{error}")))?;
+
+        Ok(parse_illust_list(&body))
+    }
+
+    /// 作者页「展示线上全部」用：取作者作品的一页，带缩略图 / 标签。
+    pub async fn user_illusts_remote(
+        &self,
+        user_id: i64,
+        next_url: Option<&str>,
+    ) -> AppResult<(Vec<RemoteIllust>, Option<String>)> {
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let url = next_url
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{API_BASE}/v1/user/illusts"));
+        let mut request = self
+            .http
+            .get(&url)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .header("Accept-Language", "zh-CN")
+            .bearer_auth(token);
+        if next_url.is_none() {
+            request = request.query(&[
+                ("user_id", user_id.to_string()),
+                ("type", "illust".to_string()),
+            ]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| AppError::internal(format!("请求作者作品失败：{error}")))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::not_found("该用户不存在"));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作者作品列表无法解析：{error}")))?;
+        let items = body
             .get("illusts")
             .and_then(Value::as_array)
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| {
-                        let pixiv_id = item.get("id").and_then(Value::as_i64)?;
-                        Some(BookmarkIllust {
-                            pixiv_id,
-                            title: item
-                                .get("title")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string(),
-                            author_name: item
-                                .pointer("/user/name")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string(),
-                            page_count: item
-                                .get("page_count")
-                                .and_then(Value::as_i64)
-                                .unwrap_or(1),
-                        })
-                    })
+                    .filter_map(remote_illust_from_json)
                     .collect()
             })
             .unwrap_or_default();
-
         let next = body
             .get("next_url")
             .and_then(Value::as_str)
             .map(str::to_string);
+        Ok((items, next))
+    }
 
-        Ok((illusts, next))
+    /// 该作者最新一件作品的 ID（没有作品或请求失败时为 None）。
+    ///
+    /// 作者订阅默认只追新：订阅时用它记下起点，之后的检查只处理比它新的作品。
+    pub async fn latest_illust_id(&self, user_id: i64) -> AppResult<Option<i64>> {
+        let (items, _) = self.user_illusts(user_id, None).await?;
+        Ok(items.iter().map(|item| item.pixiv_id).max())
     }
 
     /// 下载一张图片到内存（头像等小文件用）。走镜像替换 + 必须的 Referer。
@@ -440,7 +621,16 @@ impl PixivClient {
     /// - `.part` 已存在时带 `Range` 续传，网络中断不必从头再下；
     /// - 哈希边下边算，入库时直接用，省掉一次整文件重读；
     /// - `Content-Length` 与实写字节数不符视为失败（防代理返回截断或 HTML 错误页）。
-    pub async fn fetch_image_to(&self, url: &str, dest: &Path) -> AppResult<String> {
+    pub async fn fetch_image_to(
+        &self,
+        url: &str,
+        dest: &Path,
+        cancel: Option<&AtomicBool>,
+    ) -> AppResult<String> {
+        let cancelled = || cancel.is_some_and(|flag| flag.load(Ordering::Relaxed));
+        if cancelled() {
+            return Err(AppError::cancelled());
+        }
         let _permit = self
             .image_permits
             .acquire()
@@ -451,6 +641,9 @@ impl PixivClient {
         let mut last_error = String::from("未知错误");
 
         for attempt in 0..MAX_IMAGE_ATTEMPTS {
+            if cancelled() {
+                return Err(AppError::cancelled());
+            }
             let (have, mut hasher) = match read_part_state(&part).await {
                 Some(state) => state,
                 None => (0u64, Sha256::new()),
@@ -469,7 +662,7 @@ impl PixivClient {
                 Ok(response) => response,
                 Err(error) => {
                     last_error = format!("{error}");
-                    sleep_backoff(attempt).await;
+                    sleep_cancellable(backoff_duration(attempt), cancel).await?;
                     continue;
                 }
             };
@@ -485,7 +678,7 @@ impl PixivClient {
                 self.note_rate_limited();
                 let wait = retry_after(&response).unwrap_or_else(|| Duration::from_secs(30));
                 last_error = format!("HTTP 429（冷却 {}s）", wait.as_secs());
-                tokio::time::sleep(wait).await;
+                sleep_cancellable(wait, cancel).await?;
                 continue;
             }
             if !status.is_success() {
@@ -493,7 +686,7 @@ impl PixivClient {
                 if status.is_client_error() && status != reqwest::StatusCode::FORBIDDEN {
                     break;
                 }
-                sleep_backoff(attempt).await;
+                sleep_cancellable(backoff_duration(attempt), cancel).await?;
                 continue;
             }
 
@@ -513,6 +706,10 @@ impl PixivClient {
             let mut failure: Option<String> = None;
             let mut written = 0u64;
             loop {
+                if cancelled() {
+                    let _ = file.sync_all().await;
+                    return Err(AppError::cancelled());
+                }
                 match response.chunk().await {
                     Ok(Some(chunk)) => {
                         hasher.update(&chunk);
@@ -534,14 +731,14 @@ impl PixivClient {
 
             if let Some(error) = failure {
                 last_error = error;
-                sleep_backoff(attempt).await;
+                sleep_cancellable(backoff_duration(attempt), cancel).await?;
                 continue;
             }
 
             if let Some(expected) = response.content_length() {
                 if written != expected {
                     last_error = format!("下载不完整：服务端声明 {expected} 字节，实际 {written}");
-                    sleep_backoff(attempt).await;
+                    sleep_cancellable(backoff_duration(attempt), cancel).await?;
                     continue;
                 }
             }
@@ -595,9 +792,28 @@ fn finish_part(part: &Path, dest: &Path, hasher: Sha256) -> AppResult<String> {
 }
 
 /// 指数退避 + 抖动。
-async fn sleep_backoff(attempt: usize) {
+fn backoff_duration(attempt: usize) -> Duration {
     let base = 500u64.saturating_mul(1u64 << attempt.min(4));
-    tokio::time::sleep(Duration::from_millis(base + jitter_ms())).await;
+    Duration::from_millis(base + jitter_ms())
+}
+
+async fn sleep_backoff(attempt: usize) {
+    tokio::time::sleep(backoff_duration(attempt)).await;
+}
+
+/// 可取消的等待：取消后 100ms 内返回，避免退避/429 冷却把取消拖住。
+async fn sleep_cancellable(duration: Duration, cancel: Option<&AtomicBool>) -> AppResult<()> {
+    let step = Duration::from_millis(100);
+    let mut left = duration;
+    while left > Duration::ZERO {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(AppError::cancelled());
+        }
+        let chunk = left.min(step);
+        tokio::time::sleep(chunk).await;
+        left -= chunk;
+    }
+    Ok(())
 }
 
 /// 避开 `rand` 依赖：用纳秒低位做 0–250ms 抖动。
@@ -679,6 +895,283 @@ impl PixivClient {
         })
     }
 
+    /// `/v1/search/user`：本地作者搜不到时，去 Pixiv 上找作者。
+    pub async fn search_users(&self, word: &str) -> AppResult<Vec<RemoteAuthor>> {
+        let word = word.trim();
+        if word.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{API_BASE}/v1/search/user"))
+            .query(&[
+                ("word", word),
+                ("sort", "date_desc"),
+                ("filter", "for_android"),
+            ])
+            .bearer_auth(token)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .send()
+            .await
+            .map_err(|error| AppError::new("NETWORK", format!("无法连接 Pixiv：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 作者搜索返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作者搜索响应无法解析：{error}")))?;
+        let previews = body
+            .get("user_previews")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(previews
+            .iter()
+            .filter_map(|preview| {
+                let user = preview.get("user")?;
+                Some(RemoteAuthor {
+                    pixiv_user_id: user.get("id").and_then(Value::as_i64)?,
+                    name: user
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    account: user
+                        .get("account")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    avatar: user
+                        .pointer("/profile_image_urls/medium")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                })
+            })
+            .collect())
+    }
+
+    /// `/v1/search/illust`：本地作品搜不到时，去 Pixiv 上找工作。
+    pub async fn search_illusts(&self, word: &str) -> AppResult<Vec<RemoteIllust>> {
+        self.search_illusts_sorted(word, "date_desc").await
+    }
+
+    /// 指定排序（date_desc / popular_desc）的作品搜索。
+    pub async fn search_illusts_sorted(
+        &self,
+        word: &str,
+        sort: &str,
+    ) -> AppResult<Vec<RemoteIllust>> {
+        let word = word.trim();
+        if word.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{API_BASE}/v1/search/illust"))
+            .query(&[
+                ("word", word),
+                ("search_target", "partial_match_for_tags"),
+                ("sort", sort),
+                ("filter", "for_android"),
+            ])
+            .bearer_auth(token)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .send()
+            .await
+            .map_err(|error| AppError::new("NETWORK", format!("无法连接 Pixiv：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 作品搜索返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("作品搜索响应无法解析：{error}")))?;
+        let illusts = body
+            .get("illusts")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(illusts
+            .iter()
+            .filter_map(|illust| {
+                Some(RemoteIllust {
+                    pixiv_id: illust.get("id").and_then(Value::as_i64)?,
+                    title: illust
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_name: illust
+                        .pointer("/user/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    author_id: illust.pointer("/user/id").and_then(Value::as_i64).unwrap_or(0),
+                    page_count: illust.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+                    thumbnail: illust
+                        .pointer("/image_urls/square_medium")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    is_gif: illust
+                        .get("illustType")
+                        .and_then(Value::as_i64)
+                        .map(|kind| kind == 2)
+                        .unwrap_or(false),
+                    ai_type: illust
+                        .get("illustAiType")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(1),
+                    create_date: illust
+                        .get("createDate")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    is_favorited: illust
+                        .get("isBookmarked")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    tags: illust
+                        .get("tags")
+                        .and_then(Value::as_array)
+                        .map(|tags| {
+                            tags.iter()
+                                .filter_map(|tag| {
+                                    tag.get("name")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect())
+    }
+
+    /// Pixiv 上的标签：有搜索词时聚合作品搜索结果的标签，没有搜索词时取热门标签。
+    pub async fn search_tags(&self, word: &str) -> AppResult<Vec<RemoteTag>> {
+        let word = word.trim();
+        if word.is_empty() {
+            return self.trending_tags().await;
+        }
+        let illusts = self.search_illusts(word).await?;
+        let mut counts: std::collections::HashMap<String, i64> =
+            std::collections::HashMap::new();
+        for illust in illusts {
+            for tag in illust.tags {
+                *counts.entry(tag).or_insert(0) += 1;
+            }
+        }
+        let mut tags: Vec<RemoteTag> = counts
+            .into_iter()
+            .map(|(name, count)| RemoteTag {
+                name,
+                translated_name: None,
+                count,
+            })
+            .collect();
+        tags.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+        tags.truncate(40);
+        Ok(tags)
+    }
+
+    async fn trending_tags(&self) -> AppResult<Vec<RemoteTag>> {
+        self.throttle_api().await;
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .get(format!("{API_BASE}/v1/trending-tags/illust"))
+            .query(&[("filter", "for_android")])
+            .bearer_auth(token)
+            .header("Referer", "https://app-api.pixiv.net/")
+            .send()
+            .await
+            .map_err(|error| AppError::new("NETWORK", format!("无法连接 Pixiv：{error}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::new(
+                "AUTH",
+                "Pixiv 认证失效，请在设置里更新 Refresh Token",
+            ));
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            self.note_rate_limited();
+            return Err(AppError::internal("Pixiv 接口限流（HTTP 429），已自动降速"));
+        }
+        if !status.is_success() {
+            return Err(AppError::internal(format!(
+                "Pixiv 热门标签返回 HTTP {}",
+                status.as_u16()
+            )));
+        }
+
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::internal(format!("热门标签响应无法解析：{error}")))?;
+        let trend_tags = body
+            .get("trend_tags")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(trend_tags
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.get("tag").and_then(Value::as_str)?;
+                Some(RemoteTag {
+                    name: name.to_string(),
+                    translated_name: entry
+                        .get("translated_name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    count: 0,
+                })
+            })
+            .collect())
+    }
+
     /// `/v1/user/detail` 的响应体。头像、昵称都从这里取。
     async fn user_detail_body(&self, user_id: i64) -> AppResult<Value> {
         self.throttle_api().await;
@@ -715,7 +1208,7 @@ impl PixivClient {
             .map(str::to_string))
     }
 
-    /// 取用户昵称（收藏订阅列表显示用）。
+    /// 取用户昵称（订阅列表显示用）。
     pub async fn user_name(&self, user_id: i64) -> AppResult<Option<String>> {
         let body = self.user_detail_body(user_id).await?;
         Ok(body
@@ -725,6 +1218,99 @@ impl PixivClient {
             .filter(|name| !name.is_empty())
             .map(str::to_string))
     }
+}
+
+/// 把列表接口（公开收藏 / 用户作品）的响应体拆成「条目 + 下一页地址」。
+///
+/// 两个接口的 `illusts` 结构与 `next_url` 字段完全一致，解析只写一份。
+fn remote_illust_from_json(illust: &Value) -> Option<RemoteIllust> {
+    Some(RemoteIllust {
+        pixiv_id: illust.get("id").and_then(Value::as_i64)?,
+        title: illust
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        author_name: illust
+            .pointer("/user/name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        author_id: illust.pointer("/user/id").and_then(Value::as_i64).unwrap_or(0),
+        page_count: illust.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+        thumbnail: illust
+            .pointer("/image_urls/square_medium")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        is_gif: illust
+            .get("illustType")
+            .and_then(Value::as_i64)
+            .map(|kind| kind == 2)
+            .unwrap_or(false),
+        ai_type: illust
+            .get("illustAiType")
+            .and_then(Value::as_i64)
+            .unwrap_or(1),
+        create_date: illust
+            .get("createDate")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        is_favorited: illust
+            .get("isBookmarked")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        tags: illust
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| {
+                        tag.get("name")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+fn parse_illust_list(body: &Value) -> (Vec<IllustRef>, Option<String>) {
+    let illusts = body
+        .get("illusts")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let pixiv_id = item.get("id").and_then(Value::as_i64)?;
+                    Some(IllustRef {
+                        pixiv_id,
+                        title: item
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        author_name: item
+                            .pointer("/user/name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        page_count: item.get("page_count").and_then(Value::as_i64).unwrap_or(1),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let next = body
+        .get("next_url")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    (illusts, next)
 }
 
 /// 图片镜像：只替换 Pixiv 官方图片主机，保留路径与查询串。
@@ -999,6 +1585,7 @@ fn parse_illust(illust: &Value) -> IllustData {
             .get("page_count")
             .and_then(Value::as_i64)
             .unwrap_or(1),
+        visible: illust.get("visible").and_then(Value::as_bool).unwrap_or(true),
         width: illust.get("width").and_then(Value::as_i64),
         height: illust.get("height").and_then(Value::as_i64),
         ai_type: illust.get("illust_ai_type").and_then(Value::as_i64).unwrap_or(1),
@@ -1016,6 +1603,42 @@ fn parse_illust(illust: &Value) -> IllustData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_illust_list_with_next_url() {
+        // /v1/user/illusts 与 /v1/user/bookmarks/illust 共用同一套解析
+        let body: Value = serde_json::from_str(
+            r#"{
+                "illusts": [
+                    {
+                        "id": 112290978,
+                        "title": "第一张",
+                        "page_count": 2,
+                        "user": { "name": "作者甲" }
+                    },
+                    { "id": 112290979, "title": "第二张" }
+                ],
+                "next_url": "https://app-api.pixiv.net/v1/user/illusts?user_id=1&offset=30"
+            }"#,
+        )
+        .unwrap();
+
+        let (items, next) = parse_illust_list(&body);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].pixiv_id, 112290978);
+        assert_eq!(items[0].author_name, "作者甲");
+        assert_eq!(items[0].page_count, 2);
+        assert_eq!(items[1].page_count, 1, "缺失 page_count 按单页处理");
+        assert!(next.unwrap().contains("offset=30"));
+    }
+
+    #[test]
+    fn parses_empty_illust_list() {
+        let body: Value = serde_json::from_str(r#"{ "illusts": [] }"#).unwrap();
+        let (items, next) = parse_illust_list(&body);
+        assert!(items.is_empty());
+        assert!(next.is_none());
+    }
 
     #[test]
     fn formats_utc_timestamp_like_pixivpy() {

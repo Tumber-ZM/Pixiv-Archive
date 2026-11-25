@@ -25,8 +25,10 @@ export interface ArtworkCard {
   height: number | null;
   pixiv_status: string;
   ai_type: number;
-  /** 是否至少在一个收藏夹里 */
+  /** 是否至少在一个本地收藏里 */
   is_favorited: boolean;
+  /** 是否在 Pixiv 收藏里（只读） */
+  is_pixiv_favorited: boolean;
   cover_path: string | null;
   cover_image_id: number | null;
   /** 封面原始宽高，瀑布流据此预估卡片高度 */
@@ -107,6 +109,12 @@ export interface AuthorRow {
   avatar_path: string | null;
   /** 该作者最近几件作品的缩略图，用于列表卡片的封面条 */
   covers: string[];
+  /** 是否已订阅该作者（卡片上的铃铛状态） */
+  subscribed: boolean;
+  /** 是否至少有一件「收藏」来源的作品（作者订阅下载的不算） */
+  collected: boolean;
+  /** 是否至少有一件本地作品在 Pixiv 收藏里 */
+  favorited: boolean;
 }
 
 export interface TagRow {
@@ -116,12 +124,20 @@ export interface TagRow {
   count: number;
   /** 该标签下随机一张作品的缩略图 */
   cover_path: string | null;
+  /** 封面作品是否在 Pixiv 收藏里（只读） */
+  pixiv_favorited: boolean;
 }
 
-export interface BookmarkSub {
-  pixiv_user_id: number;
+/** 订阅类型：对方的公开收藏 / 该作者发布的作品。 */
+export type SubKind = "bookmark" | "author";
+
+export interface Sub {
+  kind: SubKind;
+  /** 被订阅的 Pixiv 用户 ID（收藏订阅的目标也是用户） */
+  target_pixiv_id: number;
   name: string | null;
-  last_pid: number | null;
+  /** 作者订阅的起点：null = 待建立，0 = 补全全部历史 */
+  baseline_pid: number | null;
   auto_download: boolean;
   last_checked: string | null;
   last_result: string | null;
@@ -129,9 +145,25 @@ export interface BookmarkSub {
 }
 
 export interface SubPreview {
-  pixiv_user_id: number;
+  kind: SubKind;
+  target_pixiv_id: number;
   name: string;
   total_bookmarks: number | null;
+}
+
+/** 本地缓存的 Pixiv 收藏概况。 */
+export interface FavoriteSyncStatus {
+  count: number;
+  last_synced: string | null;
+}
+
+/** 一次「同步我的收藏」的结果。 */
+export interface FavoriteSyncReport {
+  total: number;
+  public: number;
+  private: number;
+  pages: number;
+  cancelled: boolean;
 }
 
 export interface Stats {
@@ -178,11 +210,14 @@ export interface LegacyImportReport {
   backed_up_to: string | null;
 }
 
-/** 单个收藏订阅的检查结果。 */
+/** 单个订阅的检查结果。 */
 export interface SubResult {
+  kind: SubKind;
   pixiv_user_id: number;
   name: string;
   new_found: number;
+  /** 库里已有但缺页、这次补下载的作品数 */
+  repaired: number;
   downloaded: number;
   failed: number;
   pages_scanned: number;
@@ -190,6 +225,51 @@ export interface SubResult {
   /** 用户点了取消，检查提前结束 */
   cancelled: boolean;
   error: string | null;
+}
+
+/** 标签组合：后续标签组合订阅引用 id。 */
+export interface TagCombo {
+  id: number;
+  name: string;
+  tags: string[];
+  pinned: boolean;
+}
+
+/** Pixiv 远端作者搜索的一条结果。 */
+export interface RemoteAuthor {
+  pixiv_user_id: number;
+  name: string;
+  account: string;
+  avatar: string | null;
+}
+
+/** Pixiv 远端作品搜索的一条结果。 */
+export interface RemoteIllust {
+  pixiv_id: number;
+  title: string;
+  author_name: string;
+  author_id: number;
+  page_count: number;
+  thumbnail: string;
+  is_gif: boolean;
+  ai_type: number;
+  create_date: string;
+  is_favorited: boolean;
+  tags: string[];
+}
+
+/** Pixiv 上的标签（热门标签或远端作品结果聚合）。 */
+export interface RemoteTag {
+  name: string;
+  translated_name: string | null;
+  count: number;
+}
+
+/** 校验/补页的结果。 */
+export interface RepairReport {
+  checked: number;
+  repaired: number;
+  failed: number;
 }
 
 /** 同步元数据的汇总。 */
@@ -266,7 +346,15 @@ export interface ListQuery {
   seed?: number;
   author_id?: number;
   tag?: string;
+  /** 同时命中这些标签（标签组合用，AND） */
+  tags_all?: string[];
   favorite_id?: number;
+  /** 只看 Pixiv 收藏里的作品（作者页的「仅看收藏」） */
+  favorited_only?: boolean;
+  /** 没同步收藏时的兜底：只看订阅前就有的作品 */
+  collected_only?: boolean;
+  /** 只看已订阅作者的作品 */
+  subscribed_only?: boolean;
   /** `local` = 只看本地文件（pixiv_id < 0）；缺省 = 只看 Pixiv 作品 */
   scope?: "local" | "pixiv";
 }
