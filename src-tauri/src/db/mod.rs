@@ -24,6 +24,29 @@ pub fn open(path: &Path) -> AppResult<Connection> {
 
 /// 打开并保证 schema 与迁移到位。新库与导入的旧库副本都走这里。
 pub fn init(path: &Path) -> AppResult<Connection> {
+    init_with(path, true)
+}
+
+/// 启动时用：只保证表和列存在，不做去重 / 建唯一索引这类重活。
+///
+/// 返回 `(连接, 是否修掉了旧库的 sha256 唯一索引)`。后者用于提示用户跑一次
+/// 「校验图片」——旧索引曾把跨作品同图的图片行删掉，那些作品可能只剩空壳。
+pub fn ensure_ready(path: &Path) -> AppResult<(Connection, bool)> {
+    let conn = open(path)?;
+    // 必须在 drop_legacy_tables 之前判断
+    let legacy = schema::has_legacy_sha256_index(&conn).unwrap_or(false);
+    conn.execute_batch(schema::SCHEMA_SQL)?;
+    schema::ensure_columns(&conn)?;
+    schema::ensure_bookmark_subs_cols(&conn)?;
+    schema::drop_legacy_tables(&conn)?;
+    // 老库可能没建过 (artwork_id, page) 唯一索引；建不上（有重复行）就留给全量 init
+    let _ = conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_artwork_page ON images(artwork_id, page);",
+    );
+    Ok((conn, legacy))
+}
+
+fn init_with(path: &Path, full: bool) -> AppResult<Connection> {
     let conn = open(path)?;
     // 有副作用的迁移（加列 / 去重 / 建唯一索引）之前先留一份备份，
     // 出问题时可以直接把 library.db 换回去。
@@ -34,7 +57,9 @@ pub fn init(path: &Path) -> AppResult<Connection> {
     schema::ensure_columns(&conn)?;
     schema::ensure_bookmark_subs_cols(&conn)?;
     schema::drop_legacy_tables(&conn)?;
-    schema::ensure_unique_indexes(&conn)?;
+    if full {
+        schema::ensure_unique_indexes(&conn)?;
+    }
     Ok(conn)
 }
 
@@ -108,6 +133,37 @@ mod tests {
         let columns = schema::table_columns(&conn, "artworks").unwrap();
         assert!(columns.iter().any(|c| c == "sync_error"), "artworks 缺 sync_error");
         assert!(columns.iter().any(|c| c == "ai_type"), "artworks 缺 ai_type");
+    }
+
+    #[test]
+    fn ensure_ready_drops_legacy_sha256_index() {
+        let dir = temp_dir("legacy-index");
+        let db = dir.join("library.db");
+
+        {
+            let conn = init(&db).unwrap();
+            // 造出旧版本的结构：按图片内容唯一的索引
+            conn.execute("DROP INDEX IF EXISTS uidx_images_artwork_page", [])
+                .unwrap();
+            conn.execute("CREATE UNIQUE INDEX uidx_images_sha256 ON images(sha256)", [])
+                .unwrap();
+        }
+
+        let (conn, legacy) = ensure_ready(&db).unwrap();
+        assert!(legacy, "老库应该被识别出来");
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='uidx_images_sha256')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!exists, "旧索引应被删掉");
+
+        drop(conn);
+        let (_conn, legacy) = ensure_ready(&db).unwrap();
+        assert!(!legacy, "已升级的库不该再报旧结构");
     }
 
     #[test]

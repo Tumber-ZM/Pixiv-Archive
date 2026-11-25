@@ -166,12 +166,29 @@ pub fn ensure_bookmark_subs_cols(conn: &rusqlite::Connection) -> crate::error::A
 }
 
 /// v1.2.1 起画师订阅被「收藏订阅」取代，旧表连同数据一并丢弃。
+///
+/// 同时丢掉旧的 `uidx_images_sha256` 全局唯一索引：同一张图可能被不同作品
+/// 引用（跨作品同图），按内容唯一会把后一个作品变成「有作品、没有图片」。
 pub fn drop_legacy_tables(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
     conn.execute("DROP TABLE IF EXISTS subscriptions", [])?;
+    conn.execute("DROP INDEX IF EXISTS uidx_images_sha256", [])?;
     Ok(())
 }
 
+/// 旧库是否还带着 `uidx_images_sha256` 唯一索引（启动时据此提示用户跑校验）。
+pub fn has_legacy_sha256_index(conn: &rusqlite::Connection) -> crate::error::AppResult<bool> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='uidx_images_sha256')",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(exists)
+}
+
 /// 旧库可能已有重复行；先清理再建唯一索引，否则建索引会直接失败。
+///
+/// 只按 (artwork_id, page) 去重；不再按 sha256 全局去重，避免跨作品同图
+/// 导致作品缺页或空壳。
 pub fn ensure_unique_indexes(conn: &rusqlite::Connection) -> crate::error::AppResult<()> {
     // 同一作品同一页保留最早的一行
     conn.execute(
@@ -180,16 +197,9 @@ pub fn ensure_unique_indexes(conn: &rusqlite::Connection) -> crate::error::AppRe
          )",
         [],
     )?;
-    // 同一内容（sha256 相同）保留最早的一行；sha256 为 NULL 的行不受影响
-    conn.execute(
-        "DELETE FROM images WHERE sha256 IS NOT NULL AND id NOT IN (
-             SELECT MIN(id) FROM images WHERE sha256 IS NOT NULL GROUP BY sha256
-         )",
-        [],
-    )?;
     conn.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_artwork_page ON images(artwork_id, page);
-         CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_sha256 ON images(sha256);",
+        "DROP INDEX IF EXISTS uidx_images_sha256;
+         CREATE UNIQUE INDEX IF NOT EXISTS uidx_images_artwork_page ON images(artwork_id, page);",
     )?;
     Ok(())
 }

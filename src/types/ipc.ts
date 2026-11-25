@@ -183,6 +183,8 @@ export interface SubResult {
   pixiv_user_id: number;
   name: string;
   new_found: number;
+  /** 库里已有、但缺页需要补的作品数 */
+  repaired: number;
   downloaded: number;
   failed: number;
   pages_scanned: number;
@@ -190,6 +192,13 @@ export interface SubResult {
   /** 用户点了取消，检查提前结束 */
   cancelled: boolean;
   error: string | null;
+}
+
+/** 图片校验（补缺页）的汇总。 */
+export interface RepairReport {
+  checked: number;
+  repaired: number;
+  failed: number;
 }
 
 /** 同步元数据的汇总。 */

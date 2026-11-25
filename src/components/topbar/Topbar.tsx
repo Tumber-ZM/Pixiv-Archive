@@ -112,7 +112,7 @@ export function Topbar() {
         data-active={deletedOnly}
         onClick={toggleDeletedOnly}
       >
-        已删除
+        已隐藏
       </button>
 
       <button

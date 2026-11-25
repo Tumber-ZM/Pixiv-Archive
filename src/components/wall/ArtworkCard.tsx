@@ -43,7 +43,7 @@ function Badges({ card }: { card: Card }) {
         </span>
       )}
       {card.pixiv_status === "deleted" && (
-        <span className="badge badge-deleted">已删除</span>
+        <span className="badge badge-deleted">已隐藏</span>
       )}
     </div>
   );

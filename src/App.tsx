@@ -1,12 +1,14 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { TaskProgress } from "./components/scan/TaskProgress";
 import { UpdateToast } from "./components/update/UpdateToast";
 import { ScanDialog } from "./components/scan/ScanDialog";
 import { ScanResultDialog } from "./components/scan/ScanResultDialog";
+import { Dialog } from "./components/dialog/Dialog";
 import { AppShell } from "./components/layout/AppShell";
 import { applyTheme, watchSystemTheme } from "./lib/theme";
+import { CMD, call } from "./lib/ipc";
 import { useUi, type ScanTask } from "./stores/ui";
 
 export default function App() {
@@ -64,16 +66,39 @@ export default function App() {
 
     // 订阅检查进度
     track(
-      listen<{ current: number; total: number; message: string }>(
-        "sub-progress",
+      listen<{
+        current: number;
+        total: number;
+        imported?: number;
+        backlog?: number;
+        message: string;
+      }>("sub-progress",
         (event) => {
           const payload = event.payload;
           setScanTask({
             current: payload.current,
             total: payload.total,
-            imported: 0,
+            imported: payload.imported ?? 0,
+            backlog: payload.backlog ?? 0,
             message: payload.message,
             kind: "subs",
+          });
+        },
+      ),
+    );
+
+    // 图片校验（补缺页）进度
+    track(
+      listen<{ current: number; total: number; imported: number; message: string }>(
+        "repair-progress",
+        (event) => {
+          const payload = event.payload;
+          setScanTask({
+            current: payload.current,
+            total: payload.total,
+            imported: payload.imported ?? 0,
+            message: payload.message,
+            kind: "repair",
           });
         },
       ),
@@ -85,6 +110,16 @@ export default function App() {
     };
   }, [setScanTask]);
 
+  // 启动迁移提示：旧库被修掉「按内容去重」的索引时，提醒跑一次校验
+  const [startupNotice, setStartupNotice] = useState<string | null>(null);
+  useEffect(() => {
+    void call<string | null>(CMD.takeStartupNotice)
+      .then((notice) => {
+        if (notice) setStartupNotice(notice);
+      })
+      .catch(() => undefined);
+  }, []);
+
   return (
     <>
       <AppShell />
@@ -92,6 +127,15 @@ export default function App() {
       <ScanResultDialog />
       <TaskProgress />
       <UpdateToast />
+      <Dialog
+        open={startupNotice !== null}
+        title="数据库已升级"
+        confirmLabel="知道了"
+        onCancel={() => setStartupNotice(null)}
+        onConfirm={() => setStartupNotice(null)}
+      >
+        <p className="text-body text-text-2">{startupNotice}</p>
+      </Dialog>
     </>
   );
 }

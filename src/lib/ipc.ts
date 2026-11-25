@@ -43,6 +43,8 @@ export const CMD = {
   checkAllBookmarkSubs: "check_all_bookmark_subs",
   syncArtworks: "sync_artworks",
   regenerateThumbnails: "regenerate_thumbnails",
+  repairIncompleteImages: "repair_incomplete_images",
+  takeStartupNotice: "take_startup_notice",
   importLegacy: "import_legacy",
   appInfo: "app_info",
   checkUpdate: "check_update",

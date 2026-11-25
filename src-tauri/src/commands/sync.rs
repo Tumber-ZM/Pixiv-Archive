@@ -353,6 +353,11 @@ async fn sync_one(
 ) -> AppResult<SyncOutcome> {
     match client.illust_detail(target.pixiv_id).await {
         Ok(data) => {
+            // visible=false：已删除或作者设为非公开，API 仍返回详情但图片是占位图
+            if !data.visible {
+                mark_deleted(conn, target.id)?;
+                return Ok(SyncOutcome::Deleted);
+            }
             // 头像判定要看 apply_illust 之前的旧地址，所以先查再传值
             // （不能直接传 &Connection，会让 command 的 future 失去 Send）
             let stored_avatar: Option<String> = conn
@@ -491,6 +496,7 @@ mod tests {
             author_avatar: Some("https://i.pximg.net/avatar.jpg".to_string()),
             create_date: Some("2024-01-02T03:04:05+09:00".to_string()),
             page_count: 2,
+            visible: true,
             width: Some(1200),
             height: Some(800),
             ai_type: 2,

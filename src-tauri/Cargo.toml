@@ -1,6 +1,6 @@
 [package]
 name = "pixiv-archive-desktop"
-version = "2.0.1"
+version = "2.0.2"
 description = "Pixiv local archive browser"
 authors = ["you"]
 edition = "2024"

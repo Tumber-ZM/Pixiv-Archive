@@ -30,6 +30,11 @@ impl AppError {
         Self::new("INTERNAL", message)
     }
 
+    /// 用户主动取消：调用方不要把它当成下载失败。
+    pub fn cancelled() -> Self {
+        Self::new("CANCELLED", "任务已取消")
+    }
+
     pub fn io(error: std::io::Error) -> Self {
         Self::new("IO", error.to_string())
     }

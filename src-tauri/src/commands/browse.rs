@@ -38,11 +38,11 @@ pub fn list_authors_with(
     let pattern = like_pattern(q);
 
     let sql = "SELECT au.id, au.pixiv_user_id, au.name, COUNT(a.id) AS artwork_count, au.profile_image,
-                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id ORDER BY w.id DESC LIMIT 1) AS c1,
-                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id ORDER BY w.id DESC LIMIT 1 OFFSET 1) AS c2,
-                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id ORDER BY w.id DESC LIMIT 1 OFFSET 2) AS c3
+                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id AND COALESCE(w.pixiv_status, 'active') <> 'deleted' ORDER BY w.id DESC LIMIT 1) AS c1,
+                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id AND COALESCE(w.pixiv_status, 'active') <> 'deleted' ORDER BY w.id DESC LIMIT 1 OFFSET 1) AS c2,
+                      (SELECT w.pixiv_id FROM artworks w WHERE w.author_id = au.id AND COALESCE(w.pixiv_status, 'active') <> 'deleted' ORDER BY w.id DESC LIMIT 1 OFFSET 2) AS c3
                FROM authors au
-               LEFT JOIN artworks a ON a.author_id = au.id
+               LEFT JOIN artworks a ON a.author_id = au.id AND COALESCE(a.pixiv_status, 'active') <> 'deleted'
                WHERE (?1 IS NULL OR au.name LIKE ?1 ESCAPE '\\')
                GROUP BY au.id
                HAVING COUNT(a.id) > 0
@@ -114,7 +114,7 @@ pub fn list_tags_with(
                    SELECT t.id, t.name, t.translated_name, COUNT(at.artwork_id) AS usage
                    FROM tags t
                    JOIN artwork_tags at ON at.tag_id = t.id
-                   JOIN artworks w ON w.id = at.artwork_id
+                   JOIN artworks w ON w.id = at.artwork_id AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
                    WHERE (?1 IS NULL OR t.name LIKE ?1 ESCAPE '\\' OR t.translated_name LIKE ?1 ESCAPE '\\')
                    GROUP BY t.id
                    HAVING COUNT(at.artwork_id) > 0
@@ -124,7 +124,7 @@ pub fn list_tags_with(
                SELECT r.id, r.name, r.translated_name, r.usage,
                  (SELECT w.pixiv_id
                     FROM artwork_tags at2
-                    JOIN artworks w ON w.id = at2.artwork_id
+                    JOIN artworks w ON w.id = at2.artwork_id AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
                    WHERE at2.tag_id = r.id
                    ORDER BY RANDOM() LIMIT 1) AS cover_pixiv_id
                FROM ranked r
@@ -510,6 +510,28 @@ mod tests {
         conn.execute("INSERT INTO artwork_tags (artwork_id, tag_id) VALUES (3, 2)", [])
             .unwrap();
         conn
+    }
+
+    #[test]
+    fn hidden_artworks_are_excluded_from_lists_and_stats() {
+        let conn = memory_db();
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp");
+
+        let before = crate::commands::artworks::stats_with(&conn).unwrap().artworks;
+
+        // visible=false 的作品会被标记成 deleted（见 fetch_and_import / sync_one）
+        conn.execute("UPDATE artworks SET pixiv_status = 'deleted' WHERE id = 4", [])
+            .unwrap();
+
+        let authors = list_authors_with(&conn, &dir, None).unwrap();
+        assert_eq!(authors.len(), 1, "只剩有可见作品的作者");
+        assert_eq!(authors[0].name, "多い作者");
+
+        let stats = crate::commands::artworks::stats_with(&conn).unwrap();
+        assert_eq!(stats.artworks, before - 1, "隐藏作品不计入作品总数");
+        assert_eq!(stats.deleted, 1, "隐藏数量单独统计");
     }
 
     #[test]

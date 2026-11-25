@@ -8,6 +8,7 @@ const TITLES: Record<string, string> = {
   scan: "正在扫描",
   sync: "同步元数据",
   subs: "更新订阅",
+  repair: "校验图片",
 };
 
 /**
@@ -65,6 +66,17 @@ export function TaskProgress() {
 
   const percent = task.total > 0 ? Math.round((task.current / task.total) * 100) : 0;
   const title = cancelling ? "正在取消…" : TITLES[task.kind ?? "scan"] ?? "处理中";
+  const doneLabel =
+    task.kind === "subs"
+      ? "已下载"
+      : task.kind === "repair"
+        ? "已补齐"
+        : task.kind === "sync"
+          ? "已更新"
+          : "已导入";
+  const showDone =
+    task.kind === "scan" || task.kind === "subs" || task.kind === "repair";
+  const countText = task.total > 0 ? `${task.current} / ${task.total}` : "处理中";
 
   const cancel = async () => {
     setCancelling(true);
@@ -100,9 +112,13 @@ export function TaskProgress() {
       </div>
 
       <p className="mt-2 text-micro text-text-2">
-        {task.current} / {task.total || "?"} · 已导入 {task.imported}
+        {countText}
+        {showDone ? ` · ${doneLabel} ${task.imported}` : ""}
+        {task.kind === "subs" && task.backlog ? ` · 待下载 ${task.backlog}` : ""}
       </p>
-      <p className="mt-0.5 truncate-1 text-micro text-text-3">{task.message}</p>
+      <p className="mt-0.5 truncate-1 text-micro text-text-3">
+        {cancelling ? "正在停止当前下载，已完成的进度会保留…" : task.message}
+      </p>
     </div>
   );
 }

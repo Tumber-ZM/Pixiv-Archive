@@ -1,5 +1,6 @@
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::future::join_all;
 use rusqlite::{params, Connection};
@@ -86,17 +87,22 @@ pub struct DownloadedFile {
     pub hash: Option<String>,
 }
 
-/// 下载一个作品的全部页。已完整下载过的直接返回空列表（幂等）。
+/// 下载一个作品的全部页。已完整下载过的直接返回已有文件（幂等）。
 ///
 /// 多页之间并发执行，并发上限由 `PixivClient` 的信号量统一控制；
-/// 单页失败不影响其它页：已下好的部分照常入库，缺失页下次同步时补齐。
+/// 单页失败不影响其它页：已下好的页返回给调用方，缺页时由调用方按页数决定
+/// 是否入库（见 `fetch_and_import`）。
 pub async fn download_illust(
     client: &PixivClient,
     data: &IllustData,
     source_root: &Path,
+    cancel: &AtomicBool,
 ) -> AppResult<Vec<DownloadedFile>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
     if data.is_ugoira {
-        return download_ugoira(client, data, source_root).await;
+        return download_ugoira(client, data, source_root, cancel).await;
     }
 
     if data.image_urls.is_empty() {
@@ -132,7 +138,9 @@ pub async fn download_illust(
         .collect();
 
     let tasks = targets.iter().map(|(page, dest)| async move {
-        let file: AppResult<DownloadedFile> = if dest.is_file() {
+        let file: AppResult<DownloadedFile> = if cancel.load(Ordering::Relaxed) {
+            Err(AppError::cancelled())
+        } else if dest.is_file() {
             // 上次中断前已经下好的页：跳过下载，哈希留给入库时算
             Ok(DownloadedFile {
                 path: dest.clone(),
@@ -141,7 +149,7 @@ pub async fn download_illust(
             })
         } else {
             client
-                .fetch_image_to(&data.image_urls[*page], dest)
+                .fetch_image_to(&data.image_urls[*page], dest, Some(cancel))
                 .await
                 .map(|hash| DownloadedFile {
                     path: dest.clone(),
@@ -166,7 +174,12 @@ pub async fn download_illust(
         }
     }
 
-    // 全部失败才算失败；部分成功时先入库，下次补缺页
+    // 用户取消：不要入库半份，已下好的页留在磁盘上供下次续传
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
+
+    // 全部失败才算失败；部分成功时把已下的页返回，入库与否由调用方按页数判定
     if files.is_empty() {
         return Err(last_error.unwrap_or_else(|| AppError::internal("没有下载到任何页面")));
     }
@@ -190,7 +203,11 @@ async fn download_ugoira(
     client: &PixivClient,
     data: &IllustData,
     source_root: &Path,
+    cancel: &AtomicBool,
 ) -> AppResult<Vec<DownloadedFile>> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
     let author_root = source_root.join(safe_name(&data.author_name));
     let dest = author_root.join(format!(
         "[{}] {}.gif",
@@ -218,7 +235,11 @@ async fn download_ugoira(
 
     std::fs::create_dir_all(&author_root)?;
     let zip_path = author_root.join(format!(".ugoira-{}.zip", data.pixiv_id));
-    client.fetch_image_to(&meta.zip_url, &zip_path).await?;
+    client.fetch_image_to(&meta.zip_url, &zip_path, Some(cancel)).await?;
+
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
 
     let frames = meta.frames.clone();
     let gif_path = dest.clone();
@@ -470,18 +491,11 @@ pub fn import_downloaded(
     let mut queued: Vec<(PathBuf, Option<PathBuf>, i64)> = Vec::new();
 
     for (file, hash) in files.iter().zip(hashes.iter()) {
-        let exists: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM images WHERE sha256 = ?1)",
-            [hash],
-            |row| row.get(0),
-        )?;
-        if exists {
-            continue;
-        }
-
         let size = thumbnails::probe_size(&file.path);
-        tx.execute(
-            "INSERT INTO images (artwork_id, page, path, width, height, sha256)
+        // 只按 (artwork_id, page) 去重：同一张图可能被不同作品引用，
+        // 按内容跳过会让后一个作品变成「有作品行、没有图片」的空壳。
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO images (artwork_id, page, path, width, height, sha256)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 artwork_id,
@@ -492,6 +506,9 @@ pub fn import_downloaded(
                 hash
             ],
         )?;
+        if inserted == 0 {
+            continue;
+        }
         let image_id = tx.last_insert_rowid();
 
         // 只有封面需要缩略图；其它页只算感知哈希
@@ -503,14 +520,8 @@ pub fn import_downloaded(
         queued.push((file.path.clone(), thumb_target, image_id));
     }
 
-    // 页数以实际入库的图片数为准（多页作品中途失败也不会写出错误的页数）
-    tx.execute(
-        "UPDATE artworks SET page_count = (
-             SELECT COUNT(*) FROM images WHERE artwork_id = ?1
-         ) WHERE id = ?1",
-        [artwork_id],
-    )?;
-
+    // page_count 保持远端语义（新建时写入、之后由元数据同步更新），
+    // 不按本地图片数覆盖：否则「图片数 < page_count」的缺页判定会永远失效。
     tx.commit()?;
 
     // 事务提交后再投递：后台线程写 phash 时行一定已经存在
@@ -524,6 +535,12 @@ pub fn import_downloaded(
 /// 一次消费多少队列项：避免单个任务跑太久，剩下的下次继续。
 pub const QUEUE_BATCH: i64 = 500;
 
+/// 队列里还没处理掉的总量（跨多次检查累计）。
+pub fn queue_len(conn: &Connection) -> AppResult<usize> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM download_queue", [], |row| row.get(0))?;
+    Ok(count as usize)
+}
+
 /// 把作品加入下载队列（已存在则忽略）。
 pub fn enqueue(conn: &Connection, pixiv_id: i64) -> AppResult<()> {
     conn.execute(
@@ -534,12 +551,15 @@ pub fn enqueue(conn: &Connection, pixiv_id: i64) -> AppResult<()> {
 }
 
 /// 取出可以立即处理的作品：`pending` 或已到重试时间的 `failed`。
+///
+/// 先处理 `pending`：429 或网络失败的项会留在开头，否则进度一直显示
+/// 「已下载 0」，看起来像卡住。
 pub fn pending_queue(conn: &Connection, limit: i64) -> AppResult<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT pixiv_id FROM download_queue
          WHERE status IN ('pending', 'failed')
            AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
-         ORDER BY id ASC
+         ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, id ASC
          LIMIT ?1",
     )?;
     let rows = stmt.query_map([limit], |row| row.get::<_, i64>(0))?;
@@ -579,8 +599,34 @@ pub async fn fetch_and_import(
     data_dir: &Path,
     source_root: &Path,
     data: &IllustData,
+    cancel: &AtomicBool,
 ) -> AppResult<usize> {
-    let files = download_illust(client, data, source_root).await?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::cancelled());
+    }
+    // Pixiv 对已删除 / 非公开作品返回 visible=false，图片地址是 limit_unknown 占位图。
+    // 这种作品不下载、不入库；已经在库里的标记为隐藏（deleted），列表默认不显示。
+    if !data.visible {
+        conn.execute(
+            "UPDATE artworks SET
+                pixiv_status = 'deleted', last_synced = datetime('now'),
+                sync_error = NULL, sync_error_kind = NULL, next_retry_at = NULL
+             WHERE pixiv_id = ?1",
+            [data.pixiv_id],
+        )?;
+        return Ok(0);
+    }
+    let files = download_illust(client, data, source_root, cancel).await?;
+    // 和远端页数核对：缺页时不入库，队列保留重试；已下载的页留在磁盘，下次只补缺页。
+    let expected = data.page_count.max(1) as usize;
+    if !data.is_ugoira && files.len() < expected {
+        return Err(AppError::internal(format!(
+            "作品 {} 只下载到 {}/{} 页，保留已下载部分，稍后重试",
+            data.pixiv_id,
+            files.len(),
+            expected
+        )));
+    }
     // 空列表也调用一次：确保作品行存在（手动下过但没入库的情况也能补上）
     import_downloaded(conn, data_dir, data, &files)?;
 
@@ -666,6 +712,7 @@ mod tests {
             author_avatar: None,
             create_date: None,
             page_count: 2,
+            visible: true,
             width: None,
             height: None,
             ai_type: 1,
@@ -685,5 +732,82 @@ mod tests {
         assert_eq!(url_extension("https://i.pximg.net/a/b_p0.jpeg"), ".jpg");
         assert_eq!(url_extension("https://i.pximg.net/a/b_p0.png?x=1"), ".png");
         assert_eq!(url_extension("https://i.pximg.net/a/b"), ".jpg");
+    }
+
+    #[test]
+    fn same_image_can_belong_to_two_artworks() {
+        let unique = format!(
+            "same-image-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp")
+            .join(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("library.db");
+        let mut conn = crate::db::init(&db).unwrap();
+        let data_dir = dir.join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        // 两个作品共用同一份图片内容（跨作品同图）
+        let first = dir.join("a.jpg");
+        let second = dir.join("b.jpg");
+        std::fs::write(&first, b"same-bytes").unwrap();
+        std::fs::write(&second, b"same-bytes").unwrap();
+
+        let make = |pixiv_id: i64| IllustData {
+            pixiv_id,
+            title: format!("作品 {pixiv_id}"),
+            description: String::new(),
+            author_id: 1,
+            author_name: "作者".to_string(),
+            author_avatar: None,
+            create_date: None,
+            page_count: 1,
+            visible: true,
+            width: None,
+            height: None,
+            ai_type: 1,
+            tags: Vec::new(),
+            image_urls: Vec::new(),
+            is_ugoira: false,
+        };
+
+        import_downloaded(
+            &mut conn,
+            &data_dir,
+            &make(1),
+            &[DownloadedFile {
+                path: first,
+                page: 0,
+                hash: None,
+            }],
+        )
+        .unwrap();
+        import_downloaded(
+            &mut conn,
+            &data_dir,
+            &make(2),
+            &[DownloadedFile {
+                path: second,
+                page: 0,
+                hash: None,
+            }],
+        )
+        .unwrap();
+
+        let images: i64 = conn
+            .query_row("SELECT COUNT(*) FROM images", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(images, 2, "跨作品同图不应被跳过");
+        let artworks: i64 = conn
+            .query_row("SELECT COUNT(*) FROM artworks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(artworks, 2);
     }
 }

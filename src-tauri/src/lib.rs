@@ -31,11 +31,30 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(commands::task::TaskCancel::default())
+        .manage(commands::StartupNotice::default())
         .setup(|app| {
             // 便携数据目录：先把目录铺好，并把旧的 settings.json 复制过来一份，
             // 避免换到 exe 旁以后图片目录/代理/token 全部丢失（库不迁移）。
             let _ = platform::paths::ensure_dirs();
             seed_settings_from_appdata();
+
+            // 老库升级：启动时补跑一次幂等迁移（只建表/补列/丢掉旧索引，
+            // 不做全库去重）。修掉旧索引时留个提示，让用户跑一次「校验图片」。
+            if let Ok(path) = platform::paths::db_path() {
+                if path.is_file() {
+                    if let Ok((_, legacy)) = db::ensure_ready(&path) {
+                        if legacy {
+                            if let Ok(mut guard) = app.state::<commands::StartupNotice>().0.lock() {
+                                *guard = Some(
+                                    "检测到旧版本数据库：已移除「按图片内容去重」的旧索引。\
+                                     旧版本曾因此丢掉跨作品共用的图片，建议运行一次「校验图片」补齐。"
+                                        .to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
 
             // 启动时把数据目录和用户配置的图片目录加进 asset 协议白名单
             allow_image_dir(app.handle());
@@ -87,6 +106,8 @@ pub fn run() {
             commands::task::task_running,
             commands::task::task_kinds,
             commands::update::app_info,
+            commands::take_startup_notice,
+            commands::subs::repair_incomplete_images,
             commands::update::check_update,
         ])
         .run(tauri::generate_context!())

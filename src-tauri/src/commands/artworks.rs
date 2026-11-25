@@ -112,22 +112,22 @@ pub fn stats_with(conn: &Connection) -> AppResult<Stats> {
     // 本地文件（pixiv_id < 0）不属于 Pixiv 作品，统计里一律排除
     let sql = format!(
         "SELECT
-           (SELECT COUNT(*) FROM artworks WHERE pixiv_id > 0),
+           (SELECT COUNT(*) FROM artworks WHERE pixiv_id > 0 AND COALESCE(pixiv_status, 'active') <> 'deleted'),
            (SELECT COUNT(*) FROM images i JOIN artworks a ON a.id = i.artwork_id \
-            WHERE a.pixiv_id > 0),
+            WHERE a.pixiv_id > 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'),
            (SELECT COUNT(*) FROM authors au WHERE EXISTS (
-                SELECT 1 FROM artworks a WHERE a.author_id = au.id)),
+                SELECT 1 FROM artworks a WHERE a.author_id = au.id AND COALESCE(a.pixiv_status, 'active') <> 'deleted')),
            (SELECT COUNT(*) FROM tags t WHERE EXISTS (
                 SELECT 1 FROM artwork_tags at
-                JOIN artworks w ON w.id = at.artwork_id
+                JOIN artworks w ON w.id = at.artwork_id AND COALESCE(w.pixiv_status, 'active') <> 'deleted'
                 WHERE at.tag_id = t.id)),
            (SELECT COUNT(*) FROM favorites),
            (SELECT COUNT(*) FROM artworks \
             WHERE COALESCE(pixiv_status,'active') = 'deleted' AND pixiv_id > 0),
-           (SELECT COUNT(*) FROM artworks a WHERE {r18} AND a.pixiv_id > 0),
+           (SELECT COUNT(*) FROM artworks a WHERE {r18} AND a.pixiv_id > 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted'),
            (SELECT COUNT(*) FROM artworks \
-            WHERE COALESCE(ai_type,1) = 2 AND pixiv_id > 0),
-           (SELECT COUNT(*) FROM artworks a WHERE {gif} AND a.pixiv_id > 0)"
+            WHERE COALESCE(ai_type,1) = 2 AND pixiv_id > 0 AND COALESCE(pixiv_status, 'active') <> 'deleted'),
+           (SELECT COUNT(*) FROM artworks a WHERE {gif} AND a.pixiv_id > 0 AND COALESCE(a.pixiv_status, 'active') <> 'deleted')"
     );
 
     Ok(conn.query_row(&sql, [], |row| {

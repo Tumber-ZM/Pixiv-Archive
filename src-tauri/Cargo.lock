@@ -2895,7 +2895,7 @@ dependencies = [
 
 [[package]]
 name = "pixiv-archive-desktop"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "futures-util",
  "gif 0.13.3",
