@@ -12,9 +12,9 @@ interface FavoritePickerProps {
 }
 
 /**
- * 本地收藏选择器（`06-界面规格.md` §8）。
+ * 收藏夹选择器（`06-界面规格.md` §8）。
  *
- * 单张时会预勾选该作品已在的本地收藏，保存时**对比初始状态**：
+ * 单张时会预勾选该作品已在的收藏夹，保存时**对比初始状态**：
  * 新勾的走 add、取消勾的走 remove，所以这里也能取消收藏。
  */
 export function FavoritePicker({ artworkIds, onClose, onSaved }: FavoritePickerProps) {
@@ -66,7 +66,7 @@ export function FavoritePicker({ artworkIds, onClose, onSaved }: FavoritePickerP
     try {
       const createdNew = newName.trim().length > 0;
       const added = [...selected].filter((id) => !initial.has(id));
-      // 只有预勾选过的本地收藏才谈得上「取消」，批量模式 initial 为空，这里自然是空集
+      // 只有预勾选过的收藏夹才谈得上「取消」，批量模式 initial 为空，这里自然是空集
       const removed = [...initial].filter((id) => !selected.has(id));
 
       if (!createdNew && added.length === 0 && removed.length === 0) {
@@ -97,14 +97,14 @@ export function FavoritePicker({ artworkIds, onClose, onSaved }: FavoritePickerP
   return (
     <Dialog
       open
-      title={artworkIds.length > 1 ? `将 ${artworkIds.length} 件加入本地收藏` : "本地收藏"}
+      title={artworkIds.length > 1 ? `将 ${artworkIds.length} 件加入收藏夹` : "收藏夹"}
       confirmLabel="保存"
       busy={busy}
       onConfirm={save}
       onCancel={onClose}
     >
       {favorites.length === 0 ? (
-        <p className="text-body text-text-2">还没有本地收藏，输入名称即可新建。</p>
+        <p className="text-body text-text-2">还没有收藏夹，输入名称即可新建。</p>
       ) : (
         <div className="flex max-h-[240px] flex-col gap-1 overflow-y-auto">
           {favorites.map((favorite) => (
@@ -124,14 +124,14 @@ export function FavoritePicker({ artworkIds, onClose, onSaved }: FavoritePickerP
       <div className="mt-3">
         <input
           className="line-input"
-          placeholder="新本地收藏名称（可留空）"
+          placeholder="新收藏夹名称（可留空）"
           value={newName}
           onChange={(event) => setNewName(event.currentTarget.value)}
         />
       </div>
 
       {artworkIds.length === 1 && initial.size > 0 && (
-        <p className="mt-2 text-micro text-text-3">取消勾选即可从该本地收藏移除。</p>
+        <p className="mt-2 text-micro text-text-3">取消勾选即可从该收藏夹移除。</p>
       )}
       {error && <p className="mt-2 text-micro text-danger">{error}</p>}
     </Dialog>

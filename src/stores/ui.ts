@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type ViewKey = "gallery" | "authors" | "tags" | "favorites" | "subs" | "local";
+export type ViewKey = "gallery" | "authors" | "tags" | "favorites" | "bookmarkSubs" | "local";
 export type Theme = "light" | "dark" | "system";
 export type TriState = "all" | "hide" | "only";
 export type SortKey = "first_seen" | "create_date" | "title" | "pixiv_id" | "random";
@@ -34,11 +34,9 @@ export interface ScanTask {
   current: number;
   total: number;
   imported: number;
-  /** 订阅下载：该订阅还没下完的队列总量 */
-  backlog?: number;
   message: string;
-  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 / 同步收藏 / 校验图片 / 更新头像 */
-  kind?: "scan" | "sync" | "subs" | "favorites" | "repair" | "avatars";
+  /** 浮窗标题用：扫描 / 同步元数据 / 订阅下载 */
+  kind?: "scan" | "sync" | "subs";
 }
 
 /** 任务完成后的收尾结果 */
@@ -92,14 +90,6 @@ interface UiState {
   ai: TriState;
   gif: TriState;
   deletedOnly: boolean;
-  /** 「随机」按钮触发的一次性乱序；只递增，不参与排序下拉框 */
-  shuffleToken: number;
-  /** 标签页：随机标签展示在顶栏，点一次换一个并自动勾选 */
-  randomTag: { name: string; label: string; count: number } | null;
-  /** 标签页：最近点过的标签，最多 7 个 */
-  tagHistory: { name: string; label: string }[];
-  /** 标签页：没勾选标签时，图片区是否默认展示全部作品 */
-  showAllTagsDefault: boolean;
 
   setView: (view: ViewKey) => void;
   toggleLayout: () => void;
@@ -115,10 +105,6 @@ interface UiState {
   cycleTri: (which: "r18" | "ai" | "gif") => void;
   toggleDeletedOnly: () => void;
   clearFilters: () => void;
-  requestShuffle: () => void;
-  setRandomTag: (tag: { name: string; label: string; count: number } | null) => void;
-  pushTagHistory: (tag: { name: string; label: string }) => void;
-  toggleShowAllTagsDefault: () => void;
 }
 
 export const useUi = create<UiState>()(
@@ -146,16 +132,8 @@ export const useUi = create<UiState>()(
       ai: "all",
       gif: "all",
       deletedOnly: false,
-      shuffleToken: 0,
-      randomTag: null,
-      tagHistory: [],
-      showAllTagsDefault: false,
 
-      // 切换页面时清掉搜索词：顶栏搜索的搜索范围会跟着页面变
-      setView: (view) =>
-        set((state) =>
-          state.view === view ? { view } : { view, q: "" },
-        ),
+      setView: (view) => set({ view }),
       toggleLayout: () =>
         set((state) => ({ layout: state.layout === "grid" ? "masonry" : "grid" })),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -168,7 +146,7 @@ export const useUi = create<UiState>()(
       toggleSafeMode: () => set((s) => ({ safeMode: !s.safeMode })),
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 
-      // 查看器里点标签/本地收藏：先切视图，再把目标交给对应视图消费
+      // 查看器里点标签/收藏夹：先切视图，再把目标交给对应视图消费
       openTag: (name) =>
         set({ view: "tags", pendingTag: name, pendingFavorite: null, pendingAuthor: null }),
       openFavorite: (id, name) =>
@@ -207,29 +185,15 @@ export const useUi = create<UiState>()(
       cycleTri: (which) => set((s) => ({ [which]: nextTriState(s[which]) }) as Pick<UiState, typeof which>),
       toggleDeletedOnly: () => set((s) => ({ deletedOnly: !s.deletedOnly })),
       clearFilters: () => set({ q: "", r18: "all", ai: "all", gif: "all", deletedOnly: false }),
-      requestShuffle: () => set((s) => ({ shuffleToken: s.shuffleToken + 1 })),
-      setRandomTag: (randomTag) => set({ randomTag }),
-      pushTagHistory: ({ name, label }) =>
-        set((s) => ({
-          tagHistory: [
-            { name, label },
-            ...s.tagHistory.filter((item) => item.name !== name),
-          ].slice(0, 7),
-        })),
-      toggleShowAllTagsDefault: () =>
-        set((s) => ({ showAllTagsDefault: !s.showAllTagsDefault })),
     }),
     {
       name: "pixiv-archive-ui",
-      // 主题/侧栏/排序跨重启保持；其它筛选条件每次从默认值开始
+      // 折叠状态、主题、安全模式需要跨重启保持，筛选条件每次从默认值开始
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
         safeMode: state.safeMode,
         layout: state.layout,
-        sort: state.sort,
-        order: state.order,
-        tagHistory: state.tagHistory,
       }),
     },
   ),

@@ -163,11 +163,11 @@ pub fn apply_illust(conn: &mut Connection, artwork_id: i64, data: &IllustData) -
         "UPDATE artworks SET
             title = ?1, description = ?2, author_id = ?3, author_name = ?4,
             create_date = ?5, page_count = ?6, width = ?7, height = ?8,
-            ai_type = ?9, pixiv_status = ?10,
+            ai_type = ?9, pixiv_status = 'active',
             last_synced = datetime('now'),
             sync_error = NULL, sync_error_kind = NULL,
             sync_attempts = 0, next_retry_at = NULL
-         WHERE id = ?11",
+         WHERE id = ?10",
         params![
             data.title,
             data.description,
@@ -178,7 +178,6 @@ pub fn apply_illust(conn: &mut Connection, artwork_id: i64, data: &IllustData) -
             data.width,
             data.height,
             data.ai_type,
-            if data.visible { "active" } else { "deleted" },
             artwork_id,
         ],
     )?;
@@ -354,11 +353,6 @@ async fn sync_one(
 ) -> AppResult<SyncOutcome> {
     match client.illust_detail(target.pixiv_id).await {
         Ok(data) => {
-            // visible=false：已删除或作者设为非公开，API 仍返回详情但图片是占位图
-            if !data.visible {
-                mark_deleted(conn, target.id)?;
-                return Ok(SyncOutcome::Deleted);
-            }
             // 头像判定要看 apply_illust 之前的旧地址，所以先查再传值
             // （不能直接传 &Connection，会让 command 的 future 失去 Send）
             let stored_avatar: Option<String> = conn
@@ -497,7 +491,6 @@ mod tests {
             author_avatar: Some("https://i.pximg.net/avatar.jpg".to_string()),
             create_date: Some("2024-01-02T03:04:05+09:00".to_string()),
             page_count: 2,
-            visible: true,
             width: Some(1200),
             height: Some(800),
             ai_type: 2,
