@@ -6,6 +6,9 @@ interface DialogProps {
   children?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** 可选的第三个按钮，例如「不保存」 */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
   danger?: boolean;
   busy?: boolean;
   onConfirm: () => void;
@@ -25,6 +28,8 @@ export function Dialog({
   children,
   confirmLabel = "确认",
   cancelLabel = "取消",
+  secondaryLabel,
+  onSecondary,
   danger = false,
   busy = false,
   onConfirm,
@@ -92,6 +97,11 @@ export function Dialog({
           <button type="button" className="btn" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </button>
+          {secondaryLabel && onSecondary && (
+            <button type="button" className="btn" onClick={onSecondary} disabled={busy}>
+              {secondaryLabel}
+            </button>
+          )}
           <button
             type="button"
             className={danger ? "btn btn-danger" : "btn"}

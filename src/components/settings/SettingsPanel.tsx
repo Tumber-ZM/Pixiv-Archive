@@ -21,6 +21,17 @@ import type {
 const TABS = ["基础", "网络", "数据迁移", "关于"] as const;
 type Tab = (typeof TABS)[number];
 
+/** 已保存的设置快照，用来判断有没有未保存的修改 */
+interface SettingsSnapshot {
+  dir: string;
+  mode: string;
+  proxy: string;
+  mirror: string;
+  delay: string;
+  concurrency: string;
+  checkOnStart: boolean;
+}
+
 function formatSize(bytes: number | undefined): string {
   if (!bytes) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
@@ -34,6 +45,8 @@ function formatSize(bytes: number | undefined): string {
  *
  * 基础：图片目录；网络：连接模式 / 代理 / 镜像 / 请求间隔 / token；
  * 数据迁移：导出/导入数据包、导入旧项目数据、重新关联图片路径。
+ *
+ * 所有页签的字段统一在底部「保存」提交；有未保存修改时关闭会先确认。
  */
 export function SettingsPanel() {
   const open = useUi((state) => state.settingsOpen);
@@ -45,6 +58,10 @@ export function SettingsPanel() {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 已保存的快照；为 null 表示还没加载完 */
+  const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
+  /** 有未保存修改时点关闭，先弹确认框 */
+  const [closePrompt, setClosePrompt] = useState(false);
   /** 「检查私密收藏」的诊断输出 */
   const [selfCheck, setSelfCheck] = useState<string | null>(null);
   const [selfChecking, setSelfChecking] = useState(false);
@@ -55,7 +72,6 @@ export function SettingsPanel() {
   const [mirror, setMirror] = useState("");
   const [token, setToken] = useState("");
   const [hasToken, setHasToken] = useState(false);
-  const [netSaved, setNetSaved] = useState(false);
   const [delay, setDelay] = useState("200");
   const [concurrency, setConcurrency] = useState("2");
 
@@ -82,16 +98,33 @@ export function SettingsPanel() {
     call<SettingsView>(CMD.getSettings)
       .then((view) => {
         if (cancelled) return;
-        setDir(view.image_source_dir ?? "");
-        setMode(["direct", "proxy", "system"].includes(view.mode) ? view.mode : "direct");
-        setProxy(view.proxy ?? "");
-        setMirror(view.image_mirror ?? "");
-        setDelay(String(view.sync_delay_ms));
-        setConcurrency(String(view.image_concurrency));
+        const dirValue = view.image_source_dir ?? "";
+        const modeValue = ["direct", "proxy", "system"].includes(view.mode)
+          ? view.mode
+          : "direct";
+        const proxyValue = view.proxy ?? "";
+        const mirrorValue = view.image_mirror ?? "";
+        const delayValue = String(view.sync_delay_ms);
+        const concurrencyValue = String(view.image_concurrency);
+        setDir(dirValue);
+        setMode(modeValue);
+        setProxy(proxyValue);
+        setMirror(mirrorValue);
+        setDelay(delayValue);
+        setConcurrency(concurrencyValue);
         setCheckOnStart(view.check_update_on_start);
         setHasToken(view.has_token);
         setToken("");
         setError(null);
+        setSnapshot({
+          dir: dirValue.trim(),
+          mode: modeValue,
+          proxy: proxyValue.trim(),
+          mirror: mirrorValue.trim(),
+          delay: delayValue,
+          concurrency: concurrencyValue,
+          checkOnStart: view.check_update_on_start,
+        });
       })
       .catch((reason: unknown) => {
         if (!cancelled) setError(isAppError(reason) ? reason.message : String(reason));
@@ -111,15 +144,6 @@ export function SettingsPanel() {
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, setOpen]);
-
   // 打开系统目录选择器；用户取消就保持原值
   const pick = async () => {
     try {
@@ -133,52 +157,105 @@ export function SettingsPanel() {
     }
   };
 
-  const save = async () => {
+  /** 统一保存：所有页签的字段一次提交 */
+  const saveAll = async (): Promise<boolean> => {
     setBusy(true);
     setError(null);
-    try {
-      const trimmed = dir.trim();
-      await call(CMD.saveSettings, { input: { image_source_dir: trimmed } });
-      setDir(trimmed);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    } catch (reason: unknown) {
-      setError(isAppError(reason) ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // token 留空表示「不修改」，避免用户在别的页签点保存时被误清空
-  const saveNetwork = async () => {
-    setBusy(true);
-    setError(null);
+    const nextDir = dir.trim();
+    const nextDelay = Math.max(0, Math.floor(Number(delay) || 0));
+    const nextConcurrency = Math.min(8, Math.max(1, Math.floor(Number(concurrency) || 2)));
+    const nextToken = token.trim();
     try {
       const input: SettingsInput = {
+        image_source_dir: nextDir,
         mode,
         proxy: proxy.trim(),
         image_mirror: mirror.trim(),
         // 同步 / 订阅下载共用的请求间隔，0 = 不限速
-        sync_delay_ms: Math.max(0, Math.floor(Number(delay) || 0)),
-        image_concurrency: Math.min(8, Math.max(1, Math.floor(Number(concurrency) || 2))),
+        sync_delay_ms: nextDelay,
+        image_concurrency: nextConcurrency,
+        check_update_on_start: checkOnStart,
       };
-      if (token.trim()) input.refresh_token = token.trim();
+      // token 留空表示「不修改」，避免误清空
+      if (nextToken) input.refresh_token = nextToken;
 
       await call(CMD.saveSettings, { input });
-      if (token.trim()) {
+
+      setDir(nextDir);
+      setDelay(String(nextDelay));
+      setConcurrency(String(nextConcurrency));
+      setToken("");
+      setSnapshot({
+        dir: nextDir,
+        mode,
+        proxy: proxy.trim(),
+        mirror: mirror.trim(),
+        delay: String(nextDelay),
+        concurrency: String(nextConcurrency),
+        checkOnStart,
+      });
+      if (nextToken) {
         setHasToken(true);
         // 后端保存 token 成功后会自动把当前账号加进「收藏订阅」，通知列表重新取数
         bumpData();
       }
-      setToken("");
-      setNetSaved(true);
-      setTimeout(() => setNetSaved(false), 1500);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      return true;
     } catch (reason: unknown) {
       setError(isAppError(reason) ? reason.message : String(reason));
+      return false;
     } finally {
       setBusy(false);
     }
   };
+
+  /** 有没有未保存的修改（token 输入框非空也算，因为它会被提交） */
+  const dirty =
+    snapshot !== null &&
+    (dir.trim() !== snapshot.dir ||
+      mode !== snapshot.mode ||
+      proxy.trim() !== snapshot.proxy ||
+      mirror.trim() !== snapshot.mirror ||
+      delay.trim() !== snapshot.delay ||
+      concurrency.trim() !== snapshot.concurrency ||
+      checkOnStart !== snapshot.checkOnStart ||
+      token.trim() !== "");
+
+  /** 关闭入口统一走这里：有未保存修改先确认 */
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty) {
+      setClosePrompt(true);
+      return;
+    }
+    setOpen(false);
+  };
+
+  const discardAndClose = () => {
+    setClosePrompt(false);
+    setToken("");
+    setOpen(false);
+  };
+
+  const saveAndClose = async () => {
+    const ok = await saveAll();
+    setClosePrompt(false);
+    if (ok) setOpen(false);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      // 关闭确认框 / 导入确认框自己处理 Esc，这里不要再抢
+      if (event.key !== "Escape" || closePrompt || pendingZip !== null || pendingLegacy) return;
+      requestClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+    // requestClose 依赖 open / closePrompt / dirty，这几项已列入
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, closePrompt, dirty, pendingZip, pendingLegacy]);
 
   // 诊断「我的私密收藏」：认不出账号 / 接口不给数据，一次说清
   const diagnoseSelf = async () => {
@@ -349,15 +426,6 @@ export function SettingsPanel() {
     }
   };
 
-  const toggleCheckOnStart = async (value: boolean) => {
-    setCheckOnStart(value);
-    try {
-      await call(CMD.saveSettings, { input: { check_update_on_start: value } });
-    } catch (reason: unknown) {
-      setUpdateMessage(isAppError(reason) ? reason.message : String(reason));
-    }
-  };
-
   const openRepo = async () => {
     const url = about?.repo_url ?? "https://github.com/Tumber-ZM/Pixiv-Archive";
     try {
@@ -374,7 +442,7 @@ export function SettingsPanel() {
       <div
         className="fixed inset-0 z-40 flex items-center justify-center"
         style={{ background: "var(--color-overlay)" }}
-        onClick={() => setOpen(false)}
+        onClick={requestClose}
         role="dialog"
         aria-modal="true"
         aria-label="设置"
@@ -404,7 +472,7 @@ export function SettingsPanel() {
               <button
                 type="button"
                 className="icon-btn"
-                onClick={() => setOpen(false)}
+                onClick={requestClose}
                 aria-label="关闭设置"
               >
                 <X size={16} />
@@ -430,13 +498,6 @@ export function SettingsPanel() {
                       </button>
                     </div>
                   </label>
-                  <div className="flex items-center gap-3">
-                    <button type="button" className="btn" disabled={busy} onClick={save}>
-                      {busy ? "保存中…" : "保存"}
-                    </button>
-                    {saved && <span className="text-micro text-text-2">已保存</span>}
-                  </div>
-                  {error && <p className="break-all text-micro text-danger">{error}</p>}
                 </div>
               ) : tab === "网络" ? (
                 <div className="flex max-w-[480px] flex-col gap-6">
@@ -530,9 +591,6 @@ export function SettingsPanel() {
                     </label>
 
                     <div className="flex flex-wrap items-center gap-3">
-                      <button type="button" className="btn" disabled={busy} onClick={saveNetwork}>
-                        {busy ? "保存中…" : "保存"}
-                      </button>
                       <button
                         type="button"
                         className="btn"
@@ -542,9 +600,7 @@ export function SettingsPanel() {
                       >
                         {selfChecking ? "检查中…" : "检查私密收藏"}
                       </button>
-                      {netSaved && <span className="text-micro text-text-2">已保存</span>}
                     </div>
-                    {error && <p className="break-all text-micro text-danger">{error}</p>}
                     {selfCheck && <p className="text-micro text-text-2">{selfCheck}</p>}
                   </section>
                 </div>
@@ -555,57 +611,74 @@ export function SettingsPanel() {
                     {formatSize(sizes?.thumbnails)} · 元数据 {formatSize(sizes?.metadata)}
                   </p>
 
-                  <div className="flex flex-col gap-2">
-                    <Tooltip text="把数据库、缩略图、元数据打成一个 zip，换机器时导入即可还原。">
-                      <span className="text-body text-text">导出数据包</span>
-                    </Tooltip>
-                    <button
-                      type="button"
-                      className="btn self-start"
-                      disabled={migrating}
-                      onClick={exportBundle}
-                    >
-                      选择目录并导出…
-                    </button>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <Tooltip text="导入前会自动备份现有库；缩略图/元数据按同名合并覆盖。">
-                      <span className="text-body text-text">导入数据包</span>
-                    </Tooltip>
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-4 rounded-card border border-line px-4 py-3">
+                      <div className="min-w-0">
+                        <Tooltip text="把数据库、缩略图、元数据打成一个 zip，换机器时导入即可还原。">
+                          <span className="text-body text-text">导出数据包</span>
+                        </Tooltip>
+                        <p className="mt-0.5 text-micro text-text-3">数据库、缩略图与元数据打包成 zip</p>
+                      </div>
                       <button
                         type="button"
-                        className="btn"
+                        className="btn shrink-0"
+                        disabled={migrating}
+                        onClick={exportBundle}
+                      >
+                        选择目录并导出…
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4 rounded-card border border-line px-4 py-3">
+                      <div className="min-w-0">
+                        <Tooltip text="导入前会自动备份现有库；缩略图/元数据按同名合并覆盖。">
+                          <span className="text-body text-text">导入数据包</span>
+                        </Tooltip>
+                        <p className="mt-0.5 text-micro text-text-3">替换当前库，执行前自动备份</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn shrink-0"
                         disabled={migrating}
                         onClick={chooseBundle}
                       >
                         选择数据包…
                       </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4 rounded-card border border-line px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-body text-text">重新关联图片路径</p>
+                        <p className="mt-0.5 text-micro text-text-3">图片搬家后按新位置重新关联</p>
+                      </div>
                       <button
                         type="button"
-                        className="btn"
+                        className="btn shrink-0"
                         disabled={migrating}
                         onClick={relinkNow}
                       >
-                        重新关联图片路径
+                        重新关联…
                       </button>
                     </div>
-                    <p className="text-micro text-text-3">导入会替换当前库，执行前自动备份。</p>
-                  </div>
 
-                  <div className="flex flex-col gap-2">
-                    <Tooltip text="先选择旧项目所在目录，再复制其中的 archive.db、缩略图与元数据（旧目录只读）。">
-                      <span className="text-body text-text">旧项目数据</span>
-                    </Tooltip>
-                    <button
-                      type="button"
-                      className="btn self-start"
-                      disabled={migrating}
-                      onClick={pickLegacySource}
-                    >
-                      导入旧项目数据…
-                    </button>
+                    <div className="flex items-center justify-between gap-4 rounded-card border border-line px-4 py-3">
+                      <div className="min-w-0">
+                        <Tooltip text="先选择旧项目所在目录，再复制其中的 archive.db、缩略图与元数据（旧目录只读）。">
+                          <span className="text-body text-text">导入旧项目数据</span>
+                        </Tooltip>
+                        <p className="mt-0.5 text-micro text-text-3">
+                          从旧目录复制 archive.db、缩略图与元数据
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn shrink-0"
+                        disabled={migrating}
+                        onClick={pickLegacySource}
+                      >
+                        选择目录…
+                      </button>
+                    </div>
                   </div>
 
                   {migrating && <p className="text-micro text-text-2">处理中…</p>}
@@ -617,7 +690,7 @@ export function SettingsPanel() {
                   )}
                 </div>
               ) : (
-                <div className="flex max-w-[520px] flex-col gap-5">
+                <div className="flex max-w-[480px] flex-col gap-6">
                   <div>
                     <p className="text-subheading text-text">Pixiv Archive</p>
                     <p className="mt-1 text-micro text-text-2">
@@ -625,19 +698,17 @@ export function SettingsPanel() {
                     </p>
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    <span className="text-body text-text">GitHub 仓库</span>
-                    <button type="button" className="btn self-start" onClick={openRepo}>
-                      打开仓库
-                    </button>
-                    <p className="break-all text-micro text-text-3">
-                      {about?.repo_url ?? "https://github.com/Tumber-ZM/Pixiv-Archive"}
-                    </p>
+                  <div className="grid grid-cols-[72px_minmax(0,1fr)] items-start gap-x-4 gap-y-3">
+                    <span className="text-micro text-text-3">数据目录</span>
+                    <span className="break-all text-micro text-text-2">
+                      {about?.data_dir ?? "…"}
+                    </span>
+                    <span className="text-micro text-text-3">许可证</span>
+                    <span className="text-micro text-text-2">GPL-3.0</span>
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    <span className="text-body text-text">检查更新</span>
-                    <div className="flex items-center gap-3">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         className="btn"
@@ -645,6 +716,9 @@ export function SettingsPanel() {
                         onClick={checkNow}
                       >
                         {checking ? "检查中…" : "检查更新"}
+                      </button>
+                      <button type="button" className="btn" onClick={openRepo}>
+                        打开仓库
                       </button>
                       {updateMessage && (
                         <span className="text-micro text-text-2">{updateMessage}</span>
@@ -654,25 +728,28 @@ export function SettingsPanel() {
                       <input
                         type="checkbox"
                         checked={checkOnStart}
-                        onChange={(event) => toggleCheckOnStart(event.currentTarget.checked)}
+                        onChange={(event) => setCheckOnStart(event.currentTarget.checked)}
                       />
                       启动时自动检查更新
                     </label>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <span className="text-body text-text">数据目录</span>
-                    <p className="break-all text-micro text-text-2">
-                      {about?.data_dir ?? "…"}
+                    <p className="break-all text-micro text-text-3">
+                      {about?.repo_url ?? "https://github.com/Tumber-ZM/Pixiv-Archive"}
                     </p>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <span className="text-body text-text">许可证</span>
-                    <p className="text-micro text-text-2">GPL-3.0</p>
                   </div>
                 </div>
               )}
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-line px-6 py-4">
+              {error && <span className="mr-auto break-all text-micro text-danger">{error}</span>}
+              {saved && <span className="text-micro text-text-2">已保存</span>}
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || !dirty}
+                onClick={() => void saveAll()}
+              >
+                {busy ? "保存中…" : "保存"}
+              </button>
             </div>
           </div>
         </div>
@@ -719,6 +796,19 @@ export function SettingsPanel() {
         {migrationError && (
           <p className="mt-2 break-all text-micro text-danger">{migrationError}</p>
         )}
+      </Dialog>
+
+      <Dialog
+        open={closePrompt}
+        title="有未保存的修改"
+        confirmLabel="保存并关闭"
+        secondaryLabel="不保存"
+        onSecondary={discardAndClose}
+        onCancel={() => setClosePrompt(false)}
+        onConfirm={saveAndClose}
+        busy={busy}
+      >
+        <p className="text-body text-text">当前设置还没保存，直接关闭会丢掉这次的修改。</p>
       </Dialog>
     </>
   );
