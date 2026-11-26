@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { Dialog } from "../dialog/Dialog";
+import { Tooltip } from "../common/Tooltip";
 import { CMD, call, isAppError } from "../../lib/ipc";
 import { useUi } from "../../stores/ui";
 import type {
@@ -412,9 +413,11 @@ export function SettingsPanel() {
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
               {tab === "基础" ? (
-                <div className="flex max-w-[420px] flex-col gap-4">
+                <div className="flex max-w-[480px] flex-col gap-5">
                   <label className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">图片目录</span>
+                    <Tooltip text="扫描图片时直接从这个目录读取；「收藏订阅」下载的图片也落到这里。文件名需包含 7–10 位 Pixiv 作品 ID，多图作品请用 123123_p0、123123_p1 这样的页码后缀命名，否则会被当作本地文件单独入库。">
+                      <span className="text-body text-text">图片目录</span>
+                    </Tooltip>
                     <div className="flex items-center gap-2">
                       <input
                         className="line-input flex-1"
@@ -427,147 +430,149 @@ export function SettingsPanel() {
                       </button>
                     </div>
                   </label>
-                  <p className="text-micro text-text-3">
-                    扫描图片时直接从这个目录读取；「收藏订阅」下载的图片也落到这里。
-                  </p>
-                  <p className="text-micro text-text-3">
-                    请确保文件名包含 7–10 位 Pixiv 作品 ID；多图作品请用
-                    123123_p0、123123_p1、123123_p2 这样的页码后缀命名，否则会被当作本地文件单独入库。
-                  </p>
                   <div className="flex items-center gap-3">
                     <button type="button" className="btn" disabled={busy} onClick={save}>
                       {busy ? "保存中…" : "保存"}
                     </button>
                     {saved && <span className="text-micro text-text-2">已保存</span>}
-                    {error && <span className="text-micro text-danger">{error}</span>}
                   </div>
+                  {error && <p className="break-all text-micro text-danger">{error}</p>}
                 </div>
               ) : tab === "网络" ? (
-                <div className="flex max-w-[520px] flex-col gap-5">
-                  <label className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">连接模式</span>
-                    <select
-                      className="line-input"
-                      value={mode}
-                      onChange={(event) => setMode(event.currentTarget.value)}
-                    >
-                      <option value="direct">直连（普通 HTTPS）</option>
-                      <option value="proxy">指定代理</option>
-                      <option value="system">跟随系统代理</option>
-                    </select>
-                  </label>
-
-                  {mode === "proxy" && (
+                <div className="flex max-w-[480px] flex-col gap-6">
+                  <section className="flex flex-col gap-4">
+                    <p className="text-micro text-text-3">连接</p>
                     <label className="flex flex-col gap-2">
-                      <span className="text-label text-text-2">代理地址</span>
+                      <span className="text-body text-text">连接模式</span>
+                      <select
+                        className="line-input"
+                        value={mode}
+                        onChange={(event) => setMode(event.currentTarget.value)}
+                      >
+                        <option value="direct">直连（普通 HTTPS）</option>
+                        <option value="proxy">指定代理</option>
+                        <option value="system">跟随系统代理</option>
+                      </select>
+                    </label>
+
+                    {mode === "proxy" && (
+                      <label className="flex flex-col gap-2">
+                        <span className="text-body text-text">代理地址</span>
+                        <input
+                          className="line-input"
+                          placeholder="http://127.0.0.1:7890"
+                          value={proxy}
+                          onChange={(event) => setProxy(event.currentTarget.value)}
+                        />
+                      </label>
+                    )}
+
+                    <label className="flex flex-col gap-2">
+                      <span className="text-body text-text">图片镜像（可选）</span>
                       <input
                         className="line-input"
-                        placeholder="http://127.0.0.1:7890"
-                        value={proxy}
-                        onChange={(event) => setProxy(event.currentTarget.value)}
+                        placeholder="如 i.example.com，留空则直连官方域名"
+                        value={mirror}
+                        onChange={(event) => setMirror(event.currentTarget.value)}
                       />
                     </label>
-                  )}
+                  </section>
 
-                  <label className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">图片镜像（可选）</span>
-                    <input
-                      className="line-input"
-                      placeholder="如 i.example.com，留空则直连官方域名"
-                      value={mirror}
-                      onChange={(event) => setMirror(event.currentTarget.value)}
-                    />
-                  </label>
+                  <section className="flex flex-col gap-4">
+                    <p className="text-micro text-text-3">下载</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <label className="flex flex-col gap-2">
+                        <Tooltip text="同步元数据与订阅下载每次请求之间的等待时间，默认 200 毫秒；0 表示不限速。">
+                          <span className="text-body text-text">请求间隔（毫秒）</span>
+                        </Tooltip>
+                        <input
+                          className="line-input"
+                          type="number"
+                          min={0}
+                          step={100}
+                          value={delay}
+                          onChange={(event) => setDelay(event.currentTarget.value)}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-2">
+                        <Tooltip text="同时下载的图片数量（1–8），默认 2。数值越大越快，也越容易触发 Pixiv 限流。">
+                          <span className="text-body text-text">同时下载数</span>
+                        </Tooltip>
+                        <input
+                          className="line-input"
+                          type="number"
+                          min={1}
+                          max={8}
+                          step={1}
+                          value={concurrency}
+                          onChange={(event) => setConcurrency(event.currentTarget.value)}
+                        />
+                      </label>
+                    </div>
+                    <p className="text-micro text-text-3">
+                      数值越大下载越快，也越容易触发 Pixiv 限流。
+                    </p>
+                  </section>
 
-                  <label className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">请求间隔（毫秒）</span>
-                    <input
-                      className="line-input"
-                      type="number"
-                      min={0}
-                      step={100}
-                      value={delay}
-                      onChange={(event) => setDelay(event.currentTarget.value)}
-                    />
-                  </label>
-                  <p className="text-micro text-text-3">
-                    同步元数据与订阅下载每次请求之间的等待时间，0 表示不限速，默认 200。
-                  </p>
+                  <section className="flex flex-col gap-4">
+                    <p className="text-micro text-text-3">账号</p>
+                    <label className="flex flex-col gap-2">
+                      <Tooltip text="token 只保存在本机 settings.json；同步元数据与「收藏订阅」下载都需要它。">
+                        <span className="text-body text-text">Pixiv Refresh Token</span>
+                      </Tooltip>
+                      <input
+                        className="line-input"
+                        type="password"
+                        placeholder={hasToken ? "已保存；留空则不修改" : "粘贴 refresh_token"}
+                        value={token}
+                        onChange={(event) => setToken(event.currentTarget.value)}
+                      />
+                    </label>
 
-                  <label className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">同时下载数</span>
-                    <input
-                      className="line-input"
-                      type="number"
-                      min={1}
-                      max={8}
-                      step={1}
-                      value={concurrency}
-                      onChange={(event) => setConcurrency(event.currentTarget.value)}
-                    />
-                  </label>
-                  <p className="text-micro text-text-3">
-                    同时下载的图片数量（1–8），默认 2。越大越快，也越容易触发 Pixiv 限流。
-                  </p>
-
-                  <label className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">Pixiv Refresh Token</span>
-                    <input
-                      className="line-input"
-                      type="password"
-                      placeholder={hasToken ? "已保存；留空则不修改" : "粘贴 refresh_token"}
-                      value={token}
-                      onChange={(event) => setToken(event.currentTarget.value)}
-                    />
-                  </label>
-                  <p className="text-micro text-text-3">
-                    token 只保存在本机 settings.json；同步元数据与「收藏订阅」下载都需要它。
-                  </p>
-
-                  <div className="flex items-center gap-3">
-                    <button type="button" className="btn" disabled={busy} onClick={saveNetwork}>
-                      {busy ? "保存中…" : "保存网络设置"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={selfChecking || busy}
-                      onClick={diagnoseSelf}
-                      title="用已保存的 token 查一下我是谁、私密收藏能读到多少"
-                    >
-                      {selfChecking ? "检查中…" : "检查私密收藏"}
-                    </button>
-                    {netSaved && <span className="text-micro text-text-2">已保存</span>}
-                    {error && <span className="text-micro text-danger">{error}</span>}
-                  </div>
-                  {selfCheck && <p className="text-micro text-text-2">{selfCheck}</p>}
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button type="button" className="btn" disabled={busy} onClick={saveNetwork}>
+                        {busy ? "保存中…" : "保存"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={selfChecking || busy}
+                        onClick={diagnoseSelf}
+                        title="用已保存的 token 查一下我是谁、私密收藏能读到多少"
+                      >
+                        {selfChecking ? "检查中…" : "检查私密收藏"}
+                      </button>
+                      {netSaved && <span className="text-micro text-text-2">已保存</span>}
+                    </div>
+                    {error && <p className="break-all text-micro text-danger">{error}</p>}
+                    {selfCheck && <p className="text-micro text-text-2">{selfCheck}</p>}
+                  </section>
                 </div>
               ) : tab === "数据迁移" ? (
-                <div className="flex max-w-[560px] flex-col gap-5">
+                <div className="flex max-w-[480px] flex-col gap-5">
                   <p className="text-micro text-text-2">
                     当前数据：库 {formatSize(sizes?.db)} · 缩略图{" "}
                     {formatSize(sizes?.thumbnails)} · 元数据 {formatSize(sizes?.metadata)}
                   </p>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">导出数据包</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={migrating}
-                        onClick={exportBundle}
-                      >
-                        选择目录并导出…
-                      </button>
-                    </div>
-                    <p className="text-micro text-text-3">
-                      把数据库、缩略图、元数据打成一个 zip，换机器时导入即可还原。
-                    </p>
+                    <Tooltip text="把数据库、缩略图、元数据打成一个 zip，换机器时导入即可还原。">
+                      <span className="text-body text-text">导出数据包</span>
+                    </Tooltip>
+                    <button
+                      type="button"
+                      className="btn self-start"
+                      disabled={migrating}
+                      onClick={exportBundle}
+                    >
+                      选择目录并导出…
+                    </button>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">导入数据包</span>
+                    <Tooltip text="导入前会自动备份现有库；缩略图/元数据按同名合并覆盖。">
+                      <span className="text-body text-text">导入数据包</span>
+                    </Tooltip>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -586,13 +591,13 @@ export function SettingsPanel() {
                         重新关联图片路径
                       </button>
                     </div>
-                    <p className="text-micro text-text-3">
-                      导入前会自动备份现有库；缩略图/元数据按同名合并覆盖。
-                    </p>
+                    <p className="text-micro text-text-3">导入会替换当前库，执行前自动备份。</p>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">旧项目数据</span>
+                    <Tooltip text="先选择旧项目所在目录，再复制其中的 archive.db、缩略图与元数据（旧目录只读）。">
+                      <span className="text-body text-text">旧项目数据</span>
+                    </Tooltip>
                     <button
                       type="button"
                       className="btn self-start"
@@ -601,9 +606,6 @@ export function SettingsPanel() {
                     >
                       导入旧项目数据…
                     </button>
-                    <p className="text-micro text-text-3">
-                      先选择旧项目所在目录，再复制其中的 archive.db、缩略图与元数据（旧目录只读）。
-                    </p>
                   </div>
 
                   {migrating && <p className="text-micro text-text-2">处理中…</p>}
@@ -624,7 +626,7 @@ export function SettingsPanel() {
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">GitHub 仓库</span>
+                    <span className="text-body text-text">GitHub 仓库</span>
                     <button type="button" className="btn self-start" onClick={openRepo}>
                       打开仓库
                     </button>
@@ -634,7 +636,7 @@ export function SettingsPanel() {
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">检查更新</span>
+                    <span className="text-body text-text">检查更新</span>
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
@@ -659,14 +661,14 @@ export function SettingsPanel() {
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">数据目录</span>
+                    <span className="text-body text-text">数据目录</span>
                     <p className="break-all text-micro text-text-2">
                       {about?.data_dir ?? "…"}
                     </p>
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    <span className="text-label text-text-2">许可证</span>
+                    <span className="text-body text-text">许可证</span>
                     <p className="text-micro text-text-2">GPL-3.0</p>
                   </div>
                 </div>

@@ -96,6 +96,7 @@ a {
   font-weight: var(--fw-body);
   line-height: var(--lh-body);
   background: transparent;
+  white-space: nowrap;
   transition: border-color var(--dur-hover) var(--ease), color var(--dur-hover) var(--ease);
 }
 
