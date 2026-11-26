@@ -166,6 +166,9 @@ pub struct BookmarkSub {
     pub name: Option<String>,
     pub last_pid: Option<i64>,
     pub auto_download: bool,
+    /// `public` = 对方的公开收藏；`private` = 当前登录账号自己的收藏
+    /// （检查时私密与公开两份列表都会翻）
+    pub restrict: String,
     pub last_checked: Option<String>,
     pub last_result: Option<String>,
     pub created_at: String,

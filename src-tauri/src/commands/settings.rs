@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::commands::browse;
 use crate::error::{AppError, AppResult};
 use crate::models::{SettingsInput, SettingsView};
 use crate::platform::paths;
@@ -111,10 +112,13 @@ pub fn get_settings() -> AppResult<SettingsView> {
 }
 
 #[tauri::command]
-pub fn save_settings(app: tauri::AppHandle, input: SettingsInput) -> AppResult<SettingsView> {
+pub async fn save_settings(app: tauri::AppHandle, input: SettingsInput) -> AppResult<SettingsView> {
     use tauri::Manager;
 
     let mut file = read_file()?;
+    // 只有这次真的提交了新 token 才触发「自动订阅自己」：
+    // 改图片目录、主题等设置时不该反复请求 Pixiv。
+    let token_saved = input.refresh_token.is_some();
 
     if let Some(value) = input.image_source_dir {
         file.image_source_dir = non_empty(Some(value));
@@ -156,6 +160,16 @@ pub fn save_settings(app: tauri::AppHandle, input: SettingsInput) -> AppResult<S
     // 否则新目录里的原图会显示为空白（缩略图在 data_dir，本来就放行）
     if let Some(dir) = file.image_source_dir.as_deref() {
         let _ = app.asset_protocol_scope().allow_directory(dir, true);
+    }
+
+    // token 保存成功后，把当前账号加进「收藏订阅」（私密收藏）。
+    // 识别失败（token 无效 / 网络不通）静默跳过，不能让设置保存失败。
+    if token_saved {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            browse::ensure_self_subscription(),
+        )
+        .await;
     }
 
     Ok(to_view(&file))

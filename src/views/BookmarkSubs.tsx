@@ -49,6 +49,8 @@ export function BookmarkSubs() {
   const [refreshKey, setRefreshKey] = useState(0);
   const setScanTask = useUi((state) => state.setScanTask);
   const bumpData = useUi((state) => state.bumpData);
+  // 保存 token 后后端会自动加一条「自己的私密收藏」订阅，这里跟着刷新
+  const dataEpoch = useUi((state) => state.dataEpoch);
 
   const [addOpen, setAddOpen] = useState(false);
   const [userId, setUserId] = useState("");
@@ -59,6 +61,8 @@ export function BookmarkSubs() {
   const [checking, setChecking] = useState<number | null>(null);
   const [checkResult, setCheckResult] = useState<SubResult | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
+  /** 右键「检查」时的目标：用户确认后才走全量检查 */
+  const [fullTarget, setFullTarget] = useState<BookmarkSub | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,7 +82,7 @@ export function BookmarkSubs() {
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, dataEpoch]);
 
   const doPreview = async () => {
     const id = Number(userId.trim());
@@ -137,22 +141,24 @@ export function BookmarkSubs() {
     }
   };
 
-  // 检查单个订阅：拉公开收藏 → 下载新作品 → 入库/缩略图/元数据（后端一条龙）
-  const checkOne = async (row: BookmarkSub) => {
+  // 检查单个订阅：拉公开收藏 → 下载新作品 → 入库/缩略图/元数据（后端一条龙）。
+  // full=true 是右键触发的全量检查：从第一页翻到最后一页，不因库里已齐全而提前停止。
+  const checkOne = async (row: BookmarkSub, full: boolean) => {
     setChecking(row.pixiv_user_id);
     setCheckError(null);
+    setFullTarget(null);
     // 先立起浮窗：拉收藏页之前网络请求可能有几秒，用户要能随时取消
     setScanTask({
       current: 0,
       total: 0,
       imported: 0,
-      message: "准备检查订阅…",
+      message: full ? "准备全量检查订阅…" : "准备检查订阅…",
       kind: "subs",
     });
     try {
       const result = await call<SubResult>(CMD.checkBookmarkSub, {
         pixivUserId: row.pixiv_user_id,
-        full: false,
+        full,
       });
       setCheckResult(result);
       bumpData();
@@ -212,6 +218,14 @@ export function BookmarkSubs() {
               <div className="min-w-0 flex-1">
                 <p className="truncate-1 text-body text-text">
                   {displayName(row.name, row.pixiv_user_id)}
+                  {row.restrict === "private" && (
+                    <span
+                      className="ml-2 inline-block rounded border border-line px-1 align-middle text-micro text-text-3"
+                      title="本账号自己的收藏：检查时会同时翻私密与公开两份列表"
+                    >
+                      私密
+                    </span>
+                  )}
                 </p>
                 <p className="mt-1 text-micro text-text-2">
                   上次检查：{formatTime(row.last_checked)}
@@ -225,8 +239,12 @@ export function BookmarkSubs() {
                 type="button"
                 className="btn"
                 disabled={checking !== null}
-                title="检查该用户的公开收藏并下载新作品"
-                onClick={() => checkOne(row)}
+                title="左键检查新作品；右键全量检查（翻完所有收藏页，需确认）"
+                onClick={() => checkOne(row, false)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setFullTarget(row);
+                }}
               >
                 {checking === row.pixiv_user_id ? "检查中…" : "检查"}
               </button>
@@ -297,6 +315,23 @@ export function BookmarkSubs() {
           将取消对「
           {removeTarget ? displayName(removeTarget.name, removeTarget.pixiv_user_id) : ""}
           」的订阅。已下载的作品会保留。
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={fullTarget !== null}
+        title="全量检查"
+        confirmLabel="全量检查"
+        onCancel={() => setFullTarget(null)}
+        onConfirm={() => {
+          if (fullTarget) void checkOne(fullTarget, true);
+        }}
+      >
+        <p className="text-body text-text">
+          {fullTarget ? displayName(fullTarget.name, fullTarget.pixiv_user_id) : ""}
+        </p>
+        <p className="mt-2 text-micro text-text-2">
+          会从收藏第一页翻到最后一页（最多 100 页），不因库里已齐全而提前停止；已经齐全的作品不会重新下载。收藏量大时耗时较长，过程中可以取消。
         </p>
       </Dialog>
 

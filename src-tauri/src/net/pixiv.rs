@@ -83,6 +83,9 @@ pub struct BookmarkIllust {
 struct CachedToken {
     access_token: String,
     expires_at: Instant,
+    /// 换票响应里的 `response.user`：用来确认「当前登录的是谁」
+    user_id: Option<i64>,
+    user_name: Option<String>,
 }
 
 pub struct PixivClient {
@@ -90,6 +93,8 @@ pub struct PixivClient {
     refresh_token: String,
     mirror: Option<String>,
     token: Mutex<Option<CachedToken>>,
+    /// 最近一次换票响应的字段结构（不含值），识别账号失败时用来定位
+    auth_shape: Mutex<Option<AuthShape>>,
     /// 图片下载并发上限（设置 `image_concurrency`，默认 2）
     image_permits: Arc<Semaphore>,
     /// API 节流：保存「下一次允许发起请求的时刻」，串行调用不会挤在一起
@@ -97,6 +102,17 @@ pub struct PixivClient {
     api_interval: Duration,
     /// 连续被限流的次数：0–4，用于自动放慢请求
     rate_penalty: Mutex<u32>,
+}
+
+/// 换票响应的骨架，只记录字段名与是否存在，便于排查「为什么没有 user」。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AuthShape {
+    pub has_response: bool,
+    pub response_keys: Vec<String>,
+    pub has_user: bool,
+    pub user_keys: Vec<String>,
+    /// `user.id` 的类型（`number` / `string` / 缺失）
+    pub user_id_kind: String,
 }
 
 impl PixivClient {
@@ -111,6 +127,7 @@ impl PixivClient {
             refresh_token,
             mirror: settings.image_mirror.clone(),
             token: Mutex::new(None),
+            auth_shape: Mutex::new(None),
             image_permits: Arc::new(Semaphore::new(concurrency)),
             api_gate: Mutex::new(Instant::now()),
             api_interval: Duration::from_millis(settings.sync_delay_ms as u64),
@@ -224,15 +241,59 @@ impl PixivClient {
             .pointer("/response/expires_in")
             .and_then(Value::as_u64)
             .unwrap_or(3600);
+        // 换票响应带 `response.user`：顺手记住当前账号，用于识别「我的私密收藏」。
+        // 同时记下响应骨架，万一没有 user 也能在诊断里说清缺了什么。
+        let shape = auth_shape_of(&body);
+        let user_id = body.pointer("/response/user/id").and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        });
+        let user_name = body
+            .pointer("/response/user/name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        if let Ok(mut guard) = self.auth_shape.lock() {
+            *guard = Some(shape);
+        }
 
         if let Ok(mut guard) = self.token.lock() {
             *guard = Some(CachedToken {
                 access_token: access_token.clone(),
                 expires_at: Instant::now()
                     + Duration::from_secs(expires_in.saturating_sub(TOKEN_MARGIN).max(60)),
+                user_id,
+                user_name,
             });
         }
         Ok(access_token)
+    }
+
+    /// 当前 refresh token 对应的账号。换票响应里的 `response.user` 就是自己。
+    pub async fn self_user(&self) -> AppResult<(i64, Option<String>)> {
+        if let Some(user) = self.cached_self_user() {
+            return Ok(user);
+        }
+        self.access_token().await?;
+        self.cached_self_user().ok_or_else(|| {
+            AppError::new(
+                "AUTH",
+                "无法识别当前登录的 Pixiv 账号：换票响应里没有 response.user，请在设置里重新保存 Refresh Token",
+            )
+        })
+    }
+
+    /// 最近一次换票响应的字段结构，用于诊断「为什么没有 user」。
+    pub fn auth_shape(&self) -> Option<AuthShape> {
+        self.auth_shape.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    fn cached_self_user(&self) -> Option<(i64, Option<String>)> {
+        let guard = self.token.lock().ok()?;
+        let cached = guard.as_ref()?;
+        Some((cached.user_id?, cached.user_name.clone()))
     }
 
     /// 拉作品详情并转成同步用的结构。
@@ -289,10 +350,12 @@ impl PixivClient {
         Ok(parse_illust(illust))
     }
 
-    /// 取用户公开收藏列表的一页。`next_url` 传上一页返回的翻页地址。
-    pub async fn user_bookmarks_public(
+    /// 取用户收藏列表的一页。`restrict` 传 `public` / `private`；
+    /// private 只对 token 所属账号自己有效（读别人的会 404）。
+    pub async fn user_bookmarks(
         &self,
         user_id: i64,
+        restrict: &str,
         next_url: Option<&str>,
     ) -> AppResult<(Vec<BookmarkIllust>, Option<String>)> {
         self.throttle_api().await;
@@ -309,7 +372,7 @@ impl PixivClient {
         if next_url.is_none() {
             request = request.query(&[
                 ("user_id", user_id.to_string()),
-                ("restrict", "public".to_string()),
+                ("restrict", restrict.to_string()),
             ]);
         }
 
@@ -319,6 +382,12 @@ impl PixivClient {
             .map_err(|error| AppError::internal(format!("请求收藏列表失败：{error}")))?;
 
         let status = response.status();
+        if status == reqwest::StatusCode::FORBIDDEN && restrict == "private" {
+            return Err(AppError::new(
+                "AUTH",
+                "私密收藏被拒绝（HTTP 403）：只能读取当前登录账号自己的私密收藏",
+            ));
+        }
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AppError::new(
                 "AUTH",
@@ -326,7 +395,13 @@ impl PixivClient {
             ));
         }
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(AppError::not_found("该用户不存在，或收藏列表不是公开的"));
+            return if restrict == "private" {
+                Err(AppError::not_found(
+                    "读不到私密收藏（HTTP 404）：Pixiv 只允许当前登录账号读取自己的私密收藏",
+                ))
+            } else {
+                Err(AppError::not_found("该用户不存在，或收藏列表不是公开的"))
+            };
         }
         if !status.is_success() {
             return Err(AppError::internal(format!(
@@ -762,6 +837,42 @@ impl PixivClient {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .map(str::to_string))
+    }
+}
+
+/// 换票响应里实际出现了什么字段（只记名字，不含值）。
+fn auth_shape_of(body: &Value) -> AuthShape {
+    let Some(response) = body.get("response").filter(|value| value.is_object()) else {
+        return AuthShape {
+            has_response: false,
+            user_id_kind: "missing".to_string(),
+            ..Default::default()
+        };
+    };
+
+    let response_keys = response
+        .as_object()
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default();
+    let user = response.get("user");
+    let user_keys = user
+        .and_then(Value::as_object)
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default();
+    let user_id_kind = match user.and_then(|value| value.get("id")) {
+        Some(Value::Number(_)) => "number",
+        Some(Value::String(_)) => "string",
+        Some(Value::Null) | None => "missing",
+        Some(_) => "other",
+    }
+    .to_string();
+
+    AuthShape {
+        has_response: true,
+        response_keys,
+        has_user: user.is_some(),
+        user_keys,
+        user_id_kind,
     }
 }
 

@@ -10,7 +10,7 @@ use crate::commands::task::TaskCancel;
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::models::{AuthorRow, BookmarkSub, ListQuery, Page, SubPreview, TagRow};
-use crate::net::pixiv::PixivClient;
+use crate::net::pixiv::{AuthShape, PixivClient};
 use crate::platform::paths;
 
 fn open_library() -> AppResult<Connection> {
@@ -235,11 +235,13 @@ fn sub_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookmarkSub> {
         last_checked: row.get(4)?,
         last_result: row.get(5)?,
         created_at: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+        restrict: row
+            .get::<_, Option<String>>(7)?
+            .unwrap_or_else(|| "public".to_string()),
     })
 }
 
-const SUB_COLUMNS: &str =
-    "pixiv_user_id, name, last_pid, COALESCE(auto_download, 1), last_checked, last_result, created_at";
+const SUB_COLUMNS: &str = "pixiv_user_id, name, last_pid, COALESCE(auto_download, 1), last_checked, last_result, created_at, COALESCE(restrict, 'public')";
 
 pub fn list_subs_with(conn: &Connection) -> AppResult<Vec<BookmarkSub>> {
     let mut stmt =
@@ -261,15 +263,125 @@ fn sub_of(conn: &Connection, pixiv_user_id: i64) -> AppResult<BookmarkSub> {
     .map_err(|_| AppError::not_found(format!("订阅 {pixiv_user_id} 不存在")))
 }
 
-pub fn add_sub_with(conn: &Connection, pixiv_user_id: i64) -> AppResult<BookmarkSub> {
+pub fn add_sub_with(conn: &Connection, pixiv_user_id: i64, restrict: &str) -> AppResult<BookmarkSub> {
     if pixiv_user_id <= 0 {
         return Err(AppError::invalid("Pixiv 用户 ID 必须是正整数"));
     }
+    // 已存在时不覆盖：用户可能手动改过自动下载开关
     conn.execute(
-        "INSERT OR IGNORE INTO bookmark_subs (pixiv_user_id, auto_download) VALUES (?1, 1)",
-        [pixiv_user_id],
+        "INSERT OR IGNORE INTO bookmark_subs (pixiv_user_id, auto_download, restrict)
+         VALUES (?1, 1, ?2)",
+        rusqlite::params![pixiv_user_id, restrict],
     )?;
+    // 之前识别不出「自己」时可能是按 public 加的；现在确认是本账号就升级成 private，
+    // 否则私密收藏永远拉不到。
+    if restrict == "private" {
+        let _ = conn.execute(
+            "UPDATE bookmark_subs SET restrict = 'private'
+             WHERE pixiv_user_id = ?1 AND COALESCE(restrict, 'public') <> 'private'",
+            [pixiv_user_id],
+        );
+    }
     sub_of(conn, pixiv_user_id)
+}
+
+/// 保存 Refresh Token 后调用：把当前账号加进「收藏订阅」（私密收藏）。
+///
+/// 已存在时保持原状：不覆盖用户改过的自动下载开关，也不把它降级成 public。
+/// 返回是否新建了一条。
+pub fn ensure_self_sub(conn: &Connection, pixiv_user_id: i64, name: Option<&str>) -> AppResult<bool> {
+    if pixiv_user_id <= 0 {
+        return Ok(false);
+    }
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO bookmark_subs (pixiv_user_id, name, restrict, auto_download)
+         VALUES (?1, ?2, 'private', 1)",
+        rusqlite::params![pixiv_user_id, name],
+    )?;
+    if inserted == 0 {
+        // 已存在：确保是 private（旧版本可能按 public 加过），并补上缺失的昵称。
+        let _ = conn.execute(
+            "UPDATE bookmark_subs SET restrict = 'private'
+             WHERE pixiv_user_id = ?1 AND COALESCE(restrict, 'public') <> 'private'",
+            [pixiv_user_id],
+        );
+        if let Some(name) = name.map(str::trim).filter(|value| !value.is_empty()) {
+            let _ = conn.execute(
+                "UPDATE bookmark_subs SET name = ?1
+                 WHERE pixiv_user_id = ?2 AND COALESCE(TRIM(name), '') = ''",
+                rusqlite::params![name, pixiv_user_id],
+            );
+        }
+    }
+    Ok(inserted > 0)
+}
+
+/// 保存 token 后调用：识别当前账号，确保「收藏订阅」里有它的一条私密订阅。
+///
+/// 识别失败（token 无效 / 网络不通 / 库还没初始化）返回 false，调用方静默吞掉。
+pub async fn ensure_self_subscription() -> bool {
+    let Ok(client) = PixivClient::from_settings() else {
+        return false;
+    };
+    let Ok((user_id, name)) = client.self_user().await else {
+        return false;
+    };
+    let Ok(conn) = open_library() else {
+        return false;
+    };
+    ensure_self_sub(&conn, user_id, name.as_deref()).unwrap_or(false)
+}
+
+/// 「检查私密收藏」的诊断结果：一次看清是认不出账号，还是接口不给数据。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct SelfBookmarkCheck {
+    pub user_id: Option<i64>,
+    pub name: Option<String>,
+    /// 识别当前账号失败的原因
+    pub error: Option<String>,
+    pub private_count: Option<usize>,
+    pub private_error: Option<String>,
+    pub public_count: Option<usize>,
+    pub public_error: Option<String>,
+    /// 现有订阅（含 restrict），用来确认自己的那条有没有被识别成 private
+    pub subs: Vec<BookmarkSub>,
+    /// 换票响应骨架：账号识别失败时看它缺了什么
+    pub auth_shape: Option<AuthShape>,
+}
+
+/// 诊断「我的私密收藏」链路：我是谁、私密/公开各能读到多少件。
+#[tauri::command]
+pub async fn diagnose_bookmarks() -> AppResult<SelfBookmarkCheck> {
+    let client = PixivClient::from_settings()?;
+    let mut out = SelfBookmarkCheck::default();
+
+    if let Ok(conn) = open_library() {
+        out.subs = list_subs_with(&conn).unwrap_or_default();
+    }
+
+    let (user_id, name) = match client.self_user().await {
+        Ok(user) => user,
+        Err(error) => {
+            out.error = Some(error.message);
+            out.auth_shape = client.auth_shape();
+            return Ok(out);
+        }
+    };
+    out.user_id = Some(user_id);
+    out.name = name;
+    out.auth_shape = client.auth_shape();
+
+    // 各拉一页即可：能读到数据就说明链路通，读不到就带出 Pixiv 的报错
+    match client.user_bookmarks(user_id, "private", None).await {
+        Ok((items, _)) => out.private_count = Some(items.len()),
+        Err(error) => out.private_error = Some(error.message),
+    }
+    match client.user_bookmarks(user_id, "public", None).await {
+        Ok((items, _)) => out.public_count = Some(items.len()),
+        Err(error) => out.public_error = Some(error.message),
+    }
+
+    Ok(out)
 }
 
 pub fn remove_sub_with(conn: &Connection, pixiv_user_id: i64) -> AppResult<bool> {
@@ -390,15 +502,28 @@ async fn backfill_sub_names(ids: &[i64]) {
 
 #[tauri::command]
 pub async fn add_bookmark_sub(pixiv_user_id: i64, _check_now: bool) -> AppResult<BookmarkSub> {
+    // 订阅自己 = 要拉自己的私密收藏；订阅别人只有公开收藏可看。
+    // 识别不了当前账号（没填 token / token 失效）时按公开处理，不阻塞订阅本身。
+    let client = PixivClient::from_settings().ok();
+    let restrict = match client.as_ref() {
+        Some(client) => match client.self_user().await {
+            Ok((my_id, _)) if my_id == pixiv_user_id => "private",
+            _ => "public",
+        },
+        None => "public",
+    };
+
     {
         let conn = open_library()?;
-        add_sub_with(&conn, pixiv_user_id)?;
+        add_sub_with(&conn, pixiv_user_id, restrict)?;
     }
 
     // 订阅本身不依赖网络；能连上 Pixiv 就顺手把昵称补上
-    if let Some(name) = fetch_sub_name(pixiv_user_id).await {
-        if let Ok(conn) = open_library() {
-            store_sub_name(&conn, pixiv_user_id, &name);
+    if let Some(client) = client.as_ref() {
+        if let Ok(Some(name)) = client.user_name(pixiv_user_id).await {
+            if let Ok(conn) = open_library() {
+                store_sub_name(&conn, pixiv_user_id, &name);
+            }
         }
     }
 
@@ -667,14 +792,20 @@ mod tests {
     fn subscriptions_add_toggle_remove() {
         let conn = memory_db();
 
-        let added = add_sub_with(&conn, 777).unwrap();
+        let added = add_sub_with(&conn, 777, "public").unwrap();
         assert!(added.auto_download);
         assert_eq!(added.pixiv_user_id, 777);
+        assert_eq!(added.restrict, "public");
 
-        // 重复添加是幂等的
-        let again = add_sub_with(&conn, 777).unwrap();
+        // 重复添加同一类型是幂等的
+        let again = add_sub_with(&conn, 777, "public").unwrap();
         assert!(again.auto_download);
+        assert_eq!(again.restrict, "public", "重复添加不应改变类型");
         assert_eq!(list_subs_with(&conn).unwrap().len(), 1);
+
+        // 确认「这是我自己」后再添加：retrofit 成 private，否则私密收藏拉不到
+        let upgraded = add_sub_with(&conn, 777, "private").unwrap();
+        assert_eq!(upgraded.restrict, "private");
 
         let toggled = toggle_sub_auto_with(&conn, 777).unwrap();
         assert!(!toggled.auto_download);
@@ -689,7 +820,34 @@ mod tests {
     #[test]
     fn rejects_invalid_user_id() {
         let conn = memory_db();
-        assert_eq!(add_sub_with(&conn, 0).unwrap_err().code, "INVALID_INPUT");
+        assert_eq!(
+            add_sub_with(&conn, 0, "public").unwrap_err().code,
+            "INVALID_INPUT"
+        );
+    }
+
+    #[test]
+    fn ensure_self_sub_creates_private_sub_once() {
+        let conn = memory_db();
+
+        assert!(ensure_self_sub(&conn, 4242, Some("我")).unwrap());
+        let subs = list_subs_with(&conn).unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].restrict, "private");
+        assert_eq!(subs[0].name.as_deref(), Some("我"));
+
+        // 重复保存 token 不再新建，也不覆盖用户的开关
+        toggle_sub_auto_with(&conn, 4242).unwrap();
+        assert!(!ensure_self_sub(&conn, 4242, Some("我")).unwrap());
+        let subs = list_subs_with(&conn).unwrap();
+        assert_eq!(subs.len(), 1);
+        assert!(!subs[0].auto_download, "自动下载开关应保留");
+
+        // 旧版本可能按 public 加过节流：ensure 时应升级成 private
+        let legacy = memory_db();
+        add_sub_with(&legacy, 5555, "public").unwrap();
+        assert!(!ensure_self_sub(&legacy, 5555, None).unwrap());
+        assert_eq!(list_subs_with(&legacy).unwrap()[0].restrict, "private");
     }
 
     #[test]

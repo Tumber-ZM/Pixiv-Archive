@@ -133,6 +133,23 @@ mod tests {
         let columns = schema::table_columns(&conn, "artworks").unwrap();
         assert!(columns.iter().any(|c| c == "sync_error"), "artworks 缺 sync_error");
         assert!(columns.iter().any(|c| c == "ai_type"), "artworks 缺 ai_type");
+
+        // 收藏订阅的收藏类型列：新库直接建出来，默认 public
+        let sub_columns = schema::table_columns(&conn, "bookmark_subs").unwrap();
+        assert!(
+            sub_columns.iter().any(|c| c == "restrict"),
+            "bookmark_subs 缺 restrict"
+        );
+        conn.execute("INSERT INTO bookmark_subs (pixiv_user_id) VALUES (42)", [])
+            .unwrap();
+        let restrict: String = conn
+            .query_row(
+                "SELECT restrict FROM bookmark_subs WHERE pixiv_user_id = 42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(restrict, "public");
     }
 
     #[test]
@@ -214,6 +231,7 @@ CREATE TABLE subscriptions (id INTEGER PRIMARY KEY);
         let sub_cols = schema::table_columns(&conn, "bookmark_subs").unwrap();
         assert!(sub_cols.iter().any(|c| c == "last_pid"));
         assert!(!sub_cols.iter().any(|c| c == "last_bid"));
+        assert!(sub_cols.iter().any(|c| c == "restrict"), "老库应补上 restrict 列");
 
         let gone: i64 = conn
             .query_row(

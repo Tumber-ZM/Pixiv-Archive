@@ -25,6 +25,7 @@ export const CMD = {
   removeBookmarkSub: "remove_bookmark_sub",
   toggleBookmarkSubAuto: "toggle_bookmark_sub_auto",
   previewBookmarkSub: "preview_bookmark_sub",
+  diagnoseBookmarks: "diagnose_bookmarks",
   scanDirectory: "scan_directory",
   cancelScan: "cancel_scan",
   scanStatus: "scan_status",

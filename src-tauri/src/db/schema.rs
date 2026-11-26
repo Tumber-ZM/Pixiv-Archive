@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS bookmark_subs (
     name TEXT,
     last_pid INTEGER,
     auto_download INTEGER DEFAULT 1,
+    restrict TEXT DEFAULT 'public',
     last_checked TEXT,
     last_result TEXT,
     created_at TEXT DEFAULT (datetime('now'))
@@ -159,6 +160,14 @@ pub fn ensure_bookmark_subs_cols(conn: &rusqlite::Connection) -> crate::error::A
     if has_bid && !has_pid {
         conn.execute(
             "ALTER TABLE bookmark_subs RENAME COLUMN last_bid TO last_pid",
+            [],
+        )?;
+    }
+    // 收藏类型：public = 对方的公开收藏，private = 当前登录账号自己的收藏
+    // （检查时私密与公开两份列表都会翻）。老库补列后统一按 public 处理。
+    if !columns.iter().any(|c| c == "restrict") {
+        conn.execute(
+            "ALTER TABLE bookmark_subs ADD COLUMN restrict TEXT DEFAULT 'public'",
             [],
         )?;
     }

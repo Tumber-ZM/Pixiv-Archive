@@ -68,6 +68,7 @@ pub fn run() {
             commands::artworks::list_artworks,
             commands::artworks::search_artworks,
             commands::browse::add_bookmark_sub,
+            commands::browse::diagnose_bookmarks,
             commands::browse::get_author_avatar,
             commands::browse::list_authors,
             commands::browse::list_bookmark_subs,

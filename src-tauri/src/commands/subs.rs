@@ -182,13 +182,15 @@ async fn run_checks(
             pixiv_user_id: *user_id,
             ..Default::default()
         };
-        result.name = conn
+        let (name, restrict) = conn
             .query_row(
-                "SELECT COALESCE(name, '') FROM bookmark_subs WHERE pixiv_user_id = ?1",
+                "SELECT COALESCE(name, ''), COALESCE(restrict, 'public')
+                   FROM bookmark_subs WHERE pixiv_user_id = ?1",
                 [user_id],
-                |row| row.get(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
-            .unwrap_or_default();
+            .unwrap_or_else(|_| (String::new(), "public".to_string()));
+        result.name = name;
 
         // 订阅名缺失（老数据 / 订阅时离线）时顺手补一次，检查结果里也能显示真名
         if result.name.trim().is_empty() {
@@ -219,6 +221,7 @@ async fn run_checks(
             &source_root,
             user_id,
             full,
+            &restrict,
             app,
             cancel,
             &mut result,
@@ -280,65 +283,93 @@ async fn check_one(
     source_root: &Path,
     user_id: &i64,
     full: bool,
+    restrict: &str,
     app: &AppHandle,
     cancel: &Arc<AtomicBool>,
     result: &mut SubResult,
 ) -> AppResult<()> {
-    // 1. 翻收藏列表，收集库里没有的
-    let mut next_url: Option<String> = None;
+    // 1. 翻收藏列表，收集库里没有的。
+    //    自己的订阅（private）先翻私密、再翻公开：两份收藏都要覆盖。
+    let restricts: &[&str] = if restrict == "private" {
+        &["private", "public"]
+    } else {
+        &["public"]
+    };
     let mut collected: Vec<BookmarkIllust> = Vec::new();
     let mut pages = 0usize;
+    // 每一份列表都没有因为「整页齐全」提前退出，才算真正追平
+    let mut caught_up = true;
 
-    while pages < MAX_PAGES {
-        if cancel.load(Ordering::Relaxed) {
-            result.cancelled = true;
-            break;
-        }
-        let (illusts, next) = client.user_bookmarks_public(*user_id, next_url.as_deref()).await?;
-        pages += 1;
-        if illusts.is_empty() {
-            break;
-        }
+    for kind in restricts {
+        let mut next_url: Option<String> = None;
+        let mut layer_pages = 0usize;
+        let mut layer_caught_up = false;
 
-        let mut page_all_complete = true;
-        for item in &illusts {
-            // 本地页数和远端 page_count 对得上才算齐全；缺页的已知作品也要重新入队
-            let complete = local_pages
-                .get(&item.pixiv_id)
-                .map(|pages| *pages >= item.page_count)
-                .unwrap_or(false);
-            if complete {
-                continue;
+        while layer_pages < MAX_PAGES {
+            if cancel.load(Ordering::Relaxed) {
+                result.cancelled = true;
+                break;
             }
-            page_all_complete = false;
-            known.insert(item.pixiv_id);
-            collected.push(item.clone());
-        }
+            let (illusts, next) = client
+                .user_bookmarks(*user_id, *kind, next_url.as_deref())
+                .await?;
+            layer_pages += 1;
+            pages += 1;
+            if illusts.is_empty() {
+                break;
+            }
 
-        emit(
-            app,
-            pages,
-            0,
-            result.downloaded,
-            0,
-            &format!(
-                "收藏订阅「{}」：第 {} 页，已发现 {} 件待处理",
-                result.name,
+            let mut page_all_complete = true;
+            for item in &illusts {
+                // 本地页数和远端 page_count 对得上才算齐全；缺页的已知作品也要重新入队
+                let complete = local_pages
+                    .get(&item.pixiv_id)
+                    .map(|pages| *pages >= item.page_count)
+                    .unwrap_or(false);
+                if complete {
+                    continue;
+                }
+                page_all_complete = false;
+                known.insert(item.pixiv_id);
+                collected.push(item.clone());
+            }
+
+            let label = if *kind == "private" { "私密" } else { "公开" };
+            emit(
+                app,
                 pages,
-                collected.len()
-            ),
-        );
+                0,
+                result.downloaded,
+                0,
+                &format!(
+                    "收藏订阅「{}」：{}收藏第 {} 页，已发现 {} 件待处理",
+                    result.name,
+                    label,
+                    pages,
+                    collected.len()
+                ),
+            );
 
-        let Some(next) = next else {
-            break;
-        };
-        // 快速模式：整页都已齐全 → 已追平（收藏按时间倒序，新收藏在最前）
-        if !full && page_all_complete {
-            result.caught_up = true;
+            let Some(next) = next else {
+                break;
+            };
+            // 快速模式：整页都已齐全 → 这一份列表已追平
+            // （收藏按时间倒序，新收藏在最前）
+            if !full && page_all_complete {
+                layer_caught_up = true;
+                break;
+            }
+            next_url = Some(next);
+        }
+
+        if result.cancelled {
             break;
         }
-        next_url = Some(next);
+        if !layer_caught_up {
+            caught_up = false;
+        }
     }
+    result.caught_up = caught_up && pages > 0;
 
     result.pages_scanned = pages;
     // 已知但缺页的作品算「补缺」，不算新增

@@ -11,6 +11,7 @@ import type {
   DataSizes,
   LegacyImportReport,
   RelinkReport,
+  SelfBookmarkCheck,
   SettingsInput,
   SettingsView,
   UpdateInfo,
@@ -43,6 +44,9 @@ export function SettingsPanel() {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 「检查私密收藏」的诊断输出 */
+  const [selfCheck, setSelfCheck] = useState<string | null>(null);
+  const [selfChecking, setSelfChecking] = useState(false);
 
   // 网络
   const [mode, setMode] = useState("direct");
@@ -160,7 +164,11 @@ export function SettingsPanel() {
       if (token.trim()) input.refresh_token = token.trim();
 
       await call(CMD.saveSettings, { input });
-      if (token.trim()) setHasToken(true);
+      if (token.trim()) {
+        setHasToken(true);
+        // 后端保存 token 成功后会自动把当前账号加进「收藏订阅」，通知列表重新取数
+        bumpData();
+      }
       setToken("");
       setNetSaved(true);
       setTimeout(() => setNetSaved(false), 1500);
@@ -168,6 +176,41 @@ export function SettingsPanel() {
       setError(isAppError(reason) ? reason.message : String(reason));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // 诊断「我的私密收藏」：认不出账号 / 接口不给数据，一次说清
+  const diagnoseSelf = async () => {
+    setSelfChecking(true);
+    setSelfCheck(null);
+    try {
+      const result = await call<SelfBookmarkCheck>(CMD.diagnoseBookmarks);
+      if (result.error) {
+        const shape = result.auth_shape
+          ? ` · 换票响应字段：${result.auth_shape.response_keys.join(",") || "空"}` +
+            `（${result.auth_shape.has_user ? "含 user" : "无 user"}）`
+          : "";
+        setSelfCheck(`账号识别失败：${result.error}${shape}`);
+      } else {
+        const parts = [`当前账号：${result.name ?? "未知"}（ID ${result.user_id}）`];
+        parts.push(
+          result.private_error
+            ? `私密收藏失败：${result.private_error}`
+            : `私密收藏首页 ${result.private_count ?? 0} 件`,
+        );
+        parts.push(
+          result.public_error
+            ? `公开收藏失败：${result.public_error}`
+            : `公开收藏首页 ${result.public_count ?? 0} 件`,
+        );
+        const privateSubs = result.subs.filter((sub) => sub.restrict === "private");
+        parts.push(`订阅 ${result.subs.length} 条，私密 ${privateSubs.length} 条`);
+        setSelfCheck(parts.join(" · "));
+      }
+    } catch (reason: unknown) {
+      setSelfCheck(isAppError(reason) ? reason.message : String(reason));
+    } finally {
+      setSelfChecking(false);
     }
   };
 
@@ -485,9 +528,19 @@ export function SettingsPanel() {
                     <button type="button" className="btn" disabled={busy} onClick={saveNetwork}>
                       {busy ? "保存中…" : "保存网络设置"}
                     </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={selfChecking || busy}
+                      onClick={diagnoseSelf}
+                      title="用已保存的 token 查一下我是谁、私密收藏能读到多少"
+                    >
+                      {selfChecking ? "检查中…" : "检查私密收藏"}
+                    </button>
                     {netSaved && <span className="text-micro text-text-2">已保存</span>}
                     {error && <span className="text-micro text-danger">{error}</span>}
                   </div>
+                  {selfCheck && <p className="text-micro text-text-2">{selfCheck}</p>}
                 </div>
               ) : tab === "数据迁移" ? (
                 <div className="flex max-w-[560px] flex-col gap-5">

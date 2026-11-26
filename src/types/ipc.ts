@@ -123,6 +123,8 @@ export interface BookmarkSub {
   name: string | null;
   last_pid: number | null;
   auto_download: boolean;
+  /** public = 对方的公开收藏；private = 本账号自己的收藏（私密 + 公开两份都翻） */
+  restrict: string;
   last_checked: string | null;
   last_result: string | null;
   created_at: string;
@@ -132,6 +134,28 @@ export interface SubPreview {
   pixiv_user_id: number;
   name: string;
   total_bookmarks: number | null;
+}
+
+/** 「检查私密收藏」的诊断结果。 */
+export interface SelfBookmarkCheck {
+  user_id: number | null;
+  name: string | null;
+  /** 识别当前账号失败的原因 */
+  error: string | null;
+  private_count: number | null;
+  private_error: string | null;
+  public_count: number | null;
+  public_error: string | null;
+  /** 现有订阅，用来确认自己的那条 restrict 是不是 private */
+  subs: BookmarkSub[];
+  /** 换票响应的字段骨架：账号识别失败时看它缺了什么 */
+  auth_shape: {
+    has_response: boolean;
+    response_keys: string[];
+    has_user: boolean;
+    user_keys: string[];
+    user_id_kind: string;
+  } | null;
 }
 
 export interface Stats {
